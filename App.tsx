@@ -2,10 +2,12 @@ import { StatusBar } from 'expo-status-bar';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import { WebView } from 'react-native-webview';
 import {
   ActivityIndicator,
   Alert,
-  Linking,
+  AppState,
   Modal,
   Platform,
   Pressable,
@@ -20,7 +22,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
 import { loadContent, LoadedContent } from './src/contentService';
-import { CatalogItem, DayId, DownloadSection, ScheduleEntry } from './src/types';
+import { CatalogItem, DayId, DownloadFile, DownloadSection, ScheduleEntry } from './src/types';
+import {
+  DownloadRecord,
+  downloadToApp,
+  loadDownloadRecords,
+  removeDownloadedFile,
+  saveDownloadRecords,
+} from './src/downloadManager';
 
 type MainTab = 'home' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -38,16 +47,19 @@ const TODAY_BY_JS_DAY: Record<number, DayId> = {
 const toPersianDigits = (value: string | number) =>
   String(value).replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[Number(digit)]);
 
-const openExternalUrl = async (url: string, title: string) => {
-  try {
-    if (!/^https?:\/\//i.test(url)) throw new Error('Unsafe URL');
-    const supported = await Linking.canOpenURL(url);
-    if (!supported) throw new Error('Unsupported URL');
-    await Linking.openURL(url);
-  } catch {
-    Alert.alert(title, 'این لینک معتبر نیست یا در دستگاه باز نمی‌شود.');
-  }
-};
+const isSafeHttpUrl = (url?: string) => Boolean(url && /^https?:\/\//i.test(url));
+
+const isPlaceholderUrl = (url?: string) =>
+  Boolean(url && (/example\.com/i.test(url) || /replace-with/i.test(url)));
+
+const isDirectMediaUrl = (url: string) =>
+  /\.(m3u8|mp4|m4v|mov|webm|mkv|ts)(?:$|[?#])/i.test(url);
+
+const downloadModeFor = (file: DownloadFile) =>
+  file.mode || (isDirectMediaUrl(file.url) ? 'download' : 'web');
+
+const streamModeFor = (item: CatalogItem) =>
+  item.streamMode || (item.streamUrl && isDirectMediaUrl(item.streamUrl) ? 'video' : 'web');
 
 function Logo() {
   return (
@@ -537,22 +549,67 @@ function FavoritesScreen({
   );
 }
 
-function DownloadsScreen() {
+function DownloadsScreen({
+  downloads,
+  onPlay,
+  onDelete,
+}: {
+  downloads: DownloadRecord[];
+  onPlay: (record: DownloadRecord) => void;
+  onDelete: (record: DownloadRecord) => void;
+}) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
       <View style={styles.simpleHeader}>
         <Logo />
         <Text style={styles.simpleHeaderTitle}>دریافت‌ها</Text>
       </View>
-      <View style={styles.largeEmpty}>
-        <View style={styles.largeEmptyIcon}>
-          <Ionicons name="cloud-download-outline" color={COLORS.gold} size={36} />
+      {!downloads.length ? (
+        <View style={styles.largeEmpty}>
+          <View style={styles.largeEmptyIcon}>
+            <Ionicons name="cloud-download-outline" color={COLORS.gold} size={36} />
+          </View>
+          <Text style={styles.largeEmptyTitle}>هنوز فایلی دریافت نشده</Text>
+          <Text style={styles.largeEmptyText}>
+            لینک مستقیم هر کیفیت از صفحه فیلم یا سریال داخل خود برنامه دانلود می‌شود و اینجا باقی می‌ماند.
+          </Text>
         </View>
-        <Text style={styles.largeEmptyTitle}>مدیریت دانلود داخل اپ</Text>
-        <Text style={styles.largeEmptyText}>
-          لینک‌های ثبت‌شده اکنون از صفحه هر عنوان باز می‌شوند؛ صف دانلود، توقف و ادامه در نسخه بعد به این بخش اضافه می‌شود.
-        </Text>
-      </View>
+      ) : (
+        <View style={styles.downloadLibrary}>
+          {downloads.map((record) => (
+            <View key={record.id} style={styles.downloadLibraryCard}>
+              <View style={styles.downloadLibraryInfo}>
+                <Text numberOfLines={1} style={styles.downloadLibraryTitle}>{record.title}</Text>
+                <Text style={styles.downloadLibraryMeta}>
+                  {[record.subtitle, record.quality].filter(Boolean).join(' • ')}
+                </Text>
+                {record.status === 'downloading' ? (
+                  <View style={styles.progressTrack}>
+                    <View style={[styles.progressFill, { width: `${Math.round(record.progress * 100)}%` }]} />
+                  </View>
+                ) : null}
+                <Text style={styles.downloadLibraryStatus}>
+                  {record.status === 'completed'
+                    ? 'آماده پخش داخل اپ'
+                    : record.status === 'downloading'
+                      ? `${toPersianDigits(Math.round(record.progress * 100))}٪ در حال دریافت`
+                      : record.error || 'دریافت ناموفق بود'}
+                </Text>
+              </View>
+              <View style={styles.downloadLibraryActions}>
+                {record.status === 'completed' && record.localUri ? (
+                  <Pressable onPress={() => onPlay(record)} style={styles.downloadLibraryPlay}>
+                    <Ionicons name="play" color="#fff" size={18} />
+                  </Pressable>
+                ) : null}
+                <Pressable onPress={() => onDelete(record)} style={styles.downloadLibraryDelete}>
+                  <Ionicons name="trash-outline" color={COLORS.muted} size={18} />
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -561,10 +618,12 @@ function DownloadGroup({
   group,
   open,
   onToggle,
+  onOpenFile,
 }: {
   group: DownloadSection;
   open: boolean;
   onToggle: () => void;
+  onOpenFile: (file: DownloadFile) => void;
 }) {
   return (
     <View style={[styles.downloadGroup, open && styles.downloadGroupOpen]}>
@@ -589,11 +648,11 @@ function DownloadGroup({
                 </Text>
               </View>
               <Pressable
-                onPress={() => openExternalUrl(file.url, 'دریافت فایل')}
+                onPress={() => onOpenFile(file)}
                 style={styles.downloadButton}
               >
-                <Ionicons name="download-outline" color="#fff" size={16} />
-                <Text style={styles.downloadButtonText}>دریافت</Text>
+                <Ionicons name={downloadModeFor(file) === 'web' ? 'open-outline' : 'download-outline'} color="#fff" size={16} />
+                <Text style={styles.downloadButtonText}>{downloadModeFor(file) === 'web' ? 'بازکردن' : 'دریافت'}</Text>
               </Pressable>
             </View>
           ))}
@@ -614,12 +673,16 @@ function DetailModal({
   onClose,
   favorite,
   onFavorite,
+  onStream,
+  onDownload,
 }: {
   item: CatalogItem | null;
   visible: boolean;
   onClose: () => void;
   favorite: boolean;
   onFavorite: () => void;
+  onStream: (item: CatalogItem) => void;
+  onDownload: (item: CatalogItem, file: DownloadFile) => void;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
 
@@ -664,8 +727,8 @@ function DetailModal({
             <View style={styles.detailActions}>
               <Pressable
                 onPress={() => item.streamUrl
-                  ? openExternalUrl(item.streamUrl, 'پخش آنلاین')
-                  : Alert.alert('پخش آنلاین', 'لینک پخش این عنوان هنوز در فایل محتوا ثبت نشده است.')}
+                  ? onStream(item)
+                  : Alert.alert('پخش آنلاین', 'برای این عنوان هنوز لینک پخش در catalog.json ثبت نشده است.')}
                 style={[styles.watchButton, !item.streamUrl && styles.watchButtonDisabled]}
               >
                 <Ionicons name="play" color="#fff" size={19} />
@@ -689,7 +752,7 @@ function DetailModal({
             <View style={styles.downloadHeader}>
               <View>
                 <Text style={styles.detailSectionTitle}>لینک‌های دریافت</Text>
-                <Text style={styles.downloadHeaderText}>لینک‌ها از فایل JSON آنلاین خوانده می‌شوند.</Text>
+                <Text style={styles.downloadHeaderText}>دانلود مستقیم و صفحه خرید، هر دو داخل خود اپ باز می‌شوند.</Text>
               </View>
               <Ionicons name="cloud-download-outline" color={COLORS.gold} size={24} />
             </View>
@@ -700,6 +763,7 @@ function DetailModal({
                 group={group}
                 open={openGroup === group.id}
                 onToggle={() => setOpenGroup(openGroup === group.id ? null : group.id)}
+                onOpenFile={(file) => onDownload(item, file)}
               />
             ))}
 
@@ -708,12 +772,89 @@ function DetailModal({
                 <Ionicons name="link-outline" color={COLORS.muted} size={25} />
                 <Text style={styles.noDownloadsTitle}>لینک دانلود ثبت نشده است</Text>
                 <Text style={styles.noDownloadsText}>
-                  کافی است لینک‌های مجاز این عنوان را در فایل content/catalog.json وارد کنید؛ بدون انتشار نسخه تازه اپ نمایش داده می‌شوند.
+                  این عنوان در catalog.json فقط اطلاعات و پوستر دارد و لینک واقعی دانلود برایش وارد نشده است.
                 </Text>
               </View>
             ) : null}
           </View>
         </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function VideoPlayerModal({
+  source,
+  title,
+  onClose,
+}: {
+  source: string;
+  title: string;
+  onClose: () => void;
+}) {
+  const player = useVideoPlayer(source, (instance) => {
+    instance.play();
+  });
+
+  return (
+    <Modal visible animationType="fade" onRequestClose={onClose}>
+      <View style={styles.mediaModal}>
+        <StatusBar style="light" />
+        <SafeAreaView style={styles.mediaModalHeader}>
+          <Pressable onPress={onClose} style={styles.mediaCloseButton}>
+            <Ionicons name="close" color="#fff" size={23} />
+          </Pressable>
+          <Text numberOfLines={1} style={styles.mediaModalTitle}>{title}</Text>
+        </SafeAreaView>
+        <View style={styles.videoStage}>
+          <VideoView
+            player={player}
+            style={styles.videoView}
+            nativeControls
+            contentFit="contain"
+            allowsPictureInPicture
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function InAppWebModal({
+  url,
+  title,
+  onClose,
+}: {
+  url: string;
+  title: string;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <View style={styles.webModal}>
+        <StatusBar style="light" />
+        <SafeAreaView style={styles.mediaModalHeader}>
+          <Pressable onPress={onClose} style={styles.mediaCloseButton}>
+            <Ionicons name="close" color="#fff" size={23} />
+          </Pressable>
+          <Text numberOfLines={1} style={styles.mediaModalTitle}>{title}</Text>
+        </SafeAreaView>
+        <WebView
+          source={{ uri: url }}
+          style={styles.webView}
+          onLoadStart={() => setLoading(true)}
+          onLoadEnd={() => setLoading(false)}
+          javaScriptEnabled
+          domStorageEnabled
+          allowsFullscreenVideo
+          setSupportMultipleWindows={false}
+        />
+        {loading ? (
+          <View pointerEvents="none" style={styles.webLoading}>
+            <ActivityIndicator color={COLORS.gold} size="large" />
+          </View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -760,6 +901,9 @@ export default function App() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [content, setContent] = useState<LoadedContent | null>(null);
   const [contentLoading, setContentLoading] = useState(true);
+  const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
+  const [videoRequest, setVideoRequest] = useState<{ source: string; title: string } | null>(null);
+  const [webRequest, setWebRequest] = useState<{ url: string; title: string } | null>(null);
 
   const reloadContent = async () => {
     setContentLoading(true);
@@ -770,12 +914,112 @@ export default function App() {
 
   useEffect(() => {
     reloadContent();
+    loadDownloadRecords().then(setDownloads);
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') reloadContent();
+    });
+
+    return () => subscription.remove();
   }, []);
 
   const toggleFavorite = (id: string) => {
     setFavorites((current) =>
       current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id],
     );
+  };
+
+  const openStreamInsideApp = (item: CatalogItem) => {
+    const url = item.streamUrl;
+    if (!url || !isSafeHttpUrl(url) || isPlaceholderUrl(url)) {
+      Alert.alert('پخش آنلاین', 'لینک واقعی و معتبر پخش برای این عنوان ثبت نشده است.');
+      return;
+    }
+    if (streamModeFor(item) === 'video') {
+      setVideoRequest({ source: url, title: item.nameFa });
+    } else {
+      setWebRequest({ url, title: `پخش ${item.nameFa}` });
+    }
+  };
+
+  const startDownloadInsideApp = async (item: CatalogItem, file: DownloadFile) => {
+    if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url)) {
+      Alert.alert('دریافت فایل', 'این لینک نمونه است یا لینک واقعی برای آن ثبت نشده است.');
+      return;
+    }
+
+    if (downloadModeFor(file) === 'web') {
+      setWebRequest({ url: file.url, title: `${item.nameFa} — ${file.quality}` });
+      return;
+    }
+
+    const recordId = `${item.id}-${file.id}`;
+    const existing = downloads.find((record) => record.id === recordId);
+    if (existing?.status === 'completed' && existing.localUri) {
+      Alert.alert('دریافت فایل', 'این کیفیت قبلاً دانلود شده و در بخش «دریافت‌ها» آماده پخش است.');
+      return;
+    }
+    if (existing?.status === 'downloading') {
+      Alert.alert('دریافت فایل', 'این فایل همین حالا در حال دانلود است.');
+      return;
+    }
+
+    const pending: DownloadRecord = {
+      id: recordId,
+      itemId: item.id,
+      title: item.nameFa,
+      subtitle: item.name,
+      quality: file.quality,
+      sourceUrl: file.url,
+      progress: 0,
+      status: 'downloading',
+      createdAt: new Date().toISOString(),
+    };
+
+    setDownloads((current) => [pending, ...current.filter((record) => record.id !== recordId)]);
+    setActiveTab('downloads');
+    setSelectedItem(null);
+
+    try {
+      const localUri = await downloadToApp({
+        id: recordId,
+        url: file.url,
+        fileName: `${item.name}-${file.quality}`,
+        onProgress: (progress) => {
+          setDownloads((current) => current.map((record) =>
+            record.id === recordId ? { ...record, progress } : record,
+          ));
+        },
+      });
+
+      setDownloads((current) => {
+        const next = current.map((record) =>
+          record.id === recordId
+            ? { ...record, localUri, progress: 1, status: 'completed' as const, error: undefined }
+            : record,
+        );
+        saveDownloadRecords(next).catch(() => undefined);
+        return next;
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'دریافت فایل ناموفق بود.';
+      setDownloads((current) => {
+        const next = current.map((record) =>
+          record.id === recordId ? { ...record, status: 'failed' as const, error: message } : record,
+        );
+        saveDownloadRecords(next).catch(() => undefined);
+        return next;
+      });
+    }
+  };
+
+  const deleteDownload = async (record: DownloadRecord) => {
+    await removeDownloadedFile(record.localUri).catch(() => undefined);
+    setDownloads((current) => {
+      const next = current.filter((item) => item.id !== record.id);
+      saveDownloadRecords(next).catch(() => undefined);
+      return next;
+    });
   };
 
   if (!content) {
@@ -810,7 +1054,13 @@ export default function App() {
         {activeTab === 'favorites' ? (
           <FavoritesScreen catalog={content.items} favorites={favorites} onOpen={setSelectedItem} />
         ) : null}
-        {activeTab === 'downloads' ? <DownloadsScreen /> : null}
+        {activeTab === 'downloads' ? (
+          <DownloadsScreen
+            downloads={downloads}
+            onPlay={(record) => record.localUri && setVideoRequest({ source: record.localUri, title: record.title })}
+            onDelete={deleteDownload}
+          />
+        ) : null}
       </SafeAreaView>
       <BottomNavigation active={activeTab} onChange={setActiveTab} />
       {contentLoading ? (
@@ -824,7 +1074,23 @@ export default function App() {
         onClose={() => setSelectedItem(null)}
         favorite={selectedItem ? favorites.includes(selectedItem.id) : false}
         onFavorite={() => selectedItem && toggleFavorite(selectedItem.id)}
+        onStream={openStreamInsideApp}
+        onDownload={startDownloadInsideApp}
       />
+      {videoRequest ? (
+        <VideoPlayerModal
+          source={videoRequest.source}
+          title={videoRequest.title}
+          onClose={() => setVideoRequest(null)}
+        />
+      ) : null}
+      {webRequest ? (
+        <InAppWebModal
+          url={webRequest.url}
+          title={webRequest.title}
+          onClose={() => setWebRequest(null)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -1018,4 +1284,25 @@ const styles = StyleSheet.create({
   bottomIconWrapActive: { backgroundColor: 'rgba(222,35,66,0.16)' },
   bottomLabel: { color: COLORS.muted, fontSize: 8, fontWeight: '700', marginTop: 3 },
   bottomLabelActive: { color: COLORS.text },
+  downloadLibrary: { gap: 10 },
+  downloadLibraryCard: { minHeight: 112, flexDirection: 'row-reverse', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  downloadLibraryInfo: { flex: 1, alignItems: 'flex-end' },
+  downloadLibraryTitle: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900', width: '100%' },
+  downloadLibraryMeta: { ...rtlText, color: COLORS.muted, fontSize: 9, marginTop: 5, width: '100%' },
+  downloadLibraryStatus: { ...rtlText, color: COLORS.gold, fontSize: 9, marginTop: 7, width: '100%' },
+  downloadLibraryActions: { gap: 8 },
+  downloadLibraryPlay: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.red },
+  downloadLibraryDelete: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  progressTrack: { width: '100%', height: 6, borderRadius: 4, overflow: 'hidden', backgroundColor: '#080A0E', marginTop: 11 },
+  progressFill: { height: '100%', borderRadius: 4, backgroundColor: COLORS.gold },
+  mediaModal: { flex: 1, backgroundColor: '#000' },
+  webModal: { flex: 1, backgroundColor: COLORS.background },
+  mediaModalHeader: { height: Platform.OS === 'android' ? 72 : 92, paddingTop: Platform.OS === 'android' ? 10 : 30, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  mediaCloseButton: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong },
+  mediaModalTitle: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 14, fontWeight: '900' },
+  videoStage: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+  videoView: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
+  webView: { flex: 1, backgroundColor: '#fff' },
+  webLoading: { ...StyleSheet.absoluteFillObject, top: Platform.OS === 'android' ? 72 : 92, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)' },
+
 });

@@ -6,6 +6,8 @@ export type DownloadFile = {
   label?: string;
   size?: string;
   url: string;
+  /** download: ذخیره مستقیم داخل اپ، web: بازشدن صفحه خرید/دریافت در مرورگر داخلی */
+  mode?: 'download' | 'web';
 };
 
 export type DownloadSection = {
@@ -32,6 +34,8 @@ export type CatalogItem = {
   rate?: number;
   access: 'free' | 'paid' | 'operator';
   streamUrl?: string;
+  /** video: پلیر داخلی، web: صفحه پخش در مرورگر داخلی */
+  streamMode?: 'video' | 'web';
   downloads?: DownloadSection[];
 };
 
