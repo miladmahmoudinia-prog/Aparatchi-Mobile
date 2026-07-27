@@ -6,8 +6,8 @@ export type DownloadFile = {
   label?: string;
   size?: string;
   url: string;
-  /** download: ذخیره مستقیم داخل اپ، web: بازشدن صفحه خرید/دریافت در مرورگر داخلی */
-  mode?: 'download' | 'web';
+  /** download: ذخیره مستقیم، play: پخش داخلی، web: مرورگر داخلی */
+  mode?: 'download' | 'play' | 'web';
 };
 
 export type DownloadSection = {

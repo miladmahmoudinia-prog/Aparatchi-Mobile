@@ -651,8 +651,24 @@ function DownloadGroup({
                 onPress={() => onOpenFile(file)}
                 style={styles.downloadButton}
               >
-                <Ionicons name={downloadModeFor(file) === 'web' ? 'open-outline' : 'download-outline'} color="#fff" size={16} />
-                <Text style={styles.downloadButtonText}>{downloadModeFor(file) === 'web' ? 'بازکردن' : 'دریافت'}</Text>
+                <Ionicons
+                  name={
+                    downloadModeFor(file) === 'play'
+                      ? 'play'
+                      : downloadModeFor(file) === 'web'
+                        ? 'open-outline'
+                        : 'download-outline'
+                  }
+                  color="#fff"
+                  size={16}
+                />
+                <Text style={styles.downloadButtonText}>
+                  {downloadModeFor(file) === 'play'
+                    ? 'پخش'
+                    : downloadModeFor(file) === 'web'
+                      ? 'بازکردن'
+                      : 'دریافت'}
+                </Text>
               </Pressable>
             </View>
           ))}
@@ -752,7 +768,7 @@ function DetailModal({
             <View style={styles.downloadHeader}>
               <View>
                 <Text style={styles.detailSectionTitle}>لینک‌های دریافت</Text>
-                <Text style={styles.downloadHeaderText}>دانلود مستقیم و صفحه خرید، هر دو داخل خود اپ باز می‌شوند.</Text>
+                <Text style={styles.downloadHeaderText}>پخش هر قسمت و دانلود کیفیت‌ها، داخل خود اپ انجام می‌شود.</Text>
               </View>
               <Ionicons name="cloud-download-outline" color={COLORS.gold} size={24} />
             </View>
@@ -948,7 +964,14 @@ export default function App() {
       return;
     }
 
-    if (downloadModeFor(file) === 'web') {
+    const fileMode = downloadModeFor(file);
+
+    if (fileMode === 'play') {
+      setVideoRequest({ source: file.url, title: `${item.nameFa} — ${file.quality}` });
+      return;
+    }
+
+    if (fileMode === 'web') {
       setWebRequest({ url: file.url, title: `${item.nameFa} — ${file.quality}` });
       return;
     }
