@@ -1,8 +1,5 @@
 /**
- * آدرس فایل JSON روی GitHub را اینجا قرار دهید.
- * نمونه:
- * https://raw.githubusercontent.com/USERNAME/REPOSITORY/main/content/catalog.json
- *
- * تا وقتی خالی باشد، اپ از اطلاعات داخلی src/data.ts استفاده می‌کند.
+ * منبع آنلاین اطلاعات آپاراتچی
  */
-export const REMOTE_CONTENT_URL = '';
+export const REMOTE_CONTENT_URL =
+  'https://raw.githubusercontent.com/miladmahmoudinia-prog/Aparatchi-Content/main/catalog.json';
