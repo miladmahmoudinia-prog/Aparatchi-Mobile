@@ -15,37 +15,34 @@ jobs:
       NODE_ENV: production
 
     steps:
-      - name: Download project
+      - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Install Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
-      - name: Install Java
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Install dependencies
-       run: npm install
+        run: npm install
 
       - name: Create Android project
         run: npx expo prebuild --platform android --non-interactive
 
-      - name: Give Gradle permission
+      - name: Allow Gradle execution
         run: chmod +x android/gradlew
 
-      - name: Build standalone release APK
-        run: |
-          cd android
-          ./gradlew app:assembleRelease
+      - name: Build release APK
+        run: cd android && ./gradlew app:assembleRelease
 
-      - name: Upload release APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Aparatchi-Android-Release
+          name: Aparatchi-Android-Release-v0.5
           path: android/app/build/outputs/apk/release/app-release.apk
