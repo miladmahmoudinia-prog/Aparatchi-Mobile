@@ -9,15 +9,18 @@ import {
   Alert,
   AppState,
   Modal,
-  Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import {
+  initialWindowMetrics,
+  SafeAreaProvider,
+  SafeAreaView,
+} from 'react-native-safe-area-context';
 import { useEffect, useMemo, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
@@ -711,20 +714,23 @@ function DetailModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.detailScreen}>
+      <SafeAreaView
+        style={styles.detailScreen}
+        edges={['top', 'right', 'bottom', 'left']}
+      >
         <StatusBar style="light" />
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.detailContent}>
           <View style={styles.detailHero}>
             <Image source={{ uri: item.backdrop }} style={StyleSheet.absoluteFill} contentFit="cover" />
             <LinearGradient colors={['rgba(7,9,12,0.06)', COLORS.background]} style={StyleSheet.absoluteFill} />
-            <SafeAreaView style={styles.detailTopBar}>
+            <View style={styles.detailTopBar}>
               <Pressable onPress={onClose} style={styles.detailCircleButton}>
                 <Ionicons name="arrow-forward" color="#fff" size={21} />
               </Pressable>
               <Pressable onPress={onFavorite} style={styles.detailCircleButton}>
                 <Ionicons name={favorite ? 'bookmark' : 'bookmark-outline'} color={favorite ? COLORS.gold : '#fff'} size={21} />
               </Pressable>
-            </SafeAreaView>
+            </View>
             <View style={styles.detailIdentity}>
               <Image source={{ uri: item.poster }} style={styles.detailPoster} contentFit="cover" />
               <View style={styles.detailTitleBlock}>
@@ -794,7 +800,7 @@ function DetailModal({
             ) : null}
           </View>
         </ScrollView>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -814,14 +820,17 @@ function VideoPlayerModal({
 
   return (
     <Modal visible animationType="fade" onRequestClose={onClose}>
-      <View style={styles.mediaModal}>
+      <SafeAreaView
+        style={styles.mediaModal}
+        edges={['top', 'right', 'bottom', 'left']}
+      >
         <StatusBar style="light" />
-        <SafeAreaView style={styles.mediaModalHeader}>
+        <View style={styles.mediaModalHeader}>
           <Pressable onPress={onClose} style={styles.mediaCloseButton}>
             <Ionicons name="close" color="#fff" size={23} />
           </Pressable>
           <Text numberOfLines={1} style={styles.mediaModalTitle}>{title}</Text>
-        </SafeAreaView>
+        </View>
         <View style={styles.videoStage}>
           <VideoView
             player={player}
@@ -831,7 +840,7 @@ function VideoPlayerModal({
             allowsPictureInPicture
           />
         </View>
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -848,14 +857,17 @@ function InAppWebModal({
   const [loading, setLoading] = useState(true);
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
-      <View style={styles.webModal}>
+      <SafeAreaView
+        style={styles.webModal}
+        edges={['top', 'right', 'bottom', 'left']}
+      >
         <StatusBar style="light" />
-        <SafeAreaView style={styles.mediaModalHeader}>
+        <View style={styles.mediaModalHeader}>
           <Pressable onPress={onClose} style={styles.mediaCloseButton}>
             <Ionicons name="close" color="#fff" size={23} />
           </Pressable>
           <Text numberOfLines={1} style={styles.mediaModalTitle}>{title}</Text>
-        </SafeAreaView>
+        </View>
         <WebView
           source={{ uri: url }}
           style={styles.webView}
@@ -871,7 +883,7 @@ function InAppWebModal({
             <ActivityIndicator color={COLORS.gold} size="large" />
           </View>
         ) : null}
-      </View>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -911,7 +923,7 @@ function BottomNavigation({
   );
 }
 
-export default function App() {
+function AppContent() {
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -1047,19 +1059,25 @@ export default function App() {
 
   if (!content) {
     return (
-      <View style={styles.initialLoading}>
+      <SafeAreaView
+        style={styles.initialLoading}
+        edges={['top', 'right', 'bottom', 'left']}
+      >
         <StatusBar style="light" />
         <ActivityIndicator color={COLORS.gold} size="large" />
         <Text style={styles.initialLoadingTitle}>در حال آماده‌سازی آپاراتچی…</Text>
         <Text style={styles.initialLoadingText}>فهرست داخلی و اطلاعات آنلاین بررسی می‌شود.</Text>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
     <View style={styles.app}>
       <StatusBar style="light" />
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView
+        style={styles.safeArea}
+        edges={['top', 'right', 'left']}
+      >
         {activeTab === 'home' ? (
           <HomeScreen
             catalog={content.items}
@@ -1084,13 +1102,18 @@ export default function App() {
             onDelete={deleteDownload}
           />
         ) : null}
+        {contentLoading ? (
+          <View pointerEvents="none" style={styles.refreshIndicator}>
+            <ActivityIndicator color={COLORS.gold} size="small" />
+          </View>
+        ) : null}
       </SafeAreaView>
-      <BottomNavigation active={activeTab} onChange={setActiveTab} />
-      {contentLoading ? (
-        <View pointerEvents="none" style={styles.refreshIndicator}>
-          <ActivityIndicator color={COLORS.gold} size="small" />
-        </View>
-      ) : null}
+      <SafeAreaView
+        style={styles.bottomNavigationSafeArea}
+        edges={['right', 'bottom', 'left']}
+      >
+        <BottomNavigation active={activeTab} onChange={setActiveTab} />
+      </SafeAreaView>
       <DetailModal
         item={selectedItem}
         visible={Boolean(selectedItem)}
@@ -1118,6 +1141,14 @@ export default function App() {
   );
 }
 
+export default function App() {
+  return (
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <AppContent />
+    </SafeAreaProvider>
+  );
+}
+
 const rtlText = {
   writingDirection: 'rtl' as const,
   textAlign: 'right' as const,
@@ -1126,16 +1157,17 @@ const rtlText = {
 const styles = StyleSheet.create({
   app: { flex: 1, backgroundColor: COLORS.background },
   safeArea: { flex: 1, backgroundColor: COLORS.background },
+  bottomNavigationSafeArea: { backgroundColor: COLORS.background, paddingHorizontal: 10, paddingTop: 6 },
   screen: { flex: 1, backgroundColor: COLORS.background },
   initialLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30, backgroundColor: COLORS.background },
   initialLoadingTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 16 },
   initialLoadingText: { ...rtlText, color: COLORS.muted, fontSize: 10, lineHeight: 18, textAlign: 'center', marginTop: 7 },
-  refreshIndicator: { position: 'absolute', top: Platform.OS === 'android' ? 14 : 52, left: 14, width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(16,19,25,0.94)', borderWidth: 1, borderColor: COLORS.border },
+  refreshIndicator: { position: 'absolute', top: 14, left: 14, width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(16,19,25,0.94)', borderWidth: 1, borderColor: COLORS.border },
   contentUnavailable: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 25 },
   retryButton: { marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12, backgroundColor: COLORS.red },
   retryButtonText: { color: '#fff', fontSize: 11, fontWeight: '900' },
-  homeContent: { paddingBottom: 118 },
-  tabScreenContent: { paddingHorizontal: 16, paddingBottom: 120, paddingTop: Platform.OS === 'android' ? 22 : 8 },
+  homeContent: { paddingBottom: 28 },
+  tabScreenContent: { paddingHorizontal: 16, paddingBottom: 28, paddingTop: 18 },
   header: {
     height: 66,
     paddingHorizontal: 18,
@@ -1260,7 +1292,7 @@ const styles = StyleSheet.create({
   detailScreen: { flex: 1, backgroundColor: COLORS.background },
   detailContent: { paddingBottom: 36 },
   detailHero: { height: 435, justifyContent: 'flex-end' },
-  detailTopBar: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: 16, paddingTop: Platform.OS === 'android' ? 17 : 0, flexDirection: 'row-reverse', justifyContent: 'space-between' },
+  detailTopBar: { position: 'absolute', top: 0, left: 0, right: 0, minHeight: 66, paddingHorizontal: 16, paddingTop: 12, flexDirection: 'row-reverse', justifyContent: 'space-between' },
   detailCircleButton: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
   detailIdentity: { paddingHorizontal: 18, paddingBottom: 18, flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 15 },
   detailPoster: { width: 100, height: 143, borderRadius: 13, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
@@ -1301,7 +1333,7 @@ const styles = StyleSheet.create({
   noDownloadsCard: { minHeight: 145, marginTop: 8, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   noDownloadsTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', marginTop: 9 },
   noDownloadsText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 17, textAlign: 'center', marginTop: 6 },
-  bottomNavigation: { position: 'absolute', left: 10, right: 10, bottom: Platform.OS === 'ios' ? 12 : 9, height: 69, paddingHorizontal: 5, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-around', borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.11)', backgroundColor: 'rgba(16,19,25,0.98)', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 18, elevation: 12 },
+  bottomNavigation: { height: 69, marginBottom: 9, paddingHorizontal: 5, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-around', borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.11)', backgroundColor: 'rgba(16,19,25,0.98)', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 18, elevation: 12 },
   bottomTab: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   bottomIconWrap: { width: 37, height: 29, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   bottomIconWrapActive: { backgroundColor: 'rgba(222,35,66,0.16)' },
@@ -1320,12 +1352,12 @@ const styles = StyleSheet.create({
   progressFill: { height: '100%', borderRadius: 4, backgroundColor: COLORS.gold },
   mediaModal: { flex: 1, backgroundColor: '#000' },
   webModal: { flex: 1, backgroundColor: COLORS.background },
-  mediaModalHeader: { height: Platform.OS === 'android' ? 72 : 92, paddingTop: Platform.OS === 'android' ? 10 : 30, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  mediaModalHeader: { height: 62, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
   mediaCloseButton: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong },
   mediaModalTitle: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 14, fontWeight: '900' },
   videoStage: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   videoView: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   webView: { flex: 1, backgroundColor: '#fff' },
-  webLoading: { ...StyleSheet.absoluteFillObject, top: Platform.OS === 'android' ? 72 : 92, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)' },
+  webLoading: { ...StyleSheet.absoluteFillObject, top: 62, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)' },
 
 });
