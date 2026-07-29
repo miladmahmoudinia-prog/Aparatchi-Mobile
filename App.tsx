@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  FlatList,
   Modal,
   Pressable,
   ScrollView,
@@ -379,15 +380,18 @@ function HorizontalCatalog({
   onOpen: (item: CatalogItem) => void;
 }) {
   return (
-    <ScrollView
+    <FlatList
       horizontal
+      inverted
+      data={items}
+      keyExtractor={(item) => item.id}
+      renderItem={({ item }) => (
+        <PosterCard item={item} onOpen={() => onOpen(item)} />
+      )}
       showsHorizontalScrollIndicator={false}
+      style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-    >
-      {items.map((item) => (
-        <PosterCard key={item.id} item={item} onOpen={() => onOpen(item)} />
-      ))}
-    </ScrollView>
+    />
   );
 }
 
@@ -1263,7 +1267,8 @@ const styles = StyleSheet.create({
   sectionTitleRow: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'flex-end', justifyContent: 'space-between' },
   sectionAction: { flexDirection: 'row-reverse', alignItems: 'center', gap: 2, paddingBottom: 2 },
   sectionActionText: { color: COLORS.gold, fontSize: 10, fontWeight: '800' },
-  horizontalCatalog: { flexDirection: 'row-reverse', gap: 11, paddingHorizontal: 18, paddingTop: 14 },
+  horizontalCatalogList: { direction: 'ltr' },
+  horizontalCatalog: { gap: 11, paddingHorizontal: 18, paddingTop: 14 },
   posterCard: { width: 137, alignItems: 'flex-end' },
   posterImageWrap: { width: 137, height: 194, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
   posterImage: { width: '100%', height: '100%' },

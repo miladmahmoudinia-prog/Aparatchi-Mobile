@@ -15,6 +15,26 @@ const LOCAL_PAYLOAD: CatalogPayload = {
 
 const isString = (value: unknown): value is string => typeof value === 'string';
 
+const itemTimestamp = (item: CatalogItem) => {
+  const value =
+    item.updatedAt ||
+    item.sourceUpdatedAt ||
+    item.createdAt ||
+    item.sourceCreatedAt ||
+    '';
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const newestFirst = (items: CatalogItem[]) =>
+  items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const dateDifference = itemTimestamp(b.item) - itemTimestamp(a.item);
+      return dateDifference || a.index - b.index;
+    })
+    .map(({ item }) => item);
+
 const isCatalogItem = (value: unknown): value is CatalogItem => {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<CatalogItem>;
@@ -62,7 +82,7 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
 
 export async function loadContent(): Promise<LoadedContent> {
   const remoteUrl = REMOTE_CONTENT_URL.trim();
-  if (!remoteUrl) return { ...LOCAL_PAYLOAD, source: 'local' };
+  if (!remoteUrl) return { ...LOCAL_PAYLOAD, items: newestFirst(LOCAL_PAYLOAD.items), source: 'local' };
 
   try {
     const separator = remoteUrl.includes('?') ? '&' : '?';
@@ -74,8 +94,8 @@ export async function loadContent(): Promise<LoadedContent> {
     const parsed = parsePayload(await response.json());
     if (!parsed) throw new Error('Invalid catalog payload');
 
-    return { ...parsed, source: 'remote' };
+    return { ...parsed, items: newestFirst(parsed.items), source: 'remote' };
   } catch {
-    return { ...LOCAL_PAYLOAD, source: 'local' };
+    return { ...LOCAL_PAYLOAD, items: newestFirst(LOCAL_PAYLOAD.items), source: 'local' };
   }
 }

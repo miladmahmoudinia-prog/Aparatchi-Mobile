@@ -37,6 +37,10 @@ export type CatalogItem = {
   /** video: پلیر داخلی، web: صفحه پخش در مرورگر داخلی */
   streamMode?: 'video' | 'web';
   downloads?: DownloadSection[];
+  createdAt?: string;
+  updatedAt?: string;
+  sourceCreatedAt?: string;
+  sourceUpdatedAt?: string;
 };
 
 export type ScheduleEntry = {
