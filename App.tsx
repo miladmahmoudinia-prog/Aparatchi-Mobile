@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEvent } from 'expo';
+import { useEvent, useEventListener } from 'expo';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -46,6 +46,11 @@ import {
   saveDownloadedFileToGallery,
   saveDownloadRecords,
 } from './src/downloadManager';
+import {
+  WatchProgressRecord,
+  loadLibraryState,
+  saveLibraryState,
+} from './src/libraryManager';
 
 type MainTab = 'home' | 'search' | 'favorites' | 'downloads';
 type PlayerDisplayMode = 'auto' | 'fit' | 'fill';
@@ -267,7 +272,30 @@ type VideoRequest = {
   title: string;
   sources: PlaybackSource[];
   initialSourceId: string;
+  resumeKey?: string;
+  itemId?: string;
+  artwork?: string;
+  episodeId?: string;
+  language?: MediaLanguage;
+  downloadId?: string;
+  resumeAt?: number;
 };
+
+const formatPlaybackTime = (seconds: number) => {
+  const safeSeconds = Math.max(0, Math.floor(Number(seconds || 0)));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+  const value = hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+    : `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
+  return toPersianDigits(value);
+};
+
+const watchProgressPercent = (record: WatchProgressRecord) =>
+  record.duration > 0
+    ? Math.max(0, Math.min(100, Math.round((record.position / record.duration) * 100)))
+    : 0;
 
 type OperatorWebRequest = {
   title: string;
@@ -1160,20 +1188,105 @@ function HorizontalCatalog({
   );
 }
 
+function ContinueWatchingSection({
+  records,
+  catalog,
+  onResume,
+  onRemove,
+}: {
+  records: WatchProgressRecord[];
+  catalog: CatalogItem[];
+  onResume: (record: WatchProgressRecord) => void;
+  onRemove: (id: string) => void;
+}) {
+  const visibleRecords = records
+    .filter((record) => catalog.some((item) => item.id === record.itemId) || record.downloadId)
+    .slice(0, 10);
+
+  if (!visibleRecords.length) return null;
+
+  return (
+    <View style={styles.continueSection}>
+      <SectionTitle
+        eyebrow="از همان‌جایی که ماندی"
+        title="ادامه تماشا"
+      />
+      <FlatList
+        horizontal
+        inverted
+        data={visibleRecords}
+        keyExtractor={(record) => record.id}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.continueList}
+        renderItem={({ item: record }) => {
+          const catalogItem = catalog.find((item) => item.id === record.itemId);
+          const artwork = record.artwork || catalogItem?.backdrop || catalogItem?.poster;
+          const percent = watchProgressPercent(record);
+          return (
+            <Pressable onPress={() => onResume(record)} style={styles.continueCard}>
+              <View style={styles.continueArtworkWrap}>
+                {artwork ? (
+                  <Image source={{ uri: artwork }} style={styles.continueArtwork} contentFit="cover" transition={180} />
+                ) : (
+                  <View style={styles.continueArtworkFallback}>
+                    <Ionicons name="film-outline" color={COLORS.gold} size={28} />
+                  </View>
+                )}
+                <LinearGradient
+                  colors={['transparent', 'rgba(7,9,12,0.95)']}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View style={styles.continuePlayIcon}>
+                  <Ionicons name="play" color="#fff" size={17} />
+                </View>
+                <Pressable
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    onRemove(record.id);
+                  }}
+                  hitSlop={8}
+                  style={styles.continueRemoveButton}
+                >
+                  <Ionicons name="close" color="#fff" size={15} />
+                </Pressable>
+                <View style={styles.continueCardText}>
+                  <Text numberOfLines={1} style={styles.continueTitle}>{record.title}</Text>
+                  <Text numberOfLines={1} style={styles.continueMeta}>
+                    ادامه از {formatPlaybackTime(record.position)}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.continueProgressTrack}>
+                <View style={[styles.continueProgressFill, { width: `${percent}%` }]} />
+              </View>
+            </Pressable>
+          );
+        }}
+      />
+    </View>
+  );
+}
+
 function HomeScreen({
   catalog,
   iranianSchedule,
   weeklySchedule,
+  watchProgress,
   onReloadContent,
   onOpen,
   onBrowse,
+  onResume,
+  onRemoveProgress,
 }: {
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
   weeklySchedule: ScheduleEntry[];
+  watchProgress: WatchProgressRecord[];
   onReloadContent: () => void;
   onOpen: (item: CatalogItem) => void;
   onBrowse: (filter: SearchFilter) => void;
+  onResume: (record: WatchProgressRecord) => void;
+  onRemoveProgress: (id: string) => void;
 }) {
   const newest = sortForCatalogFilter(catalog, 'latest');
   const updated = sortForCatalogFilter(
@@ -1303,6 +1416,13 @@ function HomeScreen({
       />
 
       <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} />
+
+      <ContinueWatchingSection
+        records={watchProgress}
+        catalog={catalog}
+        onResume={onResume}
+        onRemove={onRemoveProgress}
+      />
 
       {rows.map((row) => (
         row.items.length ? (
@@ -2580,9 +2700,16 @@ function PersonProfileModal({
 function VideoPlayerModal({
   request,
   onClose,
+  onProgress,
 }: {
   request: VideoRequest;
   onClose: () => void;
+  onProgress: (
+    request: VideoRequest,
+    position: number,
+    duration: number,
+    completed?: boolean,
+  ) => void;
 }) {
   const initialSource =
     request.sources.find((source) => source.id === request.initialSourceId) ||
@@ -2592,12 +2719,51 @@ function VideoPlayerModal({
   const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
   const [displayMode, setDisplayMode] = useState<PlayerDisplayMode>('auto');
   const [switchingQuality, setSwitchingQuality] = useState(false);
+  const latestTimeRef = useRef(Math.max(0, Number(request.resumeAt || 0)));
+  const latestDurationRef = useRef(0);
+  const resumeAppliedRef = useRef(false);
   const player = useVideoPlayer(initialSource.url, (instance) => {
+    instance.timeUpdateEventInterval = 5;
     instance.play();
   });
   const { videoTrack } = useEvent(player, 'videoTrackChange', {
     videoTrack: player.videoTrack,
   });
+
+  useEventListener(player, 'sourceLoad', ({ duration }) => {
+    const safeDuration = Math.max(0, Number(duration || player.duration || 0));
+    latestDurationRef.current = safeDuration;
+    if (!resumeAppliedRef.current && Number(request.resumeAt || 0) > 0) {
+      const maximumResume = safeDuration > 10 ? safeDuration - 5 : Number(request.resumeAt || 0);
+      const resumeAt = Math.max(0, Math.min(Number(request.resumeAt || 0), maximumResume));
+      player.currentTime = resumeAt;
+      latestTimeRef.current = resumeAt;
+      resumeAppliedRef.current = true;
+    }
+  });
+
+  useEventListener(player, 'timeUpdate', ({ currentTime }) => {
+    const position = Math.max(0, Number(currentTime || 0));
+    const duration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+    latestTimeRef.current = position;
+    latestDurationRef.current = duration;
+    onProgress(request, position, duration, false);
+  });
+
+  useEventListener(player, 'playToEnd', () => {
+    const duration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+    latestTimeRef.current = duration;
+    latestDurationRef.current = duration;
+    onProgress(request, duration, duration, true);
+  });
+
+  const closePlayer = () => {
+    const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+    const duration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+    player.pause();
+    onProgress(request, position, duration, false);
+    onClose();
+  };
 
   const automaticContentFit: 'contain' | 'cover' = useMemo(() => {
     const width = Number(videoTrack?.size?.width || 0);
@@ -2653,14 +2819,14 @@ function VideoPlayerModal({
   };
 
   return (
-    <Modal visible animationType="fade" onRequestClose={onClose}>
+    <Modal visible animationType="fade" onRequestClose={closePlayer}>
       <SafeAreaView
         style={styles.mediaModal}
         edges={['top', 'right', 'bottom', 'left']}
       >
         <StatusBar style="light" />
         <View style={styles.mediaModalHeader}>
-          <Pressable onPress={onClose} style={styles.mediaCloseButton}>
+          <Pressable onPress={closePlayer} style={styles.mediaCloseButton}>
             <Ionicons name="close" color="#fff" size={23} />
           </Pressable>
           <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
@@ -2990,6 +3156,8 @@ function AppContent() {
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<CatalogPerson | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
+  const [watchProgress, setWatchProgress] = useState<WatchProgressRecord[]>([]);
+  const [libraryLoaded, setLibraryLoaded] = useState(false);
   const [content, setContent] = useState<LoadedContent | null>(null);
   const [contentLoading, setContentLoading] = useState(true);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
@@ -3008,6 +3176,12 @@ function AppContent() {
   useEffect(() => {
     reloadContent();
     loadDownloadRecords().then(setDownloads);
+    loadLibraryState()
+      .then((library) => {
+        setFavorites(library.favorites);
+        setWatchProgress(library.watchProgress);
+      })
+      .finally(() => setLibraryLoaded(true));
 
     const warningTimer = setTimeout(() => {
       Alert.alert(
@@ -3035,10 +3209,124 @@ function AppContent() {
     return () => clearTimeout(timer);
   }, [downloads]);
 
+  useEffect(() => {
+    if (!libraryLoaded) return undefined;
+    const timer = setTimeout(() => {
+      saveLibraryState({ favorites, watchProgress }).catch(() => undefined);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [favorites, libraryLoaded, watchProgress]);
+
   const toggleFavorite = (id: string) => {
     setFavorites((current) =>
       current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id],
     );
+  };
+
+  const updateWatchProgress = (
+    request: VideoRequest,
+    position: number,
+    duration: number,
+    completed = false,
+  ) => {
+    if (!request.resumeKey || !request.itemId) return;
+
+    const safePosition = Math.max(0, Number(position || 0));
+    const safeDuration = Math.max(0, Number(duration || 0));
+    const finished = completed || (safeDuration > 0 && safePosition / safeDuration >= 0.94);
+
+    setWatchProgress((current) => {
+      const withoutCurrent = current.filter((record) => record.id !== request.resumeKey);
+      if (finished) return withoutCurrent;
+      if (safePosition < 15) return current;
+
+      const catalogItem = content?.items.find((item) => item.id === request.itemId);
+      const source = request.sources.find((candidate) => candidate.id === request.initialSourceId) || request.sources[0];
+      const nextRecord: WatchProgressRecord = {
+        id: request.resumeKey,
+        itemId: request.itemId,
+        title: request.title,
+        subtitle: catalogItem?.name,
+        artwork: request.artwork || catalogItem?.backdrop || catalogItem?.poster,
+        episodeId: request.episodeId,
+        language: request.language,
+        downloadId: request.downloadId,
+        sourceId: source?.id,
+        sourceUrl: source?.url,
+        sourceQuality: source?.quality,
+        position: safePosition,
+        duration: safeDuration,
+        updatedAt: new Date().toISOString(),
+      };
+
+      return [nextRecord, ...withoutCurrent]
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, 20);
+    });
+  };
+
+  const removeWatchProgress = (id: string) => {
+    setWatchProgress((current) => current.filter((record) => record.id !== id));
+  };
+
+  const resumeWatchRecord = (record: WatchProgressRecord) => {
+    if (record.downloadId) {
+      const download = downloadsRef.current.find((candidate) => candidate.id === record.downloadId);
+      if (!download?.localUri || download.status !== 'completed') {
+        removeWatchProgress(record.id);
+        Alert.alert('ادامه تماشا', 'فایل دانلودشده دیگر در حافظه برنامه موجود نیست.');
+        return;
+      }
+
+      const source: PlaybackSource = {
+        id: download.id,
+        url: download.localUri,
+        quality: download.quality || record.sourceQuality || 'فایل ذخیره‌شده',
+        rank: 0,
+      };
+      setVideoRequest({
+        title: download.title,
+        sources: [source],
+        initialSourceId: source.id,
+        resumeKey: record.id,
+        itemId: download.itemId,
+        artwork: record.artwork,
+        downloadId: download.id,
+        resumeAt: record.position,
+      });
+      return;
+    }
+
+    const item = content?.items.find((candidate) => candidate.id === record.itemId);
+    if (!item) {
+      removeWatchProgress(record.id);
+      Alert.alert('ادامه تماشا', 'این عنوان دیگر در فهرست محتوا موجود نیست.');
+      return;
+    }
+
+    const episodeGroup = record.episodeId
+      ? (item.downloads || []).find((section) => section.id === record.episodeId) || null
+      : null;
+    const versions = playableVersionsFor(item, episodeGroup);
+    const version = versions.find((candidate) => candidate.language === record.language) || versions[0];
+
+    if (!version) {
+      setSelectedItem(item);
+      Alert.alert('ادامه تماشا', 'لینک پخش این عنوان تغییر کرده است؛ نسخه موردنظر را دوباره انتخاب کنید.');
+      return;
+    }
+
+    setVideoRequest({
+      title: record.title,
+      sources: version.sources,
+      initialSourceId: version.defaultSource.id,
+      resumeKey: record.id,
+      itemId: item.id,
+      artwork: item.backdrop || item.poster,
+      episodeId: episodeGroup?.id,
+      language: version.language,
+      resumeAt: record.position,
+    });
   };
 
   const openCatalogFilter = (filter: SearchFilter) => {
@@ -3095,11 +3383,36 @@ function AppContent() {
       const episodeLabel = episodeGroup
         ? ` — فصل ${toPersianDigits(episodeGroup.seasonNumber || 1)}، قسمت ${toPersianDigits(episodeGroup.episodeNumber || 0)}`
         : '';
-      setVideoRequest({
-        title: `${item.nameFa}${episodeLabel} — ${languageTitle(version.language)}`,
-        sources: version.sources,
-        initialSourceId: version.defaultSource.id,
-      });
+      const resumeKey = `${item.id}:${episodeGroup?.id || 'main'}:${version.language}`;
+      const previous = watchProgress.find((record) => record.id === resumeKey);
+      const openPlayer = (resumeAt = 0) => {
+        setVideoRequest({
+          title: `${item.nameFa}${episodeLabel} — ${languageTitle(version.language)}`,
+          sources: version.sources,
+          initialSourceId: version.defaultSource.id,
+          resumeKey,
+          itemId: item.id,
+          artwork: item.backdrop || item.poster,
+          episodeId: episodeGroup?.id,
+          language: version.language,
+          resumeAt,
+        });
+      };
+
+      if (previous?.position && previous.position >= 15) {
+        Alert.alert(
+          'ادامه تماشا',
+          `از زمان ${formatPlaybackTime(previous.position)} ادامه داده شود؟`,
+          [
+            { text: 'از ابتدا', onPress: () => openPlayer(0) },
+            { text: 'ادامه', onPress: () => openPlayer(previous.position) },
+            { text: 'انصراف', style: 'cancel' },
+          ],
+        );
+        return;
+      }
+
+      openPlayer();
     };
 
     if (versions.length === 1) {
@@ -3129,7 +3442,34 @@ function AppContent() {
       quality: record.quality || 'فایل ذخیره‌شده',
       rank: 0,
     };
-    setVideoRequest({ title: record.title, sources: [source], initialSourceId: source.id });
+    const resumeKey = `download:${record.id}`;
+    const previous = watchProgress.find((item) => item.id === resumeKey);
+    const openPlayer = (resumeAt = 0) => setVideoRequest({
+      title: record.title,
+      sources: [source],
+      initialSourceId: source.id,
+      resumeKey,
+      itemId: record.itemId,
+      artwork: content?.items.find((item) => item.id === record.itemId)?.backdrop ||
+        content?.items.find((item) => item.id === record.itemId)?.poster,
+      downloadId: record.id,
+      resumeAt,
+    });
+
+    if (previous?.position && previous.position >= 15) {
+      Alert.alert(
+        'ادامه تماشا',
+        `از زمان ${formatPlaybackTime(previous.position)} ادامه داده شود؟`,
+        [
+          { text: 'از ابتدا', onPress: () => openPlayer(0) },
+          { text: 'ادامه', onPress: () => openPlayer(previous.position) },
+          { text: 'انصراف', style: 'cancel' },
+        ],
+      );
+      return;
+    }
+
+    openPlayer();
   };
 
   const executeDownload = async (record: DownloadRecord) => {
@@ -3209,7 +3549,15 @@ function AppContent() {
 
     if (fileMode === 'play') {
       const source: PlaybackSource = { id: file.id, url: file.url, quality: cleanQualityLabel(file.quality), rank: resolutionRank(file) };
-      setVideoRequest({ title: `${item.nameFa} — ${cleanQualityLabel(file.quality)}`, sources: [source], initialSourceId: source.id });
+      setVideoRequest({
+        title: `${item.nameFa} — ${cleanQualityLabel(file.quality)}`,
+        sources: [source],
+        initialSourceId: source.id,
+        resumeKey: `${item.id}:main:${file.language || 'direct'}`,
+        itemId: item.id,
+        artwork: item.backdrop || item.poster,
+        language: file.language,
+      });
       return;
     }
 
@@ -3285,6 +3633,7 @@ function AppContent() {
     await cancelDownload(record.id).catch(() => undefined);
     await removeDownloadedFile(record.localUri, record.destinationUri).catch(() => undefined);
     setDownloads((current) => current.filter((item) => item.id !== record.id));
+    setWatchProgress((current) => current.filter((item) => item.downloadId !== record.id));
   };
 
   const confirmDeleteDownload = (record: DownloadRecord) => {
@@ -3347,9 +3696,12 @@ function AppContent() {
             catalog={content.items}
             iranianSchedule={content.iranianSchedule}
             weeklySchedule={content.weeklySchedule || []}
+            watchProgress={watchProgress}
             onReloadContent={reloadContent}
             onOpen={setSelectedItem}
             onBrowse={openCatalogFilter}
+            onResume={resumeWatchRecord}
+            onRemoveProgress={removeWatchProgress}
           />
         ) : null}
         {activeTab === 'search' ? (
@@ -3416,6 +3768,7 @@ function AppContent() {
         <VideoPlayerModal
           request={videoRequest}
           onClose={() => setVideoRequest(null)}
+          onProgress={updateWatchProgress}
         />
       ) : null}
       {operatorGateRequest ? (
@@ -3462,6 +3815,19 @@ const styles = StyleSheet.create({
   retryButton: { marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12, backgroundColor: COLORS.red },
   retryButtonText: { color: '#fff', fontSize: 11, fontWeight: '900' },
   homeContent: { paddingBottom: 34 },
+  continueSection: { marginTop: 28 },
+  continueList: { flexDirection: 'row-reverse', gap: 12, paddingHorizontal: 18, paddingBottom: 3 },
+  continueCard: { width: 238, borderRadius: 15, overflow: 'hidden', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  continueArtworkWrap: { width: '100%', height: 134, position: 'relative', overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
+  continueArtwork: { width: '100%', height: '100%' },
+  continueArtworkFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#151920' },
+  continuePlayIcon: { position: 'absolute', left: 12, bottom: 12, width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.red },
+  continueRemoveButton: { position: 'absolute', top: 9, left: 9, width: 28, height: 28, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.78)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  continueCardText: { position: 'absolute', right: 12, left: 56, bottom: 12, alignItems: 'flex-end' },
+  continueTitle: { ...rtlText, width: '100%', color: '#fff', fontSize: 12, fontWeight: '900' },
+  continueMeta: { ...rtlText, width: '100%', color: '#D4D7DB', fontSize: 8.5, marginTop: 5 },
+  continueProgressTrack: { width: '100%', height: 5, backgroundColor: '#090B0F' },
+  continueProgressFill: { height: '100%', backgroundColor: COLORS.red },
   tabScreenContent: { paddingHorizontal: 16, paddingBottom: 28, paddingTop: 18 },
   header: {
     height: 66,
