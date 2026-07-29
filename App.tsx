@@ -47,6 +47,7 @@ import {
   saveDownloadRecords,
 } from './src/downloadManager';
 import {
+  WatchHistoryRecord,
   WatchProgressRecord,
   loadLibraryState,
   saveLibraryState,
@@ -296,6 +297,33 @@ const watchProgressPercent = (record: WatchProgressRecord) =>
   record.duration > 0
     ? Math.max(0, Math.min(100, Math.round((record.position / record.duration) * 100)))
     : 0;
+
+const formatStorageSize = (bytes: number) => {
+  const safeBytes = Math.max(0, Number(bytes || 0));
+  if (safeBytes < 1024) return `${toPersianDigits(Math.round(safeBytes))} بایت`;
+  const units = ['کیلوبایت', 'مگابایت', 'گیگابایت', 'ترابایت'];
+  let value = safeBytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${toPersianDigits(value.toFixed(decimals))} ${units[unitIndex]}`;
+};
+
+const historyDateLabel = (value: string) => {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return '';
+  const day = 24 * 60 * 60 * 1000;
+  const difference = Date.now() - timestamp;
+  if (difference < day) return 'امروز';
+  if (difference < day * 2) return 'دیروز';
+  const date = new Date(timestamp);
+  return toPersianDigits(
+    `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`,
+  );
+};
 
 type OperatorWebRequest = {
   title: string;
@@ -1896,31 +1924,149 @@ function SearchScreen({
 function FavoritesScreen({
   catalog,
   favorites,
+  watchHistory,
   onOpen,
+  onOpenHistory,
+  onRemoveHistory,
+  onClearHistory,
 }: {
   catalog: CatalogItem[];
   favorites: string[];
+  watchHistory: WatchHistoryRecord[];
   onOpen: (item: CatalogItem) => void;
+  onOpenHistory: (record: WatchHistoryRecord) => void;
+  onRemoveHistory: (id: string) => void;
+  onClearHistory: () => void;
 }) {
+  const [view, setView] = useState<'favorites' | 'history'>('favorites');
   const items = catalog.filter((item) => favorites.includes(item.id));
+  const history = watchHistory
+    .filter((record) => catalog.some((item) => item.id === record.itemId) || record.downloadId)
+    .slice(0, 100);
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
       <View style={styles.simpleHeader}>
         <Logo />
-        <Text style={styles.simpleHeaderTitle}>نشان‌شده‌ها</Text>
+        <Text style={styles.simpleHeaderTitle}>کتابخانه من</Text>
       </View>
-      {!items.length ? (
-        <View style={styles.largeEmpty}>
-          <View style={styles.largeEmptyIcon}>
-            <Ionicons name="bookmark-outline" color={COLORS.gold} size={34} />
+
+      <View style={styles.libraryTabs}>
+        <Pressable
+          onPress={() => setView('favorites')}
+          style={[styles.libraryTab, view === 'favorites' && styles.libraryTabActive]}
+        >
+          <Ionicons
+            name={view === 'favorites' ? 'bookmark' : 'bookmark-outline'}
+            color={view === 'favorites' ? COLORS.gold : COLORS.muted}
+            size={17}
+          />
+          <Text style={[styles.libraryTabText, view === 'favorites' && styles.libraryTabTextActive]}>
+            نشان‌شده‌ها ({toPersianDigits(items.length)})
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setView('history')}
+          style={[styles.libraryTab, view === 'history' && styles.libraryTabActive]}
+        >
+          <Ionicons
+            name={view === 'history' ? 'time' : 'time-outline'}
+            color={view === 'history' ? COLORS.gold : COLORS.muted}
+            size={17}
+          />
+          <Text style={[styles.libraryTabText, view === 'history' && styles.libraryTabTextActive]}>
+            تاریخچه ({toPersianDigits(history.length)})
+          </Text>
+        </Pressable>
+      </View>
+
+      {view === 'favorites' ? (
+        !items.length ? (
+          <View style={styles.largeEmpty}>
+            <View style={styles.largeEmptyIcon}>
+              <Ionicons name="bookmark-outline" color={COLORS.gold} size={34} />
+            </View>
+            <Text style={styles.largeEmptyTitle}>فهرستت هنوز خالی است</Text>
+            <Text style={styles.largeEmptyText}>فیلم‌ها و سریال‌های مورد علاقه‌ات را نشان کن تا اینجا بمانند.</Text>
           </View>
-          <Text style={styles.largeEmptyTitle}>فهرستت هنوز خالی است</Text>
-          <Text style={styles.largeEmptyText}>فیلم‌ها و سریال‌های مورد علاقه‌ات را نشان کن تا اینجا بمانند.</Text>
-        </View>
+        ) : (
+          <View style={styles.searchGrid}>
+            {items.map((item) => <PosterCard key={item.id} item={item} onOpen={() => onOpen(item)} />)}
+          </View>
+        )
       ) : (
-        <View style={styles.searchGrid}>
-          {items.map((item) => <PosterCard key={item.id} item={item} onOpen={() => onOpen(item)} />)}
-        </View>
+        <>
+          {history.length ? (
+            <View style={styles.historyToolbar}>
+              <Text style={styles.historyToolbarText}>آخرین {toPersianDigits(history.length)} مورد تماشا</Text>
+              <Pressable onPress={onClearHistory} style={styles.historyClearButton}>
+                <Ionicons name="trash-outline" color={COLORS.red} size={15} />
+                <Text style={styles.historyClearText}>پاک‌کردن تاریخچه</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {!history.length ? (
+            <View style={styles.largeEmpty}>
+              <View style={styles.largeEmptyIcon}>
+                <Ionicons name="time-outline" color={COLORS.gold} size={35} />
+              </View>
+              <Text style={styles.largeEmptyTitle}>تاریخچه‌ای ثبت نشده</Text>
+              <Text style={styles.largeEmptyText}>بعد از حداقل ۱۵ ثانیه تماشا، سابقه پخش اینجا نمایش داده می‌شود.</Text>
+            </View>
+          ) : (
+            <View style={styles.historyList}>
+              {history.map((record) => {
+                const catalogItem = catalog.find((item) => item.id === record.itemId);
+                const artwork = record.artwork || catalogItem?.poster || catalogItem?.backdrop;
+                const percent = watchProgressPercent(record);
+                return (
+                  <Pressable key={record.id} onPress={() => onOpenHistory(record)} style={styles.historyCard}>
+                    <View style={styles.historyArtworkWrap}>
+                      {artwork ? (
+                        <Image source={{ uri: artwork }} style={styles.historyArtwork} contentFit="cover" transition={180} />
+                      ) : (
+                        <View style={styles.historyArtworkFallback}>
+                          <Ionicons name="film-outline" color={COLORS.gold} size={23} />
+                        </View>
+                      )}
+                      <View style={styles.historyArtworkPlay}>
+                        <Ionicons name={record.completed ? 'refresh' : 'play'} color="#fff" size={14} />
+                      </View>
+                    </View>
+                    <View style={styles.historyBody}>
+                      <View style={styles.historyTitleRow}>
+                        <Text numberOfLines={1} style={styles.historyTitle}>{record.title}</Text>
+                        <Pressable
+                          onPress={(event) => {
+                            event.stopPropagation();
+                            onRemoveHistory(record.id);
+                          }}
+                          hitSlop={8}
+                          style={styles.historyRemoveButton}
+                        >
+                          <Ionicons name="close" color={COLORS.muted} size={15} />
+                        </Pressable>
+                      </View>
+                      <Text numberOfLines={1} style={styles.historySubtitle}>
+                        {[record.sourceQuality, historyDateLabel(record.updatedAt)].filter(Boolean).join(' • ')}
+                      </Text>
+                      <Text style={[styles.historyStatus, record.completed && styles.historyStatusCompleted]}>
+                        {record.completed
+                          ? 'تماشا شده؛ برای مشاهده دوباره بزنید'
+                          : `آخرین توقف: ${formatPlaybackTime(record.position)}`}
+                      </Text>
+                      {!record.completed && record.duration > 0 ? (
+                        <View style={styles.historyProgressTrack}>
+                          <View style={[styles.historyProgressFill, { width: `${percent}%` }]} />
+                        </View>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+        </>
       )}
     </ScrollView>
   );
@@ -1932,18 +2078,69 @@ function DownloadsScreen({
   onPause,
   onResume,
   onMenu,
+  onClearIncomplete,
+  onClearCompleted,
 }: {
   downloads: DownloadRecord[];
   onPlay: (record: DownloadRecord) => void;
   onPause: (record: DownloadRecord) => void;
   onResume: (record: DownloadRecord) => void;
   onMenu: (record: DownloadRecord) => void;
+  onClearIncomplete: () => void;
+  onClearCompleted: () => void;
 }) {
+  const completedCount = downloads.filter((record) => record.status === 'completed').length;
+  const incompleteCount = downloads.length - completedCount;
+  const storedBytes = downloads.reduce((total, record) => {
+    const bytes = record.status === 'completed'
+      ? Number(record.totalBytes || record.bytesWritten || 0)
+      : Number(record.bytesWritten || 0);
+    return total + Math.max(0, bytes);
+  }, 0);
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
       <View style={styles.simpleHeader}>
         <Logo />
         <Text style={styles.simpleHeaderTitle}>دریافت‌ها</Text>
+      </View>
+      <View style={styles.storageSummary}>
+        <View style={styles.storageSummaryMain}>
+          <View style={styles.storageSummaryIcon}>
+            <Ionicons name="phone-portrait-outline" color={COLORS.gold} size={23} />
+          </View>
+          <View style={styles.storageSummaryText}>
+            <Text style={styles.storageSummaryTitle}>حافظه مصرف‌شده داخل برنامه</Text>
+            <Text style={styles.storageSummaryValue}>{formatStorageSize(storedBytes)}</Text>
+          </View>
+        </View>
+        <View style={styles.storageStatsRow}>
+          <View style={styles.storageStat}>
+            <Text style={styles.storageStatValue}>{toPersianDigits(completedCount)}</Text>
+            <Text style={styles.storageStatLabel}>فایل کامل</Text>
+          </View>
+          <View style={styles.storageStatDivider} />
+          <View style={styles.storageStat}>
+            <Text style={styles.storageStatValue}>{toPersianDigits(incompleteCount)}</Text>
+            <Text style={styles.storageStatLabel}>ناتمام</Text>
+          </View>
+        </View>
+        {downloads.length ? (
+          <View style={styles.storageActions}>
+            {incompleteCount ? (
+              <Pressable onPress={onClearIncomplete} style={styles.storageActionButton}>
+                <Ionicons name="close-circle-outline" color={COLORS.muted} size={16} />
+                <Text style={styles.storageActionText}>حذف دانلودهای ناتمام</Text>
+              </Pressable>
+            ) : null}
+            {completedCount ? (
+              <Pressable onPress={onClearCompleted} style={[styles.storageActionButton, styles.storageActionDanger]}>
+                <Ionicons name="trash-outline" color={COLORS.red} size={16} />
+                <Text style={[styles.storageActionText, styles.storageActionDangerText]}>حذف فایل‌های کامل</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
       </View>
       {!downloads.length ? (
         <View style={styles.largeEmpty}>
@@ -3125,7 +3322,7 @@ function BottomNavigation({
   const tabs: { id: MainTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { id: 'home', label: 'خانه', icon: 'home-outline' },
     { id: 'search', label: 'جست‌وجو', icon: 'search-outline' },
-    { id: 'favorites', label: 'نشان‌شده', icon: 'bookmark-outline' },
+    { id: 'favorites', label: 'کتابخانه', icon: 'bookmark-outline' },
     { id: 'downloads', label: 'دریافت‌ها', icon: 'download-outline' },
   ];
 
@@ -3157,6 +3354,7 @@ function AppContent() {
   const [selectedPerson, setSelectedPerson] = useState<CatalogPerson | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [watchProgress, setWatchProgress] = useState<WatchProgressRecord[]>([]);
+  const [watchHistory, setWatchHistory] = useState<WatchHistoryRecord[]>([]);
   const [libraryLoaded, setLibraryLoaded] = useState(false);
   const [content, setContent] = useState<LoadedContent | null>(null);
   const [contentLoading, setContentLoading] = useState(true);
@@ -3180,6 +3378,7 @@ function AppContent() {
       .then((library) => {
         setFavorites(library.favorites);
         setWatchProgress(library.watchProgress);
+        setWatchHistory(library.watchHistory);
       })
       .finally(() => setLibraryLoaded(true));
 
@@ -3212,10 +3411,10 @@ function AppContent() {
   useEffect(() => {
     if (!libraryLoaded) return undefined;
     const timer = setTimeout(() => {
-      saveLibraryState({ favorites, watchProgress }).catch(() => undefined);
+      saveLibraryState({ favorites, watchProgress, watchHistory }).catch(() => undefined);
     }, 500);
     return () => clearTimeout(timer);
-  }, [favorites, libraryLoaded, watchProgress]);
+  }, [favorites, libraryLoaded, watchHistory, watchProgress]);
 
   const toggleFavorite = (id: string) => {
     setFavorites((current) =>
@@ -3234,14 +3433,42 @@ function AppContent() {
     const safePosition = Math.max(0, Number(position || 0));
     const safeDuration = Math.max(0, Number(duration || 0));
     const finished = completed || (safeDuration > 0 && safePosition / safeDuration >= 0.94);
+    const catalogItem = content?.items.find((item) => item.id === request.itemId);
+    const source = request.sources.find((candidate) => candidate.id === request.initialSourceId) || request.sources[0];
+    const updatedAt = new Date().toISOString();
+
+    if (finished || safePosition >= 15) {
+      const historyRecord: WatchHistoryRecord = {
+        id: request.resumeKey,
+        itemId: request.itemId,
+        title: request.title,
+        subtitle: catalogItem?.name,
+        artwork: request.artwork || catalogItem?.backdrop || catalogItem?.poster,
+        episodeId: request.episodeId,
+        language: request.language,
+        downloadId: request.downloadId,
+        sourceId: source?.id,
+        sourceUrl: source?.url,
+        sourceQuality: source?.quality,
+        position: safePosition,
+        duration: safeDuration,
+        completed: finished,
+        updatedAt,
+      };
+
+      setWatchHistory((current) => [
+        historyRecord,
+        ...current.filter((record) => record.id !== request.resumeKey),
+      ]
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, 100));
+    }
 
     setWatchProgress((current) => {
       const withoutCurrent = current.filter((record) => record.id !== request.resumeKey);
       if (finished) return withoutCurrent;
       if (safePosition < 15) return current;
 
-      const catalogItem = content?.items.find((item) => item.id === request.itemId);
-      const source = request.sources.find((candidate) => candidate.id === request.initialSourceId) || request.sources[0];
       const nextRecord: WatchProgressRecord = {
         id: request.resumeKey,
         itemId: request.itemId,
@@ -3256,7 +3483,7 @@ function AppContent() {
         sourceQuality: source?.quality,
         position: safePosition,
         duration: safeDuration,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
       };
 
       return [nextRecord, ...withoutCurrent]
@@ -3267,6 +3494,21 @@ function AppContent() {
 
   const removeWatchProgress = (id: string) => {
     setWatchProgress((current) => current.filter((record) => record.id !== id));
+  };
+
+  const removeWatchHistory = (id: string) => {
+    setWatchHistory((current) => current.filter((record) => record.id !== id));
+  };
+
+  const confirmClearWatchHistory = () => {
+    Alert.alert(
+      'پاک‌کردن تاریخچه',
+      'تمام سابقه تماشای ذخیره‌شده روی این گوشی پاک شود؟ علاقه‌مندی‌ها و فایل‌های دانلودشده حذف نمی‌شوند.',
+      [
+        { text: 'انصراف', style: 'cancel' },
+        { text: 'پاک‌کردن', style: 'destructive', onPress: () => setWatchHistory([]) },
+      ],
+    );
   };
 
   const resumeWatchRecord = (record: WatchProgressRecord) => {
@@ -3327,6 +3569,17 @@ function AppContent() {
       language: version.language,
       resumeAt: record.position,
     });
+  };
+
+  const openWatchHistoryRecord = (record: WatchHistoryRecord) => {
+    if (record.completed) {
+      const item = content?.items.find((candidate) => candidate.id === record.itemId);
+      if (item) {
+        setSelectedItem(item);
+        return;
+      }
+    }
+    resumeWatchRecord(record);
   };
 
   const openCatalogFilter = (filter: SearchFilter) => {
@@ -3634,6 +3887,7 @@ function AppContent() {
     await removeDownloadedFile(record.localUri, record.destinationUri).catch(() => undefined);
     setDownloads((current) => current.filter((item) => item.id !== record.id));
     setWatchProgress((current) => current.filter((item) => item.downloadId !== record.id));
+    setWatchHistory((current) => current.filter((item) => item.downloadId !== record.id));
   };
 
   const confirmDeleteDownload = (record: DownloadRecord) => {
@@ -3643,6 +3897,44 @@ function AppContent() {
       [
         { text: 'انصراف', style: 'cancel' },
         { text: 'حذف', style: 'destructive', onPress: () => void deleteDownloadNow(record) },
+      ],
+    );
+  };
+
+  const removeDownloadBatch = async (records: DownloadRecord[]) => {
+    if (!records.length) return;
+    const ids = new Set(records.map((record) => record.id));
+    await Promise.all(records.map(async (record) => {
+      await cancelDownload(record.id).catch(() => undefined);
+      await removeDownloadedFile(record.localUri, record.destinationUri).catch(() => undefined);
+    }));
+    setDownloads((current) => current.filter((record) => !ids.has(record.id)));
+    setWatchProgress((current) => current.filter((record) => !record.downloadId || !ids.has(record.downloadId)));
+    setWatchHistory((current) => current.filter((record) => !record.downloadId || !ids.has(record.downloadId)));
+  };
+
+  const confirmClearIncompleteDownloads = () => {
+    const records = downloadsRef.current.filter((record) => record.status !== 'completed');
+    if (!records.length) return;
+    Alert.alert(
+      'حذف دانلودهای ناتمام',
+      `${toPersianDigits(records.length)} دانلود ناتمام و فایل‌های موقت آن‌ها از حافظه برنامه حذف شوند؟`,
+      [
+        { text: 'انصراف', style: 'cancel' },
+        { text: 'حذف', style: 'destructive', onPress: () => void removeDownloadBatch(records) },
+      ],
+    );
+  };
+
+  const confirmClearCompletedDownloads = () => {
+    const records = downloadsRef.current.filter((record) => record.status === 'completed');
+    if (!records.length) return;
+    Alert.alert(
+      'حذف فایل‌های کامل',
+      `${toPersianDigits(records.length)} فایل دانلودشده از حافظه داخلی برنامه حذف شوند؟ نسخه‌هایی که جداگانه در گالری ذخیره شده‌اند باقی می‌مانند.`,
+      [
+        { text: 'انصراف', style: 'cancel' },
+        { text: 'حذف همه', style: 'destructive', onPress: () => void removeDownloadBatch(records) },
       ],
     );
   };
@@ -3712,7 +4004,15 @@ function AppContent() {
           />
         ) : null}
         {activeTab === 'favorites' ? (
-          <FavoritesScreen catalog={content.items} favorites={favorites} onOpen={setSelectedItem} />
+          <FavoritesScreen
+            catalog={content.items}
+            favorites={favorites}
+            watchHistory={watchHistory}
+            onOpen={setSelectedItem}
+            onOpenHistory={openWatchHistoryRecord}
+            onRemoveHistory={removeWatchHistory}
+            onClearHistory={confirmClearWatchHistory}
+          />
         ) : null}
         {activeTab === 'downloads' ? (
           <DownloadsScreen
@@ -3721,6 +4021,8 @@ function AppContent() {
             onPause={pauseDownloadRecord}
             onResume={resumeDownloadRecord}
             onMenu={showDownloadMenu}
+            onClearIncomplete={confirmClearIncompleteDownloads}
+            onClearCompleted={confirmClearCompletedDownloads}
           />
         ) : null}
         {contentLoading ? (
@@ -4195,5 +4497,47 @@ const styles = StyleSheet.create({
   videoView: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   webView: { flex: 1, backgroundColor: '#fff' },
   webLoading: { ...StyleSheet.absoluteFillObject, top: 62, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)' },
+
+  libraryTabs: { flexDirection: 'row-reverse', gap: 7, padding: 5, marginBottom: 18, borderRadius: 14, backgroundColor: '#090B0F', borderWidth: 1, borderColor: COLORS.border },
+  libraryTab: { flex: 1, minHeight: 45, borderRadius: 10, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  libraryTabActive: { backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: 'rgba(216,180,90,0.26)' },
+  libraryTabText: { color: COLORS.muted, fontSize: 9.5, fontWeight: '800' },
+  libraryTabTextActive: { color: COLORS.text },
+  historyToolbar: { minHeight: 44, marginBottom: 12, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
+  historyToolbarText: { ...rtlText, color: COLORS.muted, fontSize: 9.5, fontWeight: '700' },
+  historyClearButton: { minHeight: 34, paddingHorizontal: 10, borderRadius: 10, flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: 'rgba(222,35,66,0.07)', borderWidth: 1, borderColor: 'rgba(222,35,66,0.2)' },
+  historyClearText: { color: COLORS.red, fontSize: 8.5, fontWeight: '900' },
+  historyList: { gap: 10 },
+  historyCard: { minHeight: 94, padding: 8, borderRadius: 15, flexDirection: 'row-reverse', alignItems: 'center', gap: 11, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  historyArtworkWrap: { width: 116, height: 77, borderRadius: 11, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
+  historyArtwork: { width: '100%', height: '100%' },
+  historyArtworkFallback: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  historyArtworkPlay: { position: 'absolute', left: 7, bottom: 7, width: 29, height: 29, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.94)' },
+  historyBody: { minWidth: 0, flex: 1, alignItems: 'flex-end' },
+  historyTitleRow: { width: '100%', flexDirection: 'row-reverse', alignItems: 'center', gap: 7 },
+  historyTitle: { ...rtlText, minWidth: 0, flex: 1, color: COLORS.text, fontSize: 11, fontWeight: '900' },
+  historyRemoveButton: { width: 29, height: 29, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong },
+  historySubtitle: { width: '100%', color: COLORS.muted, fontSize: 8, textAlign: 'right', marginTop: 4 },
+  historyStatus: { ...rtlText, width: '100%', color: COLORS.gold, fontSize: 8.5, fontWeight: '800', marginTop: 7 },
+  historyStatusCompleted: { color: '#65C58A' },
+  historyProgressTrack: { width: '100%', height: 4, borderRadius: 3, overflow: 'hidden', backgroundColor: '#080A0E', marginTop: 7 },
+  historyProgressFill: { height: '100%', backgroundColor: COLORS.red },
+  storageSummary: { marginBottom: 18, padding: 15, borderRadius: 17, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.24)' },
+  storageSummaryMain: { flexDirection: 'row-reverse', alignItems: 'center', gap: 11 },
+  storageSummaryIcon: { width: 47, height: 47, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.26)' },
+  storageSummaryText: { flex: 1, alignItems: 'flex-end' },
+  storageSummaryTitle: { ...rtlText, color: COLORS.muted, fontSize: 8.5, fontWeight: '800' },
+  storageSummaryValue: { color: COLORS.text, fontSize: 18, fontWeight: '900', marginTop: 5 },
+  storageStatsRow: { minHeight: 56, marginTop: 14, flexDirection: 'row-reverse', alignItems: 'center', borderRadius: 12, backgroundColor: '#0B0E13' },
+  storageStat: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  storageStatValue: { color: COLORS.gold, fontSize: 13, fontWeight: '900' },
+  storageStatLabel: { color: COLORS.muted, fontSize: 8, marginTop: 4 },
+  storageStatDivider: { width: 1, height: 30, backgroundColor: COLORS.border },
+  storageActions: { marginTop: 11, flexDirection: 'row-reverse', gap: 8 },
+  storageActionButton: { flex: 1, minHeight: 40, paddingHorizontal: 8, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  storageActionDanger: { backgroundColor: 'rgba(222,35,66,0.06)', borderColor: 'rgba(222,35,66,0.2)' },
+  storageActionText: { color: COLORS.muted, fontSize: 7.8, fontWeight: '800' },
+  storageActionDangerText: { color: COLORS.red },
+
 
 });
