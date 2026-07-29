@@ -1,4 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
+import { useEvent } from 'expo';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -47,6 +48,7 @@ import {
 } from './src/downloadManager';
 
 type MainTab = 'home' | 'search' | 'favorites' | 'downloads';
+type PlayerDisplayMode = 'auto' | 'fit' | 'fill';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
 type CountrySearchFilter = `country:${string}`;
 type SearchFilter =
@@ -2253,10 +2255,45 @@ function VideoPlayerModal({
     request.sources[0];
   const [activeSource, setActiveSource] = useState(initialSource);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
+  const [displayMode, setDisplayMode] = useState<PlayerDisplayMode>('auto');
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const player = useVideoPlayer(initialSource.url, (instance) => {
     instance.play();
   });
+  const { videoTrack } = useEvent(player, 'videoTrackChange', {
+    videoTrack: player.videoTrack,
+  });
+
+  const automaticContentFit: 'contain' | 'cover' = useMemo(() => {
+    const width = Number(videoTrack?.size?.width || 0);
+    const height = Number(videoTrack?.size?.height || 0);
+    if (!width || !height) return 'contain';
+
+    const videoAspect = width / height;
+    const frameAspect = 16 / 9;
+    const relativeDifference = Math.abs(videoAspect - frameAspect) / frameAspect;
+    return relativeDifference <= 0.08 ? 'cover' : 'contain';
+  }, [videoTrack?.size?.height, videoTrack?.size?.width]);
+
+  const videoContentFit: 'contain' | 'cover' =
+    displayMode === 'fit'
+      ? 'contain'
+      : displayMode === 'fill'
+        ? 'cover'
+        : automaticContentFit;
+
+  const displayModeLabel =
+    displayMode === 'fit'
+      ? 'کامل'
+      : displayMode === 'fill'
+        ? 'پر کردن'
+        : 'خودکار';
+
+  const selectDisplayMode = (mode: PlayerDisplayMode) => {
+    setDisplayMode(mode);
+    setDisplayMenuOpen(false);
+  };
 
   const switchQuality = async (nextSource: PlaybackSource) => {
     if (nextSource.id === activeSource.id || switchingQuality) {
@@ -2294,7 +2331,21 @@ function VideoPlayerModal({
           </Pressable>
           <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
           <Pressable
-            onPress={() => request.sources.length > 1 && setQualityMenuOpen(true)}
+            onPress={() => {
+              setQualityMenuOpen(false);
+              setDisplayMenuOpen(true);
+            }}
+            style={styles.playerDisplayButton}
+          >
+            <Ionicons name="scan-outline" color={COLORS.gold} size={17} />
+            <Text style={styles.playerDisplayButtonText}>{displayModeLabel}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              if (request.sources.length <= 1) return;
+              setDisplayMenuOpen(false);
+              setQualityMenuOpen(true);
+            }}
             style={[styles.playerQualityButton, request.sources.length <= 1 && styles.playerQualityButtonDisabled]}
           >
             <Ionicons name="settings-outline" color={COLORS.gold} size={18} />
@@ -2306,7 +2357,7 @@ function VideoPlayerModal({
             player={player}
             style={styles.videoView}
             nativeControls
-            contentFit="contain"
+            contentFit={videoContentFit}
             allowsPictureInPicture
           />
           {switchingQuality ? (
@@ -2339,6 +2390,61 @@ function VideoPlayerModal({
                         color={selected ? COLORS.gold : COLORS.muted}
                         size={20}
                       />
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+          {displayMenuOpen ? (
+            <View style={styles.playerQualityOverlay}>
+              <Pressable style={StyleSheet.absoluteFill} onPress={() => setDisplayMenuOpen(false)} />
+              <View style={styles.playerDisplayCard}>
+                <View style={styles.playerQualityHeader}>
+                  <Text style={styles.playerQualityTitle}>اندازه نمایش تصویر</Text>
+                  <Text style={styles.playerQualityDescription}>این تنظیم فقط نحوه نمایش ویدئو را تغییر می‌دهد.</Text>
+                </View>
+                {[
+                  {
+                    id: 'auto' as const,
+                    title: 'خودکار',
+                    description: 'ویدئوهای نزدیک ۱۶:۹ صفحه را پر می‌کنند؛ بقیه کامل نمایش داده می‌شوند.',
+                    icon: 'scan-outline' as const,
+                  },
+                  {
+                    id: 'fit' as const,
+                    title: 'نمایش کامل',
+                    description: 'تمام تصویر بدون برش دیده می‌شود و ممکن است نوار سیاه داشته باشد.',
+                    icon: 'contract-outline' as const,
+                  },
+                  {
+                    id: 'fill' as const,
+                    title: 'پر کردن صفحه',
+                    description: 'قاب کامل پر می‌شود و ممکن است بخش کمی از لبه‌های تصویر بریده شود.',
+                    icon: 'expand-outline' as const,
+                  },
+                ].map((option) => {
+                  const selected = option.id === displayMode;
+                  return (
+                    <Pressable
+                      key={option.id}
+                      onPress={() => selectDisplayMode(option.id)}
+                      style={[styles.playerDisplayOption, selected && styles.playerQualityOptionSelected]}
+                    >
+                      <View style={styles.playerDisplayOptionText}>
+                        <Text style={[styles.playerDisplayOptionTitle, selected && styles.playerQualityOptionTextSelected]}>
+                          {option.title}
+                        </Text>
+                        <Text style={styles.playerDisplayOptionDescription}>{option.description}</Text>
+                      </View>
+                      <View style={styles.playerDisplayOptionIcon}>
+                        <Ionicons name={option.icon} color={selected ? COLORS.gold : COLORS.muted} size={20} />
+                        <Ionicons
+                          name={selected ? 'radio-button-on' : 'radio-button-off'}
+                          color={selected ? COLORS.gold : COLORS.muted}
+                          size={18}
+                        />
+                      </View>
                     </Pressable>
                   );
                 })}
@@ -3256,13 +3362,21 @@ const styles = StyleSheet.create({
   downloadLibraryMenu: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
   progressTrack: { width: '100%', height: 6, borderRadius: 4, overflow: 'hidden', backgroundColor: '#080A0E', marginTop: 11 },
   progressFill: { height: '100%', borderRadius: 4, backgroundColor: COLORS.gold },
-  playerQualityButton: { minWidth: 82, height: 38, paddingHorizontal: 9, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
+  playerDisplayButton: { minWidth: 72, height: 38, paddingHorizontal: 8, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
+  playerDisplayButtonText: { color: COLORS.text, fontSize: 9, fontWeight: '900' },
+  playerQualityButton: { minWidth: 76, height: 38, paddingHorizontal: 8, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
   playerQualityButtonDisabled: { opacity: 0.55 },
-  playerQualityButtonText: { color: COLORS.text, fontSize: 10, fontWeight: '900' },
+  playerQualityButtonText: { color: COLORS.text, fontSize: 9.5, fontWeight: '900' },
   qualitySwitchLoading: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.72)' },
   qualitySwitchLoadingText: { ...rtlText, color: COLORS.text, fontSize: 11, fontWeight: '800', marginTop: 12 },
   playerQualityOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.56)', paddingHorizontal: 24 },
   playerQualityCard: { width: '100%', maxWidth: 330, borderRadius: 18, padding: 14, backgroundColor: '#101319', borderWidth: 1, borderColor: COLORS.border },
+  playerDisplayCard: { width: '100%', maxWidth: 370, borderRadius: 18, padding: 14, backgroundColor: '#101319', borderWidth: 1, borderColor: COLORS.border },
+  playerDisplayOption: { minHeight: 76, paddingHorizontal: 12, paddingVertical: 10, marginTop: 7, borderRadius: 12, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: '#0B0E13', borderWidth: 1, borderColor: COLORS.border },
+  playerDisplayOptionText: { flex: 1, alignItems: 'flex-end' },
+  playerDisplayOptionTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900' },
+  playerDisplayOptionDescription: { ...rtlText, color: COLORS.muted, fontSize: 8.5, lineHeight: 16, marginTop: 4 },
+  playerDisplayOptionIcon: { width: 28, alignItems: 'center', justifyContent: 'center', gap: 7 },
   playerQualityHeader: { alignItems: 'flex-end', paddingHorizontal: 4, paddingBottom: 10 },
   playerQualityTitle: { ...rtlText, color: COLORS.text, fontSize: 15, fontWeight: '900' },
   playerQualityDescription: { ...rtlText, color: COLORS.muted, fontSize: 9, marginTop: 5 },
@@ -3346,9 +3460,9 @@ const styles = StyleSheet.create({
   personWorksEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 18, textAlign: 'center', marginTop: 6 },
   mediaModal: { flex: 1, backgroundColor: '#000' },
   webModal: { flex: 1, backgroundColor: COLORS.background },
-  mediaModalHeader: { height: 62, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  mediaCloseButton: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong },
-  mediaModalTitle: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 14, fontWeight: '900' },
+  mediaModalHeader: { height: 62, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  mediaCloseButton: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong },
+  mediaModalTitle: { ...rtlText, minWidth: 0, flex: 1, color: COLORS.text, fontSize: 12.5, fontWeight: '900' },
   videoStage: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   videoView: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
   webView: { flex: 1, backgroundColor: '#fff' },
