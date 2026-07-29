@@ -50,6 +50,11 @@ export type CatalogItem = {
   nameFa: string;
   name: string;
   imdb?: string;
+  /** شناسه پایدار کالکشن؛ هرگز از شباهت نام ساخته نمی‌شود. */
+  collectionId?: string;
+  collectionNameFa?: string;
+  collectionName?: string;
+  collectionOrder?: number;
   poster: string;
   backdrop: string;
   overview: string;

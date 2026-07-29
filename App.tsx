@@ -497,6 +497,23 @@ const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
   return [...items].sort((a, b) => catalogItemTimestamp(b) - catalogItemTimestamp(a));
 };
 
+const collectionMembersFor = (item: CatalogItem, catalog: CatalogItem[]) => {
+  if (item.type !== 'movie' || !item.collectionId) return [];
+
+  return catalog
+    .filter((candidate) =>
+      candidate.type === 'movie' &&
+      candidate.collectionId === item.collectionId,
+    )
+    .sort((a, b) => {
+      const aOrder = Number(a.collectionOrder || 0);
+      const bOrder = Number(b.collectionOrder || 0);
+      if (aOrder > 0 && bOrder > 0 && aOrder !== bOrder) return aOrder - bOrder;
+      if (a.year !== b.year) return a.year - b.year;
+      return a.id.localeCompare(b.id);
+    });
+};
+
 function Logo() {
   return (
     <View style={styles.logoWrap}>
@@ -910,6 +927,85 @@ function PosterCard({
       <Text numberOfLines={1} style={styles.posterName}>{item.nameFa}</Text>
       <Text numberOfLines={1} style={styles.posterEnglish}>{item.name || toPersianDigits(item.year)}</Text>
     </Pressable>
+  );
+}
+
+function MovieCollectionSection({
+  item,
+  catalog,
+  onOpen,
+}: {
+  item: CatalogItem;
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+}) {
+  const members = collectionMembersFor(item, catalog);
+  if (members.length < 2) return null;
+
+  return (
+    <View style={styles.collectionSection}>
+      <View style={styles.collectionHeader}>
+        <View style={styles.collectionHeaderIcon}>
+          <Ionicons name="film-outline" color={COLORS.gold} size={19} />
+        </View>
+        <View style={styles.collectionHeaderText}>
+          <Text style={styles.collectionEyebrow}>مجموعه فیلم‌ها</Text>
+          <Text style={styles.collectionTitle}>
+            {item.collectionNameFa || item.collectionName || 'این مجموعه'}
+          </Text>
+          {item.collectionName ? (
+            <Text style={styles.collectionEnglish}>{item.collectionName}</Text>
+          ) : null}
+        </View>
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.collectionList}
+      >
+        {members.map((member, index) => {
+          const current = member.id === item.id;
+          const order = Number(member.collectionOrder || index + 1);
+          return (
+            <Pressable
+              key={member.id}
+              onPress={() => !current && onOpen(member)}
+              style={styles.collectionCard}
+            >
+              <View style={[styles.collectionPosterWrap, current && styles.collectionPosterCurrent]}>
+                <Image
+                  source={{ uri: member.poster }}
+                  style={styles.collectionPoster}
+                  contentFit="cover"
+                  transition={180}
+                />
+                <LinearGradient
+                  colors={['transparent', 'rgba(7,9,12,0.9)']}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View style={styles.collectionOrderBadge}>
+                  <Text style={styles.collectionOrderText}>
+                    {toPersianDigits(order)}
+                  </Text>
+                </View>
+                {current ? (
+                  <View style={styles.collectionCurrentBadge}>
+                    <Text style={styles.collectionCurrentText}>در حال مشاهده</Text>
+                  </View>
+                ) : null}
+                <Text numberOfLines={1} style={styles.collectionYear}>
+                  {toPersianDigits(member.year)}
+                </Text>
+              </View>
+              <Text numberOfLines={2} style={styles.collectionMovieName}>
+                {member.nameFa}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -1623,6 +1719,7 @@ function SeriesEpisodeList({
 
 function DetailModal({
   item,
+  catalog,
   visible,
   onClose,
   favorite,
@@ -1630,8 +1727,10 @@ function DetailModal({
   onStream,
   onDownload,
   onOperatorOpen,
+  onOpenRelated,
 }: {
   item: CatalogItem | null;
+  catalog: CatalogItem[];
   visible: boolean;
   onClose: () => void;
   favorite: boolean;
@@ -1639,6 +1738,7 @@ function DetailModal({
   onStream: (item: CatalogItem, episodeGroup?: DownloadSection | null, language?: MediaLanguage) => void;
   onDownload: (item: CatalogItem, file: DownloadFile) => void;
   onOperatorOpen: (item: CatalogItem, file: DownloadFile) => void;
+  onOpenRelated: (item: CatalogItem) => void;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [openLanguage, setOpenLanguage] = useState<string | null>(null);
@@ -1769,6 +1869,12 @@ function DetailModal({
 
             <Text style={styles.detailSectionTitle}>داستان {item.nameFa}</Text>
             <Text style={styles.detailOverview}>{item.overview}</Text>
+
+            <MovieCollectionSection
+              item={item}
+              catalog={catalog}
+              onOpen={onOpenRelated}
+            />
 
             <View style={styles.downloadHeader}>
               <View>
@@ -2598,6 +2704,7 @@ function AppContent() {
       </SafeAreaView>
       <DetailModal
         item={selectedItem}
+        catalog={content.items}
         visible={Boolean(selectedItem)}
         onClose={() => setSelectedItem(null)}
         favorite={selectedItem ? favorites.includes(selectedItem.id) : false}
@@ -2605,6 +2712,7 @@ function AppContent() {
         onStream={openStreamInsideApp}
         onDownload={startDownloadInsideApp}
         onOperatorOpen={openOperatorAccess}
+        onOpenRelated={setSelectedItem}
       />
       {videoRequest ? (
         <VideoPlayerModal
@@ -2748,6 +2856,24 @@ const styles = StyleSheet.create({
   sectionTitleRow: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'flex-end', justifyContent: 'space-between' },
   sectionAction: { flexDirection: 'row-reverse', alignItems: 'center', gap: 2, paddingBottom: 2 },
   sectionActionText: { color: COLORS.gold, fontSize: 10, fontWeight: '800' },
+  collectionSection: { marginTop: 24, paddingTop: 18, borderTopWidth: 1, borderTopColor: COLORS.border, gap: 13 },
+  collectionHeader: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10 },
+  collectionHeaderIcon: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(213,175,86,0.08)', borderWidth: 1, borderColor: 'rgba(213,175,86,0.28)' },
+  collectionHeaderText: { flex: 1, alignItems: 'flex-end' },
+  collectionEyebrow: { ...rtlText, color: COLORS.gold, fontSize: 8.5, fontWeight: '900', marginBottom: 2 },
+  collectionTitle: { ...rtlText, color: COLORS.text, fontSize: 15, fontWeight: '900' },
+  collectionEnglish: { color: COLORS.muted, fontSize: 8.5, marginTop: 2, textAlign: 'right' },
+  collectionList: { flexDirection: 'row-reverse', gap: 10, paddingHorizontal: 1, paddingBottom: 3 },
+  collectionCard: { width: 112, alignItems: 'stretch' },
+  collectionPosterWrap: { width: 112, height: 159, overflow: 'hidden', borderRadius: 15, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
+  collectionPosterCurrent: { borderColor: COLORS.gold, borderWidth: 1.5 },
+  collectionPoster: { width: '100%', height: '100%' },
+  collectionOrderBadge: { position: 'absolute', top: 7, right: 7, minWidth: 26, height: 26, paddingHorizontal: 6, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.88)', borderWidth: 1, borderColor: 'rgba(213,175,86,0.5)' },
+  collectionOrderText: { color: COLORS.gold, fontSize: 10, fontWeight: '900' },
+  collectionCurrentBadge: { position: 'absolute', left: 7, right: 7, bottom: 25, minHeight: 23, paddingHorizontal: 6, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(132,18,39,0.92)' },
+  collectionCurrentText: { ...rtlText, color: '#fff', fontSize: 7.5, fontWeight: '900', textAlign: 'center' },
+  collectionYear: { position: 'absolute', right: 8, bottom: 7, color: '#fff', fontSize: 8.5, fontWeight: '900' },
+  collectionMovieName: { ...rtlText, color: COLORS.text, fontSize: 10, lineHeight: 16, fontWeight: '800', marginTop: 7, minHeight: 31 },
   horizontalCatalogList: { direction: 'ltr' },
   horizontalCatalog: { gap: 11, paddingHorizontal: 18, paddingTop: 14 },
   posterCard: { width: 137, alignItems: 'flex-end' },

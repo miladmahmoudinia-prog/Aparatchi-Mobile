@@ -423,6 +423,18 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
       : derivedOperatorAccess;
   const rawAccess = asString(item.access);
   const rate = asNumber(item.rate, Number.NaN);
+  const collectionId = asString(item.collectionId ?? item.collection_id);
+  const collectionNameFa = asString(
+    item.collectionNameFa ?? item.collection_name_fa ?? item.collectionName ?? item.collection_name,
+  );
+  const collectionName = asString(
+    item.collectionName ?? item.collection_name ?? item.collectionNameFa ?? item.collection_name_fa,
+    collectionNameFa,
+  );
+  const collectionOrder = asNumber(
+    item.collectionOrder ?? item.collection_order ?? item.collectionPart ?? item.collection_part,
+    0,
+  );
   const rawStreamUrl = asString(item.streamUrl);
   const streamUrl = rawStreamUrl && isPlayableUrl(rawStreamUrl) ? rawStreamUrl : '';
   const operatorOnly = asBoolean(item.operatorOnly) || Boolean(
@@ -458,6 +470,10 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     nameFa,
     name,
     ...(asString(item.imdb) ? { imdb: asString(item.imdb) } : {}),
+    ...(collectionId ? { collectionId } : {}),
+    ...(collectionNameFa ? { collectionNameFa } : {}),
+    ...(collectionName ? { collectionName } : {}),
+    ...(collectionOrder > 0 ? { collectionOrder } : {}),
     poster,
     backdrop,
     overview: asString(item.overview, 'توضیحی ثبت نشده است.'),
