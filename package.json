@@ -16,7 +16,8 @@
     "react-native": "0.86.0",
     "react-native-webview": "13.16.1",
     "react-native-safe-area-context": "~5.7.0",
-    "expo-media-library": "~57.0.3"
+    "expo-media-library": "~57.0.3",
+    "expo-network": "~57.0.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

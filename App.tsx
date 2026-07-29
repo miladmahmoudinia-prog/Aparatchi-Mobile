@@ -3,6 +3,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { WebView } from 'react-native-webview';
 import {
   ActivityIndicator,
   Alert,
@@ -29,6 +30,10 @@ import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
 import { loadContent, LoadedContent } from './src/contentService';
 import { checkIranNetworkAccess, IranAccessStatus } from './src/ipAccess';
+import {
+  checkMobileOperatorAccess,
+  MobileOperatorAccessStatus,
+} from './src/operatorAccess';
 import { CatalogItem, DayId, DownloadFile, DownloadSection, MediaLanguage, ScheduleEntry } from './src/types';
 import {
   DownloadRecord,
@@ -57,7 +62,8 @@ type SearchFilter =
   | 'animation-movies'
   | 'animation-series'
   | 'programs'
-  | 'documentaries';
+  | 'documentaries'
+  | 'mobile-operator';
 
 const TODAY_BY_JS_DAY: Record<number, DayId> = {
   0: 'sunday',
@@ -89,8 +95,45 @@ const showNetworkAccessAlert = (status: IranAccessStatus) => {
   );
 };
 
-const downloadModeFor = (file: DownloadFile) =>
-  file.mode === 'play' ? 'play' : 'download';
+const downloadModeFor = (file: DownloadFile): NonNullable<DownloadFile['mode']> =>
+  file.mode || 'download';
+
+const isOperatorFile = (file: DownloadFile) =>
+  downloadModeFor(file) === 'operator-play' ||
+  downloadModeFor(file) === 'operator-download';
+
+const isTrustedOperatorHostUrl = (url?: string) => {
+  if (!url) return false;
+  if (url === 'about:blank') return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && /(^|\.)upera\.tv$/i.test(parsed.hostname);
+  } catch {
+    return false;
+  }
+};
+
+const isOperatorPortalUrl = (url?: string) => {
+  if (!url || !isTrustedOperatorHostUrl(url)) return false;
+  try {
+    const parsed = new URL(url);
+    return /^\/(?:stream|download)\/(?:movie|series|episode)\//i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+};
+
+const operatorFilesFor = (files: DownloadFile[]) =>
+  files.filter((file) => isOperatorFile(file) && isOperatorPortalUrl(file.url));
+
+const itemHasOperatorAccess = (item: CatalogItem) =>
+  Boolean(
+    item.operatorOnly ||
+    item.operatorAccess ||
+    item.access === 'operator' ||
+    item.categoryKeys?.includes('mobile-operator') ||
+    (item.downloads || []).some((section) => operatorFilesFor(section.files).length > 0),
+  );
 
 const LANGUAGE_ORDER: MediaLanguage[] = ['dubbed', 'subtitled'];
 
@@ -116,12 +159,13 @@ const itemLanguages = (item: CatalogItem): MediaLanguage[] => {
 
   return LANGUAGE_ORDER.filter((language) =>
     (item.downloads || []).some((section) =>
-      section.files.some((file) => file.mode !== 'play' && file.language === language),
+      section.files.some((file) => !isOperatorFile(file) && file.mode !== 'play' && file.language === language),
     ),
   );
 };
 
 const itemLanguageBadge = (item: CatalogItem) => {
+  if (itemHasOperatorAccess(item)) return 'ویژه همراه';
   const languages = itemLanguages(item);
   if (languages.includes('dubbed') && languages.includes('subtitled')) {
     return 'دوبله + زیرنویس';
@@ -177,6 +221,17 @@ type VideoRequest = {
   title: string;
   sources: PlaybackSource[];
   initialSourceId: string;
+};
+
+type OperatorWebRequest = {
+  title: string;
+  url: string;
+};
+
+type OperatorGateRequest = {
+  item: CatalogItem;
+  file: DownloadFile;
+  status: MobileOperatorAccessStatus | 'checking';
 };
 
 const playbackQualityLabel = (file: DownloadFile) => {
@@ -387,6 +442,7 @@ const filterTitle = (filter: SearchFilter) => {
     'animation-series': 'انیمیشن‌های سریالی',
     programs: 'تاک‌شوها و برنامه‌ها',
     documentaries: 'مستندها',
+    'mobile-operator': 'ویژه اینترنت همراه',
   };
   return titles[filter];
 };
@@ -420,6 +476,8 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
       return isProgramItem(item);
     case 'documentaries':
       return isDocumentaryItem(item);
+    case 'mobile-operator':
+      return itemHasOperatorAccess(item);
     default:
       return true;
   }
@@ -918,6 +976,12 @@ function HomeScreen({
       items: updated,
     },
     {
+      filter: 'mobile-operator',
+      eyebrow: 'تماشا با اینترنت سیم‌کارت',
+      title: 'ویژه اینترنت همراه',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'mobile-operator')),
+    },
+    {
       filter: 'iranian-movies',
       eyebrow: 'سینمای ایران',
       title: 'فیلم‌های ایرانی',
@@ -1062,6 +1126,7 @@ function SearchScreen({
     { id: 'all', label: 'همه' },
     { id: 'movie', label: 'فیلم' },
     { id: 'series', label: 'سریال' },
+    { id: 'mobile-operator', label: 'ویژه همراه' },
     { id: 'dubbed', label: 'دوبله فارسی' },
     { id: 'subtitled', label: 'زیرنویس فارسی' },
   ];
@@ -1309,6 +1374,72 @@ function DownloadGroup({
   );
 }
 
+function OperatorAccessGroup({
+  group,
+  open,
+  onToggle,
+  onOpenFile,
+}: {
+  group: DownloadSection;
+  open: boolean;
+  onToggle: () => void;
+  onOpenFile: (file: DownloadFile) => void;
+}) {
+  const files = operatorFilesFor(group.files);
+  if (!files.length) return null;
+
+  return (
+    <View style={[styles.operatorGroup, open && styles.operatorGroupOpen]}>
+      <Pressable onPress={onToggle} style={styles.downloadGroupHead}>
+        <View style={styles.downloadGroupText}>
+          <Text style={styles.downloadGroupTitle}>ویژه اینترنت همراه</Text>
+          <Text style={styles.downloadGroupSubtitle}>
+            وای‌فای و فیلترشکن را خاموش کنید و با اینترنت سیم‌کارت وارد شوید.
+          </Text>
+        </View>
+        <View style={styles.operatorGroupBadge}>
+          <Text style={styles.operatorGroupBadgeText}>همراه</Text>
+        </View>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} color={COLORS.gold} size={19} />
+      </Pressable>
+      {open ? (
+        <View style={styles.operatorActionList}>
+          <View style={styles.operatorNotice}>
+            <Ionicons name="phone-portrait-outline" color={COLORS.gold} size={20} />
+            <Text style={styles.operatorNoticeText}>
+              این لینک فقط روی اینترنت همراهِ اپراتورهای پشتیبانی‌شده باز می‌شود.
+            </Text>
+          </View>
+          {files.map((file) => {
+            const isPlay = downloadModeFor(file) === 'operator-play';
+            return (
+              <Pressable
+                key={file.id}
+                onPress={() => onOpenFile(file)}
+                style={styles.operatorActionButton}
+              >
+                <Ionicons
+                  name={isPlay ? 'play' : 'download-outline'}
+                  color="#fff"
+                  size={17}
+                />
+                <View style={styles.operatorActionText}>
+                  <Text style={styles.operatorActionTitle}>
+                    {isPlay ? 'پخش با اینترنت همراه' : 'دریافت با اینترنت همراه'}
+                  </Text>
+                  <Text style={styles.operatorActionSubtitle}>
+                    {cleanMediaLabel(file.label) || 'ویژه همراه اول، ایرانسل، رایتل و اپراتورهای همراه'}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function EpisodeDownloadGroup({
   group,
   open,
@@ -1317,6 +1448,7 @@ function EpisodeDownloadGroup({
   onToggleLanguage,
   onOpenFile,
   onPlayLanguage,
+  onOpenOperator,
 }: {
   group: DownloadSection;
   open: boolean;
@@ -1325,14 +1457,17 @@ function EpisodeDownloadGroup({
   onToggleLanguage: (id: string) => void;
   onOpenFile: (file: DownloadFile) => void;
   onPlayLanguage: (language: MediaLanguage) => void;
+  onOpenOperator: (file: DownloadFile) => void;
 }) {
   const languageGroups = languageSectionsForFiles(group.files, group.id);
-  if (!languageGroups.length) return null;
+  const operatorFiles = operatorFilesFor(group.files);
+  if (!languageGroups.length && !operatorFiles.length) return null;
+  const operatorGroupId = `${group.id}-operator`;
 
   return (
     <View style={[styles.episodeGroup, open && styles.episodeGroupOpen]}>
       <Pressable
-        onPress={() => onToggle(languageGroups[0]?.id || null)}
+        onPress={() => onToggle(languageGroups[0]?.id || (operatorFiles.length ? operatorGroupId : null))}
         style={styles.episodeGroupHead}
       >
         <View style={styles.episodeGroupText}>
@@ -1340,7 +1475,8 @@ function EpisodeDownloadGroup({
             قسمت {toPersianDigits(group.episodeNumber || 0)}
           </Text>
           <Text numberOfLines={1} style={styles.episodeGroupSubtitle}>
-            {cleanMediaLabel(group.subtitle) || `${toPersianDigits(languageGroups.length)} نسخه قابل دریافت`}
+            {cleanMediaLabel(group.subtitle) ||
+              `${toPersianDigits(languageGroups.length + (operatorFiles.length ? 1 : 0))} گزینه پخش یا دریافت`}
           </Text>
         </View>
         <View style={styles.episodeNumberBadge}>
@@ -1362,6 +1498,14 @@ function EpisodeDownloadGroup({
                 : undefined}
             />
           ))}
+          {operatorFiles.length ? (
+            <OperatorAccessGroup
+              group={group}
+              open={openLanguage === operatorGroupId}
+              onToggle={() => onToggleLanguage(operatorGroupId)}
+              onOpenFile={onOpenOperator}
+            />
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -1376,6 +1520,7 @@ function SeriesEpisodeList({
   onToggleLanguage,
   onOpenFile,
   onPlayLanguage,
+  onOpenOperator,
 }: {
   item: CatalogItem;
   openGroup: string | null;
@@ -1384,9 +1529,16 @@ function SeriesEpisodeList({
   onToggleLanguage: (id: string) => void;
   onOpenFile: (file: DownloadFile) => void;
   onPlayLanguage: (group: DownloadSection, language: MediaLanguage) => void;
+  onOpenOperator: (file: DownloadFile) => void;
 }) {
   const episodeGroups = [...(item.downloads || [])]
-    .filter((group) => isEpisodeSection(group) && languageSectionsForFiles(group.files, group.id).length > 0)
+    .filter((group) =>
+      isEpisodeSection(group) &&
+      (
+        languageSectionsForFiles(group.files, group.id).length > 0 ||
+        operatorFilesFor(group.files).length > 0
+      ),
+    )
     .sort(compareEpisodeGroupsNewestFirst);
 
   const seasons = episodeGroups.reduce<Record<number, DownloadSection[]>>((result, group) => {
@@ -1416,6 +1568,7 @@ function SeriesEpisodeList({
                 onToggleLanguage={onToggleLanguage}
                 onOpenFile={onOpenFile}
                 onPlayLanguage={(language) => onPlayLanguage(group, language)}
+                onOpenOperator={onOpenOperator}
               />
             ))}
           </View>
@@ -1432,6 +1585,7 @@ function DetailModal({
   onFavorite,
   onStream,
   onDownload,
+  onOperatorOpen,
 }: {
   item: CatalogItem | null;
   visible: boolean;
@@ -1440,6 +1594,7 @@ function DetailModal({
   onFavorite: () => void;
   onStream: (item: CatalogItem, episodeGroup?: DownloadSection | null, language?: MediaLanguage) => void;
   onDownload: (item: CatalogItem, file: DownloadFile) => void;
+  onOperatorOpen: (item: CatalogItem, file: DownloadFile) => void;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [openLanguage, setOpenLanguage] = useState<string | null>(null);
@@ -1462,7 +1617,12 @@ function DetailModal({
   if (!item) return null;
   const downloadGroups = item.downloads || [];
   const episodeGroups = downloadGroups.filter(
-    (group) => isEpisodeSection(group) && languageSectionsForFiles(group.files, group.id).length > 0,
+    (group) =>
+      isEpisodeSection(group) &&
+      (
+        languageSectionsForFiles(group.files, group.id).length > 0 ||
+        operatorFilesFor(group.files).length > 0
+      ),
   );
   const movieDownloadGroups = downloadGroups
     .filter((group) => !isEpisodeSection(group) && sortedDownloadFiles(group.files).length > 0)
@@ -1470,12 +1630,19 @@ function DetailModal({
       LANGUAGE_ORDER.indexOf(a.language || 'subtitled') -
       LANGUAGE_ORDER.indexOf(b.language || 'subtitled'),
     );
+  const standaloneOperatorGroups = downloadGroups.filter(
+    (group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0,
+  );
+  const standaloneOperatorPlayFile = standaloneOperatorGroups
+    .flatMap((group) => operatorFilesFor(group.files))
+    .find((file) => downloadModeFor(file) === 'operator-play');
   const hasDownloads = item.type === 'series'
-    ? episodeGroups.length > 0
-    : movieDownloadGroups.length > 0;
+    ? episodeGroups.length > 0 || standaloneOperatorGroups.length > 0
+    : movieDownloadGroups.length > 0 || standaloneOperatorGroups.length > 0;
   const latestEpisode = newestEpisodeGroup(item);
   const hasPlayableStream = playableVersionsFor(item).length > 0;
   const accessAllowed = accessStatus === 'allowed';
+  const operatorOnly = itemHasOperatorAccess(item) && !hasPlayableStream && movieDownloadGroups.length === 0;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -1500,6 +1667,12 @@ function DetailModal({
               <Image source={{ uri: item.poster }} style={styles.detailPoster} contentFit="cover" />
               <View style={styles.detailTitleBlock}>
                 <Text style={styles.detailType}>{item.type === 'movie' ? 'فیلم سینمایی' : 'سریال'}</Text>
+                {itemHasOperatorAccess(item) ? (
+                  <View style={styles.detailOperatorBadge}>
+                    <Ionicons name="phone-portrait-outline" color={COLORS.gold} size={12} />
+                    <Text style={styles.detailOperatorBadgeText}>ویژه اینترنت همراه</Text>
+                  </View>
+                ) : null}
                 <Text numberOfLines={2} style={styles.detailTitle}>{item.nameFa}</Text>
                 <Text style={styles.detailEnglish}>{item.name}</Text>
                 <View style={styles.detailMeta}>
@@ -1517,15 +1690,25 @@ function DetailModal({
 
           <View style={styles.detailBody}>
             <View style={styles.detailActions}>
-              {item.type === 'movie' && accessAllowed ? (
+              {item.type === 'movie' && accessAllowed && (hasPlayableStream || standaloneOperatorPlayFile) ? (
                 <Pressable
-                  onPress={() => hasPlayableStream
-                    ? onStream(item)
-                    : Alert.alert('پخش آنلاین', 'پخش این عنوان فعلاً در دسترس نیست.')}
-                  style={[styles.watchButton, !hasPlayableStream && styles.watchButtonDisabled]}
+                  onPress={() => {
+                    if (hasPlayableStream) {
+                      onStream(item);
+                    } else if (standaloneOperatorPlayFile) {
+                      onOperatorOpen(item, standaloneOperatorPlayFile);
+                    }
+                  }}
+                  style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}
                 >
-                  <Ionicons name="play" color="#fff" size={19} />
-                  <Text style={styles.watchButtonText}>پخش آنلاین</Text>
+                  <Ionicons
+                    name={hasPlayableStream ? 'play' : 'phone-portrait-outline'}
+                    color="#fff"
+                    size={19}
+                  />
+                  <Text style={styles.watchButtonText}>
+                    {hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}
+                  </Text>
                 </Pressable>
               ) : null}
               <Pressable
@@ -1549,13 +1732,15 @@ function DetailModal({
                   {item.type === 'series' ? 'فصل‌ها و قسمت‌ها' : 'لینک‌های دریافت'}
                 </Text>
                 <Text style={styles.downloadHeaderText}>
-                  {item.type === 'series'
-                    ? 'قسمت را باز کنید؛ دوبله و زیرنویس هر قسمت جدا نمایش داده می‌شوند.'
-                    : 'دوبله و زیرنویس جدا هستند؛ با باز شدن یکی، بخش دیگر بسته می‌شود.'}
+                  {operatorOnly
+                    ? 'برای استفاده، وای‌فای و فیلترشکن را خاموش کنید و اینترنت سیم‌کارت را روشن کنید.'
+                    : item.type === 'series'
+                      ? 'قسمت را باز کنید؛ گزینه‌های همان قسمت جدا نمایش داده می‌شوند.'
+                      : 'دوبله، زیرنویس و لینک‌های ویژه اینترنت همراه جدا نمایش داده می‌شوند.'}
                 </Text>
               </View>
               <Ionicons
-                name={item.type === 'series' ? 'albums-outline' : 'cloud-download-outline'}
+                name={itemHasOperatorAccess(item) ? 'phone-portrait-outline' : item.type === 'series' ? 'albums-outline' : 'cloud-download-outline'}
                 color={COLORS.gold}
                 size={24}
               />
@@ -1613,6 +1798,7 @@ function DetailModal({
                     onToggleLanguage={(id) => setOpenLanguage(openLanguage === id ? null : id)}
                     onOpenFile={(file) => onDownload(item, file)}
                     onPlayLanguage={(group, language) => onStream(item, group, language)}
+                    onOpenOperator={(file) => onOperatorOpen(item, file)}
                   />
                 ) : (
                   movieDownloadGroups.map((group) => (
@@ -1628,6 +1814,18 @@ function DetailModal({
                     />
                   ))
                 )}
+
+                {standaloneOperatorGroups.map((group) => (
+                  <OperatorAccessGroup
+                    key={`operator-${group.id}`}
+                    group={group}
+                    open={openGroup === `operator-${group.id}`}
+                    onToggle={() => setOpenGroup(
+                      openGroup === `operator-${group.id}` ? null : `operator-${group.id}`,
+                    )}
+                    onOpenFile={(file) => onOperatorOpen(item, file)}
+                  />
+                ))}
 
                 {!hasDownloads ? (
                   <View style={styles.noDownloadsCard}>
@@ -1757,6 +1955,164 @@ function VideoPlayerModal({
   );
 }
 
+function OperatorGateModal({
+  request,
+  onClose,
+  onRetry,
+}: {
+  request: OperatorGateRequest;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const isChecking = request.status === 'checking';
+  const content = request.status === 'wifi'
+    ? {
+        icon: 'wifi-outline' as const,
+        title: 'این محتوا فقط با اینترنت همراه باز می‌شود',
+        text: 'وای‌فای را خاموش کنید و اینترنت سیم‌کارت را روشن کنید، سپس «بررسی دوباره» را بزنید.',
+      }
+    : request.status === 'vpn'
+      ? {
+          icon: 'shield-outline' as const,
+          title: 'فیلترشکن را خاموش کنید',
+          text: 'برای تماشا یا دریافت این محتوا، فیلترشکن را خاموش کنید و با اینترنت سیم‌کارت دوباره تلاش کنید.',
+        }
+      : request.status === 'offline'
+        ? {
+            icon: 'cloud-offline-outline' as const,
+            title: 'اتصال اینترنت برقرار نیست',
+            text: 'اینترنت سیم‌کارت را روشن کنید و دوباره بررسی کنید.',
+          }
+        : {
+            icon: 'phone-portrait-outline' as const,
+            title: 'نوع اتصال مشخص نشد',
+            text: 'وای‌فای و فیلترشکن را خاموش کنید، اینترنت سیم‌کارت را روشن کنید و دوباره بررسی کنید.',
+          };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.operatorGateOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={isChecking ? undefined : onClose} />
+        <View style={styles.operatorGateCard}>
+          {isChecking ? (
+            <>
+              <ActivityIndicator color={COLORS.gold} size="large" />
+              <Text style={styles.operatorGateTitle}>در حال بررسی اینترنت همراه…</Text>
+              <Text style={styles.operatorGateText}>لطفاً چند لحظه صبر کنید.</Text>
+            </>
+          ) : (
+            <>
+              <View style={styles.operatorGateIcon}>
+                <Ionicons name={content.icon} color={COLORS.gold} size={30} />
+              </View>
+              <Text style={styles.operatorGateTitle}>{content.title}</Text>
+              <Text style={styles.operatorGateText}>{content.text}</Text>
+              <View style={styles.operatorGateButtons}>
+                <Pressable onPress={onRetry} style={styles.operatorGatePrimaryButton}>
+                  <Ionicons name="refresh" color="#fff" size={17} />
+                  <Text style={styles.operatorGatePrimaryText}>بررسی دوباره</Text>
+                </Pressable>
+                <Pressable onPress={onClose} style={styles.operatorGateCancelButton}>
+                  <Text style={styles.operatorGateCancelText}>انصراف</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function OperatorWebModal({
+  request,
+  onClose,
+}: {
+  request: OperatorWebRequest;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView
+        style={styles.operatorWebModal}
+        edges={['top', 'right', 'bottom', 'left']}
+      >
+        <StatusBar style="light" />
+        <View style={styles.operatorWebHeader}>
+          <Pressable onPress={onClose} style={styles.mediaCloseButton}>
+            <Ionicons name="close" color="#fff" size={23} />
+          </Pressable>
+          <View style={styles.operatorWebTitleWrap}>
+            <Text numberOfLines={1} style={styles.operatorWebTitle}>{request.title}</Text>
+            <View style={styles.operatorWebBadge}>
+              <Ionicons name="phone-portrait-outline" color={COLORS.gold} size={11} />
+              <Text style={styles.operatorWebBadgeText}>اینترنت همراه</Text>
+            </View>
+          </View>
+        </View>
+        <View style={styles.operatorWebBody}>
+          {failed ? (
+            <View style={styles.operatorWebError}>
+              <Ionicons name="alert-circle-outline" color={COLORS.gold} size={35} />
+              <Text style={styles.operatorWebErrorTitle}>صفحه باز نشد</Text>
+              <Text style={styles.operatorWebErrorText}>
+                وای‌فای و فیلترشکن را خاموش کنید و مطمئن شوید اینترنت سیم‌کارت روشن است.
+              </Text>
+              <Pressable
+                onPress={() => {
+                  setFailed(false);
+                  setLoading(true);
+                }}
+                style={styles.operatorGatePrimaryButton}
+              >
+                <Ionicons name="refresh" color="#fff" size={17} />
+                <Text style={styles.operatorGatePrimaryText}>تلاش دوباره</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <WebView
+              source={{ uri: request.url }}
+              style={styles.operatorWebView}
+              originWhitelist={['https://*']}
+              javaScriptEnabled
+              domStorageEnabled
+              incognito
+              startInLoadingState
+              onShouldStartLoadWithRequest={(navigation) =>
+                isTrustedOperatorHostUrl(navigation.url)
+              }
+              onLoadStart={() => setLoading(true)}
+              onLoadEnd={() => setLoading(false)}
+              onError={() => {
+                setLoading(false);
+                setFailed(true);
+              }}
+              onHttpError={() => {
+                setLoading(false);
+                setFailed(true);
+              }}
+              renderLoading={() => (
+                <View style={styles.operatorWebLoading}>
+                  <ActivityIndicator color={COLORS.gold} size="large" />
+                  <Text style={styles.operatorWebLoadingText}>در حال آماده‌سازی پخش…</Text>
+                </View>
+              )}
+            />
+          )}
+          {loading && !failed ? (
+            <View pointerEvents="none" style={styles.operatorWebLoadingBadge}>
+              <ActivityIndicator color={COLORS.gold} size="small" />
+            </View>
+          ) : null}
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function BottomNavigation({
   active,
   onChange,
@@ -1802,6 +2158,8 @@ function AppContent() {
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
+  const [operatorWebRequest, setOperatorWebRequest] = useState<OperatorWebRequest | null>(null);
+  const [operatorGateRequest, setOperatorGateRequest] = useState<OperatorGateRequest | null>(null);
 
   const reloadContent = async () => {
     setContentLoading(true);
@@ -1849,6 +2207,34 @@ function AppContent() {
   const openCatalogFilter = (filter: SearchFilter) => {
     setSearchFilter(filter);
     setActiveTab('search');
+  };
+
+  const openOperatorAccess = async (item: CatalogItem, file: DownloadFile) => {
+    if (!isOperatorFile(file) || !isOperatorPortalUrl(file.url)) {
+      Alert.alert('اینترنت همراه', 'این لینک فعلاً در دسترس نیست.');
+      return;
+    }
+
+    setOperatorGateRequest({ item, file, status: 'checking' });
+
+    const iranAccess = await checkIranNetworkAccess(true);
+    if (iranAccess.status !== 'allowed') {
+      setOperatorGateRequest(null);
+      showNetworkAccessAlert(iranAccess.status);
+      return;
+    }
+
+    const mobileAccess = await checkMobileOperatorAccess();
+    if (mobileAccess.status !== 'allowed') {
+      setOperatorGateRequest({ item, file, status: mobileAccess.status });
+      return;
+    }
+
+    setOperatorGateRequest(null);
+    setOperatorWebRequest({
+      title: `${item.nameFa} — ${downloadModeFor(file) === 'operator-play' ? 'پخش آنلاین' : 'دریافت'}`,
+      url: file.url,
+    });
   };
 
   const openStreamInsideApp = async (
@@ -1966,6 +2352,11 @@ function AppContent() {
   };
 
   const startDownloadInsideApp = async (item: CatalogItem, file: DownloadFile) => {
+    if (isOperatorFile(file)) {
+      await openOperatorAccess(item, file);
+      return;
+    }
+
     const access = await checkIranNetworkAccess();
     if (access.status !== 'allowed') {
       showNetworkAccessAlert(access.status);
@@ -2169,11 +2560,25 @@ function AppContent() {
         onFavorite={() => selectedItem && toggleFavorite(selectedItem.id)}
         onStream={openStreamInsideApp}
         onDownload={startDownloadInsideApp}
+        onOperatorOpen={openOperatorAccess}
       />
       {videoRequest ? (
         <VideoPlayerModal
           request={videoRequest}
           onClose={() => setVideoRequest(null)}
+        />
+      ) : null}
+      {operatorGateRequest ? (
+        <OperatorGateModal
+          request={operatorGateRequest}
+          onClose={() => setOperatorGateRequest(null)}
+          onRetry={() => void openOperatorAccess(operatorGateRequest.item, operatorGateRequest.file)}
+        />
+      ) : null}
+      {operatorWebRequest ? (
+        <OperatorWebModal
+          request={operatorWebRequest}
+          onClose={() => setOperatorWebRequest(null)}
         />
       ) : null}
     </View>
@@ -2426,6 +2831,44 @@ const styles = StyleSheet.create({
   playerQualityOptionSelected: { borderColor: 'rgba(216,180,90,0.58)', backgroundColor: 'rgba(216,180,90,0.07)' },
   playerQualityOptionText: { color: COLORS.text, fontSize: 12, fontWeight: '800' },
   playerQualityOptionTextSelected: { color: COLORS.gold },
+  detailOperatorBadge: { marginBottom: 7, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, flexDirection: 'row-reverse', alignItems: 'center', gap: 5, backgroundColor: 'rgba(216,180,90,0.10)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.36)' },
+  detailOperatorBadgeText: { color: COLORS.gold, fontSize: 8, fontWeight: '900' },
+  operatorWatchButton: { backgroundColor: '#846A2E' },
+  operatorGroup: { marginTop: 8, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(216,180,90,0.34)', backgroundColor: '#10120F' },
+  operatorGroupOpen: { borderColor: 'rgba(216,180,90,0.72)' },
+  operatorGroupBadge: { minWidth: 44, height: 36, paddingHorizontal: 7, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(216,180,90,0.52)', backgroundColor: 'rgba(216,180,90,0.12)' },
+  operatorGroupBadgeText: { color: COLORS.gold, fontSize: 8, fontWeight: '900' },
+  operatorActionList: { paddingHorizontal: 12, paddingBottom: 12, borderTopWidth: 1, borderTopColor: 'rgba(216,180,90,0.20)' },
+  operatorNotice: { minHeight: 58, marginTop: 11, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, backgroundColor: 'rgba(216,180,90,0.07)' },
+  operatorNoticeText: { ...rtlText, flex: 1, color: '#C8B779', fontSize: 9, lineHeight: 17 },
+  operatorActionButton: { minHeight: 58, marginTop: 9, paddingHorizontal: 13, borderRadius: 12, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, backgroundColor: '#846A2E' },
+  operatorActionText: { flex: 1, alignItems: 'flex-end' },
+  operatorActionTitle: { ...rtlText, color: '#fff', fontSize: 11, fontWeight: '900' },
+  operatorActionSubtitle: { ...rtlText, color: 'rgba(255,255,255,0.72)', fontSize: 8, lineHeight: 15, marginTop: 4 },
+  operatorGateOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, backgroundColor: 'rgba(0,0,0,0.76)' },
+  operatorGateCard: { width: '100%', maxWidth: 360, minHeight: 250, paddingHorizontal: 24, paddingVertical: 25, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#11140F', borderWidth: 1, borderColor: 'rgba(216,180,90,0.44)' },
+  operatorGateIcon: { width: 64, height: 64, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.10)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
+  operatorGateTitle: { ...rtlText, color: COLORS.text, fontSize: 16, lineHeight: 25, fontWeight: '900', textAlign: 'center', marginTop: 16 },
+  operatorGateText: { ...rtlText, color: COLORS.muted, fontSize: 10.5, lineHeight: 21, textAlign: 'center', marginTop: 9 },
+  operatorGateButtons: { width: '100%', marginTop: 20, gap: 9 },
+  operatorGatePrimaryButton: { minHeight: 46, paddingHorizontal: 18, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#846A2E' },
+  operatorGatePrimaryText: { color: '#fff', fontSize: 10, fontWeight: '900' },
+  operatorGateCancelButton: { minHeight: 44, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  operatorGateCancelText: { color: COLORS.muted, fontSize: 10, fontWeight: '800' },
+  operatorWebModal: { flex: 1, backgroundColor: COLORS.background },
+  operatorWebHeader: { minHeight: 66, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  operatorWebTitleWrap: { flex: 1, alignItems: 'flex-end' },
+  operatorWebTitle: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 13, fontWeight: '900' },
+  operatorWebBadge: { marginTop: 5, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 7, flexDirection: 'row-reverse', alignItems: 'center', gap: 4, backgroundColor: 'rgba(216,180,90,0.10)' },
+  operatorWebBadgeText: { color: COLORS.gold, fontSize: 7.5, fontWeight: '900' },
+  operatorWebBody: { flex: 1, backgroundColor: '#fff' },
+  operatorWebView: { flex: 1, backgroundColor: '#fff' },
+  operatorWebLoading: { flex: 1, minHeight: 300, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.background },
+  operatorWebLoadingText: { ...rtlText, color: COLORS.text, fontSize: 11, fontWeight: '800', marginTop: 12 },
+  operatorWebLoadingBadge: { position: 'absolute', top: 12, left: 12, width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.88)' },
+  operatorWebError: { flex: 1, paddingHorizontal: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.background },
+  operatorWebErrorTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 14 },
+  operatorWebErrorText: { ...rtlText, color: COLORS.muted, fontSize: 10.5, lineHeight: 21, textAlign: 'center', marginTop: 8, marginBottom: 20 },
   mediaModal: { flex: 1, backgroundColor: '#000' },
   webModal: { flex: 1, backgroundColor: COLORS.background },
   mediaModalHeader: { height: 62, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },

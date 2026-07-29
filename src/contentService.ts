@@ -8,6 +8,7 @@ import {
   DownloadSection,
   LatestEpisode,
   MediaLanguage,
+  OperatorAccessKind,
   ScheduleEntry,
 } from './types';
 
@@ -75,6 +76,29 @@ const newestFirst = (items: CatalogItem[]) =>
 
 const isMp4Url = (url: string) => /\.mp4(?:$|[?#])/i.test(url);
 const isPlayableUrl = (url: string) => /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
+
+const isOperatorMode = (mode?: DownloadFile['mode']) =>
+  mode === 'operator-play' || mode === 'operator-download';
+
+const isOperatorPortalUrl = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    const trustedHost = /(^|\.)upera\.tv$/i.test(parsed.hostname);
+    const trustedPath = /^\/(?:stream|download)\/(?:movie|series|episode)\//i.test(parsed.pathname);
+    return trustedHost && trustedPath;
+  } catch {
+    return false;
+  }
+};
+
+const operatorAccessFromFiles = (files: DownloadFile[]): OperatorAccessKind | null => {
+  const hasStream = files.some((file) => file.mode === 'operator-play');
+  const hasDownload = files.some((file) => file.mode === 'operator-download');
+  if (hasStream && hasDownload) return 'both';
+  if (hasStream) return 'stream';
+  if (hasDownload) return 'download';
+  return null;
+};
 
 const detectMediaLanguage = (...values: unknown[]): MediaLanguage | null => {
   const text = values.map((value) => asString(value)).filter(Boolean).join(' ');
@@ -144,13 +168,35 @@ const normalizeDownloadFile = (
   if (!/^https?:\/\//i.test(url)) return null;
 
   const requestedMode = asString(file.mode).toLowerCase();
-  const mode: 'download' | 'play' = requestedMode === 'play' ? 'play' : 'download';
+  const explicitOperator = asBoolean(file.operatorOnly) || requestedMode.startsWith('operator-');
+  const inferredOperatorMode = /download|دریافت|دانلود/i.test(
+    [requestedMode, file.quality, file.label, sectionContext, url].map((entry) => asString(entry)).join(' '),
+  )
+    ? 'operator-download'
+    : 'operator-play';
+  const mode: DownloadFile['mode'] = explicitOperator
+    ? (requestedMode === 'operator-download' || requestedMode === 'operator-play'
+        ? requestedMode
+        : inferredOperatorMode)
+    : requestedMode === 'play'
+      ? 'play'
+      : 'download';
 
-  if (mode === 'play' ? !isPlayableUrl(url) : !isMp4Url(url)) return null;
+  if (isOperatorMode(mode)) {
+    if (!isOperatorPortalUrl(url)) return null;
+  } else if (mode === 'play' ? !isPlayableUrl(url) : !isMp4Url(url)) {
+    return null;
+  }
 
-  const quality = asString(file.quality, asString(file.label, 'کیفیت اصلی'));
+  const quality = asString(
+    file.quality,
+    isOperatorMode(mode)
+      ? mode === 'operator-play' ? 'پخش آنلاین' : 'دریافت'
+      : asString(file.label, 'کیفیت اصلی'),
+  );
   const label = asString(file.label);
   const language = detectMediaLanguage(sectionContext, quality, label, url);
+  const supportedOperators = stringArray(file.supportedOperators);
 
   return {
     id: asString(file.id, `file-${index}`),
@@ -160,6 +206,8 @@ const normalizeDownloadFile = (
     url,
     ...(language ? { language } : {}),
     mode,
+    ...(isOperatorMode(mode) ? { operatorOnly: true } : {}),
+    ...(supportedOperators.length ? { supportedOperators } : {}),
   };
 };
 
@@ -217,7 +265,7 @@ const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[]
   for (const section of rawSections) {
     if (section.language) knownLanguages.add(section.language);
     for (const file of section.files) {
-      if (file.language) knownLanguages.add(file.language);
+      if (!isOperatorMode(file.mode) && file.language) knownLanguages.add(file.language);
     }
   }
 
@@ -228,6 +276,7 @@ const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[]
   const inferredSections = rawSections.map((section) => {
     const languagesInsideSection = new Set(
       section.files
+        .filter((file) => !isOperatorMode(file.mode))
         .map((file) => file.language)
         .filter((language): language is MediaLanguage => Boolean(language)),
     );
@@ -245,10 +294,12 @@ const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[]
       ...section,
       files: sortFiles(
         uniqueFiles(
-          section.files.map((file) => ({
-            ...file,
-            language: file.language || fallbackLanguage,
-          })),
+          section.files.map((file) => isOperatorMode(file.mode)
+            ? file
+            : {
+                ...file,
+                language: file.language || fallbackLanguage,
+              }),
         ),
       ),
     };
@@ -265,9 +316,14 @@ const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[]
     .filter((section) => (section.episodeNumber || 0) === 0)
     .flatMap((section) => section.files);
 
+  const directStandaloneFiles = standaloneFiles.filter((file) => !isOperatorMode(file.mode));
+  const operatorStandaloneFiles = uniqueFiles(
+    standaloneFiles.filter((file) => isOperatorMode(file.mode)),
+  );
+
   const languageSections = LANGUAGE_ORDER.flatMap((language) => {
     const files = sortFiles(
-      uniqueFiles(standaloneFiles.filter((file) => file.language === language)),
+      uniqueFiles(directStandaloneFiles.filter((file) => file.language === language)),
     );
     if (!files.length) return [];
 
@@ -281,7 +337,17 @@ const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[]
     } satisfies DownloadSection];
   });
 
-  return [...episodeSections, ...languageSections];
+  const operatorSections = operatorStandaloneFiles.length
+    ? [{
+        id: 'operator-mobile-access',
+        title: 'ویژه اینترنت همراه',
+        subtitle: 'تماشا یا دریافت با اینترنت سیم‌کارت',
+        badge: 'همراه',
+        files: operatorStandaloneFiles,
+      } satisfies DownloadSection]
+    : [];
+
+  return [...episodeSections, ...languageSections, ...operatorSections];
 };
 
 const compareEpisodeSections = (a: DownloadSection, b: DownloadSection) => {
@@ -343,16 +409,45 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     episodeSections.map((section) => section.seasonNumber || 1),
   );
   const latestEpisode = normalizeLatestEpisode(item.latestEpisode, episodeSections);
+  const operatorFiles = downloads.flatMap((section) =>
+    section.files.filter((file) => isOperatorMode(file.mode)),
+  );
+  const directFiles = downloads.flatMap((section) =>
+    section.files.filter((file) => !isOperatorMode(file.mode)),
+  );
+  const derivedOperatorAccess = operatorAccessFromFiles(operatorFiles);
+  const rawOperatorAccess = asString(item.operatorAccess);
+  const operatorAccess: OperatorAccessKind | null =
+    rawOperatorAccess === 'stream' || rawOperatorAccess === 'download' || rawOperatorAccess === 'both'
+      ? rawOperatorAccess
+      : derivedOperatorAccess;
   const rawAccess = asString(item.access);
-  const access = rawAccess === 'paid' || rawAccess === 'operator' ? rawAccess : 'free';
   const rate = asNumber(item.rate, Number.NaN);
   const rawStreamUrl = asString(item.streamUrl);
   const streamUrl = rawStreamUrl && isPlayableUrl(rawStreamUrl) ? rawStreamUrl : '';
+  const operatorOnly = asBoolean(item.operatorOnly) || Boolean(
+    operatorFiles.length && !directFiles.length && !streamUrl,
+  );
+  const access = rawAccess === 'paid'
+    ? 'paid'
+    : rawAccess === 'operator' || operatorOnly
+      ? 'operator'
+      : 'free';
   const availableLanguages = LANGUAGE_ORDER.filter((language) =>
     downloads.some((section) =>
-      section.files.some((file) => file.mode !== 'play' && file.language === language),
+      section.files.some((file) => !isOperatorMode(file.mode) && file.mode !== 'play' && file.language === language),
     ),
   );
+  const supportedOperators = [
+    ...new Set([
+      ...stringArray(item.supportedOperators),
+      ...operatorFiles.flatMap((file) => file.supportedOperators || []),
+    ]),
+  ];
+  const categoryKeys = stringArray(item.categoryKeys);
+  if (operatorFiles.length && !categoryKeys.includes('mobile-operator')) {
+    categoryKeys.push('mobile-operator');
+  }
 
   return {
     id,
@@ -369,6 +464,9 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     genres: stringArray(item.genres),
     ...(Number.isFinite(rate) ? { rate } : {}),
     access,
+    ...(operatorOnly ? { operatorOnly: true } : {}),
+    ...(operatorAccess ? { operatorAccess } : {}),
+    ...(supportedOperators.length ? { supportedOperators } : {}),
     ...(streamUrl ? { streamUrl, streamMode: 'video' as const } : {}),
     ...(downloads.length ? { downloads } : {}),
     ...(availableLanguages.length ? { availableLanguages } : {}),
@@ -380,7 +478,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
         }
       : {}),
     ...(asString(item.updateLabel) ? { updateLabel: asString(item.updateLabel) } : {}),
-    categoryKeys: stringArray(item.categoryKeys),
+    categoryKeys,
     categoryLabels: stringArray(item.categoryLabels),
     ...(asString(item.contentKind) ? { contentKind: asString(item.contentKind) } : {}),
     isAnimation: asBoolean(item.isAnimation),

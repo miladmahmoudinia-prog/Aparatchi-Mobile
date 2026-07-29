@@ -2,6 +2,9 @@ export type ContentType = 'movie' | 'series';
 
 export type MediaLanguage = 'dubbed' | 'subtitled';
 
+export type OperatorAccessKind = 'stream' | 'download' | 'both';
+export type DownloadMode = 'download' | 'play' | 'operator-download' | 'operator-play';
+
 export type DownloadFile = {
   id: string;
   quality: string;
@@ -9,8 +12,13 @@ export type DownloadFile = {
   size?: string;
   url: string;
   language?: MediaLanguage;
-  /** download: ذخیره مستقیم MP4، play: پخش مستقیم MP4 یا M3U8 */
-  mode?: 'download' | 'play';
+  /**
+   * download/play: لینک مستقیم داخل برنامه
+   * operator-download/operator-play: درگاه رایگان ویژه اینترنت همراه
+   */
+  mode?: DownloadMode;
+  operatorOnly?: boolean;
+  supportedOperators?: string[];
 };
 
 export type DownloadSection = {
@@ -48,6 +56,9 @@ export type CatalogItem = {
   genres: string[];
   rate?: number;
   access: 'free' | 'paid' | 'operator';
+  operatorOnly?: boolean;
+  operatorAccess?: OperatorAccessKind;
+  supportedOperators?: string[];
   streamUrl?: string;
   /** فقط پخش مستقیم داخل پلیر برنامه */
   streamMode?: 'video';
