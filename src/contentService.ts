@@ -54,6 +54,75 @@ const stringArray = (value: unknown) =>
     ? [...new Set(value.map((entry) => asString(entry)).filter(Boolean))]
     : [];
 
+const COUNTRY_LABELS_FA: Record<string, string> = {
+  IR: 'ایران',
+  KR: 'کره جنوبی',
+  IN: 'هند',
+  US: 'آمریکا',
+  GB: 'بریتانیا',
+  TR: 'ترکیه',
+  JP: 'ژاپن',
+  CN: 'چین',
+  FR: 'فرانسه',
+  DE: 'آلمان',
+  ES: 'اسپانیا',
+  IT: 'ایتالیا',
+  CA: 'کانادا',
+  AU: 'استرالیا',
+  RU: 'روسیه',
+};
+
+const normalizeCountryCode = (value: unknown) => {
+  const code = asString(value).toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : '';
+};
+
+const countryObjectValues = (value: unknown) => {
+  if (!Array.isArray(value)) return [] as Record<string, unknown>[];
+  return value.filter(
+    (entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object'),
+  );
+};
+
+const normalizeCountryMetadata = (item: Record<string, unknown>) => {
+  const objectCountries = countryObjectValues(
+    item.countries ?? item.productionCountries ?? item.production_countries,
+  );
+
+  const countryCodes = [
+    ...stringArray(item.countryCodes ?? item.country_codes),
+    ...objectCountries.map((country) =>
+      asString(country.code ?? country.iso_3166_1 ?? country.country_code),
+    ),
+  ]
+    .map(normalizeCountryCode)
+    .filter(Boolean);
+
+  const countryLabels = [
+    ...stringArray(item.countryLabels ?? item.country_labels),
+    ...objectCountries.map((country) =>
+      asString(country.nameFa ?? country.name_fa ?? country.titleFa ?? country.title_fa),
+    ),
+  ].filter(Boolean);
+
+  const countryNames = [
+    ...stringArray(item.countryNames ?? item.country_names),
+    ...objectCountries.map((country) => asString(country.name ?? country.title)),
+  ].filter(Boolean);
+
+  const uniqueCodes = [...new Set(countryCodes)];
+  const uniqueLabels = [...new Set([
+    ...countryLabels,
+    ...uniqueCodes.map((code) => COUNTRY_LABELS_FA[code]).filter(Boolean),
+  ])];
+
+  return {
+    countryCodes: uniqueCodes,
+    countryLabels: uniqueLabels,
+    countryNames: [...new Set(countryNames)],
+  };
+};
+
 const itemTimestamp = (item: CatalogItem) => {
   const value =
     item.updatedAt ||
@@ -400,6 +469,13 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const poster = asString(item.poster);
   const backdrop = asString(item.backdrop, poster);
   const iranian = asBoolean(item.ir);
+  const countryMetadata = normalizeCountryMetadata(item);
+  if (iranian && !countryMetadata.countryCodes.includes('IR')) {
+    countryMetadata.countryCodes.unshift('IR');
+  }
+  if (iranian && !countryMetadata.countryLabels.includes('ایران')) {
+    countryMetadata.countryLabels.unshift('ایران');
+  }
 
   if (!id || !type || !nameFa || !poster) return null;
 
@@ -470,6 +546,15 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     nameFa,
     name,
     ...(asString(item.imdb) ? { imdb: asString(item.imdb) } : {}),
+    ...(countryMetadata.countryCodes.length
+      ? { countryCodes: countryMetadata.countryCodes }
+      : {}),
+    ...(countryMetadata.countryLabels.length
+      ? { countryLabels: countryMetadata.countryLabels }
+      : {}),
+    ...(countryMetadata.countryNames.length
+      ? { countryNames: countryMetadata.countryNames }
+      : {}),
     ...(collectionId ? { collectionId } : {}),
     ...(collectionNameFa ? { collectionNameFa } : {}),
     ...(collectionName ? { collectionName } : {}),

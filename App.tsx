@@ -48,6 +48,7 @@ import {
 
 type MainTab = 'home' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
+type CountrySearchFilter = `country:${string}`;
 type SearchFilter =
   | 'all'
   | 'movie'
@@ -63,7 +64,8 @@ type SearchFilter =
   | 'animation-series'
   | 'programs'
   | 'documentaries'
-  | 'mobile-operator';
+  | 'mobile-operator'
+  | CountrySearchFilter;
 
 const TODAY_BY_JS_DAY: Record<number, DayId> = {
   0: 'sunday',
@@ -173,6 +175,41 @@ const itemLanguageBadge = (item: CatalogItem) => {
   if (languages.includes('dubbed')) return 'دوبله';
   if (languages.includes('subtitled')) return 'زیرنویس';
   return '';
+};
+
+const COUNTRY_LABELS_FA: Record<string, string> = {
+  IR: 'ایران',
+  KR: 'کره جنوبی',
+  IN: 'هند',
+  US: 'آمریکا',
+  GB: 'بریتانیا',
+  TR: 'ترکیه',
+  JP: 'ژاپن',
+  CN: 'چین',
+  FR: 'فرانسه',
+  DE: 'آلمان',
+  ES: 'اسپانیا',
+  IT: 'ایتالیا',
+  CA: 'کانادا',
+  AU: 'استرالیا',
+  RU: 'روسیه',
+};
+
+const COUNTRY_FILTER_PRIORITY = [
+  'IR', 'KR', 'IN', 'US', 'TR', 'JP', 'CN', 'GB', 'FR', 'DE', 'ES', 'IT', 'CA', 'AU', 'RU',
+];
+
+const countryFilter = (code: string): CountrySearchFilter =>
+  `country:${code.toUpperCase()}`;
+
+const countryCodeFromFilter = (filter: SearchFilter) =>
+  filter.startsWith('country:') ? filter.slice('country:'.length).toUpperCase() : '';
+
+const countryLabel = (code: string, catalog: CatalogItem[] = []) => {
+  const normalizedCode = code.toUpperCase();
+  const item = catalog.find((candidate) => candidate.countryCodes?.includes(normalizedCode));
+  const index = item?.countryCodes?.indexOf(normalizedCode) ?? -1;
+  return (index >= 0 ? item?.countryLabels?.[index] : '') || COUNTRY_LABELS_FA[normalizedCode] || normalizedCode;
 };
 
 const cleanMediaLabel = (value?: string) =>
@@ -426,7 +463,10 @@ const isDocumentaryItem = (item: CatalogItem) =>
   );
 
 const filterTitle = (filter: SearchFilter) => {
-  const titles: Record<SearchFilter, string> = {
+  const countryCode = countryCodeFromFilter(filter);
+  if (countryCode) return `آثار ${countryLabel(countryCode)}`;
+
+  const titles: Record<string, string> = {
     all: 'همه محتوا',
     movie: 'همه فیلم‌ها',
     series: 'همه سریال‌ها',
@@ -444,10 +484,13 @@ const filterTitle = (filter: SearchFilter) => {
     documentaries: 'مستندها',
     'mobile-operator': 'ویژه اینترنت همراه',
   };
-  return titles[filter];
+  return titles[filter] || 'همه محتوا';
 };
 
 const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
+  const countryCode = countryCodeFromFilter(filter);
+  if (countryCode) return Boolean(item.countryCodes?.includes(countryCode));
+
   switch (filter) {
     case 'all':
     case 'latest':
@@ -1102,6 +1145,18 @@ function HomeScreen({
       items: newest.filter((item) => matchesCatalogFilter(item, 'foreign-series')),
     },
     {
+      filter: countryFilter('KR'),
+      eyebrow: 'سینما و سریال کره',
+      title: 'آثار کره‌ای',
+      items: newest.filter((item) => matchesCatalogFilter(item, countryFilter('KR'))),
+    },
+    {
+      filter: countryFilter('IN'),
+      eyebrow: 'سینمای هند',
+      title: 'آثار هندی',
+      items: newest.filter((item) => matchesCatalogFilter(item, countryFilter('IN'))),
+    },
+    {
       filter: 'animation-movies',
       eyebrow: 'برای همه سنین',
       title: 'انیمیشن‌های سینمایی',
@@ -1212,7 +1267,9 @@ function SearchScreen({
       const matchesQuery =
         !normalizedQuery ||
         item.nameFa.toLowerCase().includes(normalizedQuery) ||
-        item.name.toLowerCase().includes(normalizedQuery);
+        item.name.toLowerCase().includes(normalizedQuery) ||
+        (item.countryLabels || []).some((country) => country.toLowerCase().includes(normalizedQuery)) ||
+        (item.countryNames || []).some((country) => country.toLowerCase().includes(normalizedQuery));
       return matchesQuery && matchesCatalogFilter(item, filter);
     }),
     filter,
@@ -1226,9 +1283,26 @@ function SearchScreen({
     { id: 'dubbed', label: 'دوبله فارسی' },
     { id: 'subtitled', label: 'زیرنویس فارسی' },
   ];
-  const visibleFilters = basicFilters.some((entry) => entry.id === initialFilter)
-    ? basicFilters
-    : [{ id: initialFilter, label: filterTitle(initialFilter) }, ...basicFilters];
+  const availableCountryCodes = [...new Set(
+    catalog.flatMap((item) => item.countryCodes || []),
+  )].sort((a, b) => {
+    const aIndex = COUNTRY_FILTER_PRIORITY.indexOf(a);
+    const bIndex = COUNTRY_FILTER_PRIORITY.indexOf(b);
+    if (aIndex >= 0 || bIndex >= 0) {
+      if (aIndex < 0) return 1;
+      if (bIndex < 0) return -1;
+      return aIndex - bIndex;
+    }
+    return countryLabel(a, catalog).localeCompare(countryLabel(b, catalog), 'fa');
+  });
+  const countryFilters: { id: SearchFilter; label: string }[] = availableCountryCodes.map((code) => ({
+    id: countryFilter(code),
+    label: countryLabel(code, catalog),
+  }));
+  const allFilters = [...basicFilters, ...countryFilters];
+  const visibleFilters = allFilters.some((entry) => entry.id === initialFilter)
+    ? allFilters
+    : [{ id: initialFilter, label: filterTitle(initialFilter) }, ...allFilters];
 
   const columnCount = screenWidth >= 720 ? 5 : screenWidth >= 590 ? 4 : screenWidth >= 480 ? 3 : 2;
   const gridGap = 12;
@@ -1864,6 +1938,9 @@ function DetailModal({
             </View>
 
             <View style={styles.genreRow}>
+              {(item.countryLabels || []).map((country) => (
+                <Text key={`country-${country}`} style={styles.detailGenre}>{country}</Text>
+              ))}
               {item.genres.map((genre) => <Text key={genre} style={styles.detailGenre}>{genre}</Text>)}
             </View>
 

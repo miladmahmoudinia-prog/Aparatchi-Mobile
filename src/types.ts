@@ -50,6 +50,10 @@ export type CatalogItem = {
   nameFa: string;
   name: string;
   imdb?: string;
+  /** کدهای استاندارد کشور سازنده، مثل IR، KR و IN. */
+  countryCodes?: string[];
+  countryLabels?: string[];
+  countryNames?: string[];
   /** شناسه پایدار کالکشن؛ هرگز از شباهت نام ساخته نمی‌شود. */
   collectionId?: string;
   collectionNameFa?: string;
