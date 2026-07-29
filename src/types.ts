@@ -1,5 +1,18 @@
 export type ContentType = 'movie' | 'series';
 
+export type PersonRole = 'actor' | 'director';
+
+export type CatalogPerson = {
+  id: string;
+  nameFa: string;
+  name?: string;
+  role: PersonRole;
+  roleLabel?: string;
+  character?: string;
+  image?: string;
+  order?: number;
+};
+
 export type MediaLanguage = 'dubbed' | 'subtitled';
 
 export type OperatorAccessKind = 'stream' | 'download' | 'both';
@@ -59,6 +72,8 @@ export type CatalogItem = {
   collectionNameFa?: string;
   collectionName?: string;
   collectionOrder?: number;
+  /** عوامل و بازیگران با شناسهٔ پایدار منبع. */
+  people?: CatalogPerson[];
   poster: string;
   backdrop: string;
   overview: string;

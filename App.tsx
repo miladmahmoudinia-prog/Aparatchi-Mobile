@@ -34,7 +34,7 @@ import {
   checkMobileOperatorAccess,
   MobileOperatorAccessStatus,
 } from './src/operatorAccess';
-import { CatalogItem, DayId, DownloadFile, DownloadSection, MediaLanguage, ScheduleEntry } from './src/types';
+import { CatalogItem, CatalogPerson, DayId, DownloadFile, DownloadSection, MediaLanguage, ScheduleEntry } from './src/types';
 import {
   DownloadRecord,
   cancelDownload,
@@ -557,6 +557,25 @@ const collectionMembersFor = (item: CatalogItem, catalog: CatalogItem[]) => {
     });
 };
 
+const personName = (person: CatalogPerson) => person.nameFa || person.name || 'بدون نام';
+
+const personRoleTitle = (person: CatalogPerson) =>
+  person.roleLabel || (person.role === 'director' ? 'کارگردان' : 'بازیگر');
+
+const personInitials = (person: CatalogPerson) =>
+  personName(person)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('');
+
+const personWorksFor = (person: CatalogPerson, catalog: CatalogItem[]) =>
+  sortForCatalogFilter(
+    catalog.filter((item) => item.people?.some((candidate) => candidate.id === person.id)),
+    'latest',
+  );
+
 function Logo() {
   return (
     <View style={styles.logoWrap}>
@@ -1052,6 +1071,63 @@ function MovieCollectionSection({
   );
 }
 
+function PeopleSection({
+  item,
+  onOpen,
+}: {
+  item: CatalogItem;
+  onOpen: (person: CatalogPerson) => void;
+}) {
+  const people = (item.people || [])
+    .filter((person) => person.role === 'director' || person.role === 'actor')
+    .sort((a, b) => {
+      const roleDifference = (a.role === 'director' ? 0 : 1) - (b.role === 'director' ? 0 : 1);
+      return roleDifference || (a.order || 0) - (b.order || 0);
+    });
+
+  if (!people.length) return null;
+
+  return (
+    <View style={styles.peopleSection}>
+      <View style={styles.peopleSectionHeader}>
+        <View style={styles.peopleSectionIcon}>
+          <Ionicons name="people-outline" color={COLORS.gold} size={19} />
+        </View>
+        <View style={styles.peopleSectionHeaderText}>
+          <Text style={styles.peopleSectionTitle}>عوامل و بازیگران</Text>
+          <Text style={styles.peopleSectionSubtitle}>برای دیدن همه آثار، روی هر نفر بزنید.</Text>
+        </View>
+      </View>
+      <FlatList
+        horizontal
+        inverted
+        data={people}
+        keyExtractor={(person) => person.id}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.peopleList}
+        renderItem={({ item: person }) => (
+          <Pressable onPress={() => onOpen(person)} style={styles.personCard}>
+            <View style={styles.personAvatarWrap}>
+              {person.image ? (
+                <Image source={{ uri: person.image }} style={styles.personAvatar} contentFit="cover" transition={180} />
+              ) : (
+                <View style={styles.personAvatarFallback}>
+                  <Text style={styles.personAvatarInitials}>{personInitials(person)}</Text>
+                </View>
+              )}
+            </View>
+            <Text numberOfLines={2} style={styles.personCardName}>{personName(person)}</Text>
+            <Text numberOfLines={1} style={styles.personCardRole}>{personRoleTitle(person)}</Text>
+            {person.character ? (
+              <Text numberOfLines={1} style={styles.personCardCharacter}>{person.character}</Text>
+            ) : null}
+          </Pressable>
+        )}
+      />
+    </View>
+  );
+}
+
 function HorizontalCatalog({
   items,
   onOpen,
@@ -1269,7 +1345,11 @@ function SearchScreen({
         item.nameFa.toLowerCase().includes(normalizedQuery) ||
         item.name.toLowerCase().includes(normalizedQuery) ||
         (item.countryLabels || []).some((country) => country.toLowerCase().includes(normalizedQuery)) ||
-        (item.countryNames || []).some((country) => country.toLowerCase().includes(normalizedQuery));
+        (item.countryNames || []).some((country) => country.toLowerCase().includes(normalizedQuery)) ||
+        (item.people || []).some((person) =>
+          person.nameFa.toLowerCase().includes(normalizedQuery) ||
+          (person.name || '').toLowerCase().includes(normalizedQuery),
+        );
       return matchesQuery && matchesCatalogFilter(item, filter);
     }),
     filter,
@@ -1802,6 +1882,7 @@ function DetailModal({
   onDownload,
   onOperatorOpen,
   onOpenRelated,
+  onOpenPerson,
 }: {
   item: CatalogItem | null;
   catalog: CatalogItem[];
@@ -1813,6 +1894,7 @@ function DetailModal({
   onDownload: (item: CatalogItem, file: DownloadFile) => void;
   onOperatorOpen: (item: CatalogItem, file: DownloadFile) => void;
   onOpenRelated: (item: CatalogItem) => void;
+  onOpenPerson: (person: CatalogPerson) => void;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [openLanguage, setOpenLanguage] = useState<string | null>(null);
@@ -1947,6 +2029,8 @@ function DetailModal({
             <Text style={styles.detailSectionTitle}>داستان {item.nameFa}</Text>
             <Text style={styles.detailOverview}>{item.overview}</Text>
 
+            <PeopleSection item={item} onOpen={onOpenPerson} />
+
             <MovieCollectionSection
               item={item}
               catalog={catalog}
@@ -2066,6 +2150,91 @@ function DetailModal({
               </>
             )}
           </View>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function PersonProfileModal({
+  person,
+  catalog,
+  visible,
+  onClose,
+  onOpenItem,
+}: {
+  person: CatalogPerson | null;
+  catalog: CatalogItem[];
+  visible: boolean;
+  onClose: () => void;
+  onOpenItem: (item: CatalogItem) => void;
+}) {
+  const { width: screenWidth } = useWindowDimensions();
+  if (!person) return null;
+
+  const works = personWorksFor(person, catalog);
+  const cardGap = 12;
+  const cardWidth = Math.floor((screenWidth - 32 - cardGap) / 2);
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.personProfileScreen} edges={['top', 'right', 'bottom', 'left']}>
+        <StatusBar style="light" />
+        <View style={styles.personProfileTopBar}>
+          <Pressable onPress={onClose} style={styles.detailCircleButton}>
+            <Ionicons name="arrow-forward" color="#fff" size={21} />
+          </Pressable>
+          <Text numberOfLines={1} style={styles.personProfileTopTitle}>صفحه عوامل</Text>
+          <View style={styles.personProfileTopSpacer} />
+        </View>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.personProfileContent}>
+          <View style={styles.personProfileHeader}>
+            <View style={styles.personProfileAvatarWrap}>
+              {person.image ? (
+                <Image source={{ uri: person.image }} style={styles.personProfileAvatar} contentFit="cover" transition={180} />
+              ) : (
+                <View style={styles.personProfileAvatarFallback}>
+                  <Text style={styles.personProfileInitials}>{personInitials(person)}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.personProfileName}>{personName(person)}</Text>
+            {person.name && person.name !== person.nameFa ? (
+              <Text style={styles.personProfileEnglish}>{person.name}</Text>
+            ) : null}
+            <View style={styles.personProfileRoleBadge}>
+              <Ionicons
+                name={person.role === 'director' ? 'videocam-outline' : 'person-outline'}
+                color={COLORS.gold}
+                size={15}
+              />
+              <Text style={styles.personProfileRoleText}>{personRoleTitle(person)}</Text>
+            </View>
+          </View>
+
+          <View style={styles.personWorksHeader}>
+            <Text style={styles.personWorksTitle}>فیلم‌ها و سریال‌ها</Text>
+            <Text style={styles.personWorksCount}>{toPersianDigits(works.length)} عنوان</Text>
+          </View>
+
+          {works.length ? (
+            <View style={styles.personWorksGrid}>
+              {works.map((work) => (
+                <PosterCard
+                  key={work.id}
+                  item={work}
+                  width={cardWidth}
+                  onOpen={() => onOpenItem(work)}
+                />
+              ))}
+            </View>
+          ) : (
+            <View style={styles.personWorksEmpty}>
+              <Ionicons name="film-outline" color={COLORS.muted} size={27} />
+              <Text style={styles.personWorksEmptyTitle}>اثر دیگری در کاتالوگ پیدا نشد</Text>
+              <Text style={styles.personWorksEmptyText}>با کامل‌شدن کاتالوگ، آثار بیشتری اینجا نمایش داده می‌شوند.</Text>
+            </View>
+          )}
         </ScrollView>
       </SafeAreaView>
     </Modal>
@@ -2379,6 +2548,7 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [searchFilter, setSearchFilter] = useState<SearchFilter>('all');
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
+  const [selectedPerson, setSelectedPerson] = useState<CatalogPerson | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [content, setContent] = useState<LoadedContent | null>(null);
   const [contentLoading, setContentLoading] = useState(true);
@@ -2790,6 +2960,17 @@ function AppContent() {
         onDownload={startDownloadInsideApp}
         onOperatorOpen={openOperatorAccess}
         onOpenRelated={setSelectedItem}
+        onOpenPerson={setSelectedPerson}
+      />
+      <PersonProfileModal
+        person={selectedPerson}
+        catalog={content.items}
+        visible={Boolean(selectedPerson)}
+        onClose={() => setSelectedPerson(null)}
+        onOpenItem={(nextItem) => {
+          setSelectedPerson(null);
+          setSelectedItem(nextItem);
+        }}
       />
       {videoRequest ? (
         <VideoPlayerModal
@@ -3127,6 +3308,42 @@ const styles = StyleSheet.create({
   operatorWebError: { flex: 1, paddingHorizontal: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.background },
   operatorWebErrorTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 14 },
   operatorWebErrorText: { ...rtlText, color: COLORS.muted, fontSize: 10.5, lineHeight: 21, textAlign: 'center', marginTop: 8, marginBottom: 20 },
+  peopleSection: { marginTop: 24 },
+  peopleSectionHeader: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10, marginBottom: 13 },
+  peopleSectionIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.09)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.3)' },
+  peopleSectionHeaderText: { flex: 1, alignItems: 'flex-end' },
+  peopleSectionTitle: { ...rtlText, color: COLORS.text, fontSize: 15, fontWeight: '900' },
+  peopleSectionSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8.5, marginTop: 4 },
+  peopleList: { flexDirection: 'row-reverse', gap: 12, paddingHorizontal: 1, paddingBottom: 2 },
+  personCard: { width: 88, alignItems: 'center' },
+  personAvatarWrap: { width: 70, height: 70, borderRadius: 35, overflow: 'hidden', borderWidth: 1.5, borderColor: 'rgba(216,180,90,0.38)', backgroundColor: COLORS.surface },
+  personAvatar: { width: '100%', height: '100%' },
+  personAvatarFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#181C23' },
+  personAvatarInitials: { color: COLORS.gold, fontSize: 18, fontWeight: '900' },
+  personCardName: { ...rtlText, width: '100%', minHeight: 31, color: COLORS.text, fontSize: 9.5, lineHeight: 15, fontWeight: '900', textAlign: 'center', marginTop: 8 },
+  personCardRole: { color: COLORS.gold, fontSize: 7.5, fontWeight: '800', marginTop: 2 },
+  personCardCharacter: { ...rtlText, width: '100%', color: COLORS.muted, fontSize: 7, textAlign: 'center', marginTop: 3 },
+  personProfileScreen: { flex: 1, backgroundColor: COLORS.background },
+  personProfileTopBar: { minHeight: 62, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: COLORS.border, backgroundColor: '#080A0E' },
+  personProfileTopTitle: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 14, fontWeight: '900', textAlign: 'center' },
+  personProfileTopSpacer: { width: 42, height: 42 },
+  personProfileContent: { paddingHorizontal: 16, paddingBottom: 34 },
+  personProfileHeader: { alignItems: 'center', paddingTop: 28, paddingBottom: 24, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  personProfileAvatarWrap: { width: 112, height: 112, borderRadius: 56, overflow: 'hidden', borderWidth: 2, borderColor: 'rgba(216,180,90,0.52)', backgroundColor: COLORS.surface },
+  personProfileAvatar: { width: '100%', height: '100%' },
+  personProfileAvatarFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#181C23' },
+  personProfileInitials: { color: COLORS.gold, fontSize: 30, fontWeight: '900' },
+  personProfileName: { ...rtlText, color: COLORS.text, fontSize: 21, lineHeight: 31, fontWeight: '900', textAlign: 'center', marginTop: 15 },
+  personProfileEnglish: { color: COLORS.muted, fontSize: 11, textAlign: 'center', marginTop: 5 },
+  personProfileRoleBadge: { minHeight: 34, marginTop: 12, paddingHorizontal: 13, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', gap: 7, backgroundColor: 'rgba(216,180,90,0.09)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.34)' },
+  personProfileRoleText: { color: COLORS.gold, fontSize: 9.5, fontWeight: '900' },
+  personWorksHeader: { marginTop: 24, marginBottom: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
+  personWorksTitle: { ...rtlText, color: COLORS.text, fontSize: 16, fontWeight: '900' },
+  personWorksCount: { color: COLORS.gold, fontSize: 9, fontWeight: '900' },
+  personWorksGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 12, alignItems: 'flex-start' },
+  personWorksEmpty: { minHeight: 180, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  personWorksEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', textAlign: 'center', marginTop: 10 },
+  personWorksEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 18, textAlign: 'center', marginTop: 6 },
   mediaModal: { flex: 1, backgroundColor: '#000' },
   webModal: { flex: 1, backgroundColor: COLORS.background },
   mediaModalHeader: { height: 62, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },

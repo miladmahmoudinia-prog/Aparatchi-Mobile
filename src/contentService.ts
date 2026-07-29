@@ -2,6 +2,7 @@ import { CATALOG, VERIFIED_IRANIAN_SCHEDULE } from './data';
 import { REMOTE_CONTENT_URL } from './config';
 import {
   CatalogItem,
+  CatalogPerson,
   CatalogPayload,
   DayId,
   DownloadFile,
@@ -121,6 +122,110 @@ const normalizeCountryMetadata = (item: Record<string, unknown>) => {
     countryLabels: uniqueLabels,
     countryNames: [...new Set(countryNames)],
   };
+};
+
+const normalizePersonRole = (value: unknown, fallback: CatalogPerson['role'] | null = null) => {
+  const text = asString(value).toLowerCase();
+  if (/director|کارگردان|directing/.test(text)) return 'director' as const;
+  if (/actor|actress|cast|بازیگر|هنرپیشه/.test(text)) return 'actor' as const;
+  return fallback;
+};
+
+const normalizePersonImage = (value: unknown) => {
+  const raw = asString(value);
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith('/')) return `https://image.tmdb.org/t/p/w342${raw}`;
+  return '';
+};
+
+const personSourceEntries = (
+  value: unknown,
+  fallbackRole: CatalogPerson['role'] | null = null,
+): Array<Record<string, unknown>> => {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => personSourceEntries(entry, fallbackRole));
+  }
+  if (!value || typeof value !== 'object') return [];
+  const record = value as Record<string, unknown>;
+  const hasName = Boolean(record.name || record.nameFa || record.name_fa || record.title);
+  if (hasName) return [{ ...record, __fallbackRole: fallbackRole }];
+
+  return [
+    ...personSourceEntries(record.cast, 'actor'),
+    ...personSourceEntries(record.actors, 'actor'),
+    ...personSourceEntries(record.directors, 'director'),
+    ...personSourceEntries(record.crew, fallbackRole),
+    ...personSourceEntries(record.data, fallbackRole),
+    ...personSourceEntries(record.items, fallbackRole),
+  ];
+};
+
+const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
+  const sources = [
+    ...personSourceEntries(item.directors, 'director'),
+    ...personSourceEntries(item.director, 'director'),
+    ...personSourceEntries(item.actors, 'actor'),
+    ...personSourceEntries(item.actor, 'actor'),
+    ...personSourceEntries(item.cast, 'actor'),
+    ...personSourceEntries(item.casts, 'actor'),
+    ...personSourceEntries(item.people),
+    ...personSourceEntries(item.credits),
+    ...personSourceEntries(item.crew),
+  ];
+
+  const seen = new Set<string>();
+  const ownerId = asString(item.id ?? item.t_id ?? item.series_id, 'item');
+  return sources.flatMap((person, index) => {
+    const fallbackRole = person.__fallbackRole as CatalogPerson['role'] | null;
+    const role = normalizePersonRole(
+      person.role ?? person.job ?? person.department ?? person.known_for_department,
+      fallbackRole,
+    );
+    if (!role) return [];
+
+    const nameFa = asString(
+      person.nameFa ?? person.name_fa ?? person.full_name_fa ??
+      person.titleFa ?? person.title_fa ?? person.name ?? person.title,
+    );
+    const name = asString(person.name ?? person.full_name ?? person.title, nameFa);
+    if (!nameFa && !name) return [];
+
+    const externalId = asString(
+      person.personId ?? person.person_id ?? person.tmdbId ?? person.tmdb_id ??
+      person.imdb ?? person.id ?? person.slug,
+    );
+    const fallbackName = (nameFa || name).toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g, '-');
+    const fallbackId = `${role}-local-${ownerId}-${fallbackName}`;
+    const id = externalId
+      ? (externalId.startsWith(`${role}-`) ? externalId : `${role}-${externalId}`)
+      : fallbackId;
+    if (!id || seen.has(id)) return [];
+    seen.add(id);
+
+    const image = normalizePersonImage(
+      person.image ?? person.profile ?? person.profile_path ?? person.photo ??
+      person.avatar ?? person.poster,
+    );
+    const character = asString(
+      person.character ?? person.characterName ?? person.character_name ??
+      person.roleName ?? person.role_name ?? person.as,
+    );
+
+    return [{
+      id,
+      nameFa: nameFa || name,
+      ...(name ? { name } : {}),
+      role,
+      roleLabel: asString(person.roleLabel ?? person.role_label, role === 'director' ? 'کارگردان' : 'بازیگر'),
+      ...(character ? { character } : {}),
+      ...(image ? { image } : {}),
+      order: asNumber(person.order ?? person.castOrder ?? person.cast_order, index),
+    } satisfies CatalogPerson];
+  }).sort((a, b) => {
+    const roleDifference = (a.role === 'director' ? 0 : 1) - (b.role === 'director' ? 0 : 1);
+    return roleDifference || (a.order || 0) - (b.order || 0);
+  }).slice(0, 30);
 };
 
 const itemTimestamp = (item: CatalogItem) => {
@@ -511,6 +616,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     item.collectionOrder ?? item.collection_order ?? item.collectionPart ?? item.collection_part,
     0,
   );
+  const people = normalizePeople(item);
   const rawStreamUrl = asString(item.streamUrl);
   const streamUrl = rawStreamUrl && isPlayableUrl(rawStreamUrl) ? rawStreamUrl : '';
   const operatorOnly = asBoolean(item.operatorOnly) || Boolean(
@@ -559,6 +665,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     ...(collectionNameFa ? { collectionNameFa } : {}),
     ...(collectionName ? { collectionName } : {}),
     ...(collectionOrder > 0 ? { collectionOrder } : {}),
+    ...(people.length ? { people } : {}),
     poster,
     backdrop,
     overview: asString(item.overview, 'توضیحی ثبت نشده است.'),
