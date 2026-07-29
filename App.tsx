@@ -1548,31 +1548,75 @@ function SeriesEpisodeList({
     return result;
   }, {});
 
+  const seasonNumbers = Object.keys(seasons)
+    .map(Number)
+    .sort((a, b) => b - a);
+  const latestSeason = seasonNumbers[0] || 1;
+  const seasonKey = `${item.id}:${seasonNumbers.join(',')}`;
+  const [selectedSeason, setSelectedSeason] = useState(latestSeason);
+
+  useEffect(() => {
+    setSelectedSeason(latestSeason);
+  }, [seasonKey, latestSeason]);
+
+  const visibleSeason = seasons[selectedSeason] ? selectedSeason : latestSeason;
+  const visibleGroups = seasons[visibleSeason] || [];
+
   return (
     <View style={styles.seriesEpisodes}>
-      {Object.entries(seasons)
-        .sort(([a], [b]) => Number(b) - Number(a))
-        .map(([seasonNumber, groups]) => (
-          <View key={seasonNumber} style={styles.seasonBlock}>
-            <View style={styles.seasonTitleRow}>
-              <Text style={styles.seasonTitle}>فصل {toPersianDigits(seasonNumber)}</Text>
-              <Text style={styles.seasonCount}>{toPersianDigits(groups.length)} قسمت</Text>
-            </View>
-            {groups.map((group) => (
-              <EpisodeDownloadGroup
-                key={group.id}
-                group={group}
-                open={openGroup === group.id}
-                openLanguage={openLanguage}
-                onToggle={(defaultLanguageId) => onToggleEpisode(group.id, defaultLanguageId)}
-                onToggleLanguage={onToggleLanguage}
-                onOpenFile={onOpenFile}
-                onPlayLanguage={(language) => onPlayLanguage(group, language)}
-                onOpenOperator={onOpenOperator}
-              />
-            ))}
+      {seasonNumbers.length > 1 ? (
+        <View style={styles.seasonSelectorWrap}>
+          <View style={styles.seasonSelectorHeader}>
+            <Text style={styles.seasonSelectorTitle}>انتخاب فصل</Text>
+            <Text style={styles.seasonSelectorMeta}>
+              {toPersianDigits(seasonNumbers.length)} فصل
+            </Text>
           </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.seasonSelector}
+          >
+            {seasonNumbers.map((seasonNumber) => {
+              const active = visibleSeason === seasonNumber;
+              return (
+                <Pressable
+                  key={seasonNumber}
+                  onPress={() => setSelectedSeason(seasonNumber)}
+                  style={[styles.seasonChip, active && styles.seasonChipActive]}
+                >
+                  <Text style={[styles.seasonChipText, active && styles.seasonChipTextActive]}>
+                    فصل {toPersianDigits(seasonNumber)}
+                  </Text>
+                  <Text style={[styles.seasonChipCount, active && styles.seasonChipCountActive]}>
+                    {toPersianDigits(seasons[seasonNumber]?.length || 0)} قسمت
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
+
+      <View style={styles.seasonBlock}>
+        <View style={styles.seasonTitleRow}>
+          <Text style={styles.seasonTitle}>فصل {toPersianDigits(visibleSeason)}</Text>
+          <Text style={styles.seasonCount}>{toPersianDigits(visibleGroups.length)} قسمت</Text>
+        </View>
+        {visibleGroups.map((group) => (
+          <EpisodeDownloadGroup
+            key={group.id}
+            group={group}
+            open={openGroup === group.id}
+            openLanguage={openLanguage}
+            onToggle={(defaultLanguageId) => onToggleEpisode(group.id, defaultLanguageId)}
+            onToggleLanguage={onToggleLanguage}
+            onOpenFile={onOpenFile}
+            onPlayLanguage={(language) => onPlayLanguage(group, language)}
+            onOpenOperator={onOpenOperator}
+          />
         ))}
+      </View>
     </View>
   );
 }
@@ -2777,7 +2821,18 @@ const styles = StyleSheet.create({
   downloadButtonText: { color: '#fff', fontSize: 9, fontWeight: '900' },
   downloadEmptyRow: { minHeight: 64, alignItems: 'center', justifyContent: 'center' },
   downloadEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9 },
-  seriesEpisodes: { gap: 18 },
+  seriesEpisodes: { gap: 14 },
+  seasonSelectorWrap: { gap: 9, paddingBottom: 2 },
+  seasonSelectorHeader: { minHeight: 28, paddingHorizontal: 4, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
+  seasonSelectorTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900' },
+  seasonSelectorMeta: { color: COLORS.muted, fontSize: 8.5, fontWeight: '800' },
+  seasonSelector: { flexDirection: 'row-reverse', gap: 8, paddingHorizontal: 1, paddingBottom: 2 },
+  seasonChip: { minWidth: 94, minHeight: 54, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  seasonChipActive: { backgroundColor: 'rgba(222,35,66,0.15)', borderColor: 'rgba(222,35,66,0.68)' },
+  seasonChipText: { ...rtlText, color: COLORS.text, fontSize: 11, fontWeight: '900' },
+  seasonChipTextActive: { color: '#fff' },
+  seasonChipCount: { color: COLORS.muted, fontSize: 8, fontWeight: '800', marginTop: 4 },
+  seasonChipCountActive: { color: COLORS.gold },
   seasonBlock: { gap: 7 },
   episodeGroup: { borderRadius: 15, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.border, backgroundColor: '#0D1015' },
   episodeGroupOpen: { borderColor: 'rgba(216,180,90,0.45)' },
