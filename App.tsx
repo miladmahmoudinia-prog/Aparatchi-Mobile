@@ -50,6 +50,7 @@ import {
 type MainTab = 'home' | 'search' | 'favorites' | 'downloads';
 type PlayerDisplayMode = 'auto' | 'fit' | 'fill';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
+type PersonRoleFilter = 'all' | 'actor' | 'director';
 type CountrySearchFilter = `country:${string}`;
 type SearchFilter =
   | 'all'
@@ -1336,42 +1337,35 @@ function SearchScreen({
   onOpen: (item: CatalogItem) => void;
   initialFilter: SearchFilter;
 }) {
+  const initialCountry = countryCodeFromFilter(initialFilter);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<SearchFilter>(initialFilter);
+  const [filter, setFilter] = useState<SearchFilter>(initialCountry ? 'all' : initialFilter);
+  const [advancedOpen, setAdvancedOpen] = useState(Boolean(initialCountry));
+  const [selectedCountry, setSelectedCountry] = useState(initialCountry);
+  const [selectedGenre, setSelectedGenre] = useState('');
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+  const [personQuery, setPersonQuery] = useState('');
+  const [selectedPersonId, setSelectedPersonId] = useState('');
+  const [personRole, setPersonRole] = useState<PersonRoleFilter>('all');
   const { width: screenWidth } = useWindowDimensions();
 
   useEffect(() => {
-    setFilter(initialFilter);
+    const nextCountry = countryCodeFromFilter(initialFilter);
+    setFilter(nextCountry ? 'all' : initialFilter);
+    setSelectedCountry(nextCountry);
+    setSelectedGenre('');
+    setSelectedYear(null);
+    setPersonQuery('');
+    setSelectedPersonId('');
+    setPersonRole('all');
+    setAdvancedOpen(Boolean(nextCountry));
     setQuery('');
   }, [initialFilter]);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const results = sortForCatalogFilter(
-    catalog.filter((item) => {
-      const matchesQuery =
-        !normalizedQuery ||
-        item.nameFa.toLowerCase().includes(normalizedQuery) ||
-        item.name.toLowerCase().includes(normalizedQuery) ||
-        (item.countryLabels || []).some((country) => country.toLowerCase().includes(normalizedQuery)) ||
-        (item.countryNames || []).some((country) => country.toLowerCase().includes(normalizedQuery)) ||
-        (item.people || []).some((person) =>
-          person.nameFa.toLowerCase().includes(normalizedQuery) ||
-          (person.name || '').toLowerCase().includes(normalizedQuery),
-        );
-      return matchesQuery && matchesCatalogFilter(item, filter);
-    }),
-    filter,
-  );
+  const normalizedPersonQuery = personQuery.trim().toLowerCase();
 
-  const basicFilters: { id: SearchFilter; label: string }[] = [
-    { id: 'all', label: 'همه' },
-    { id: 'movie', label: 'فیلم' },
-    { id: 'series', label: 'سریال' },
-    { id: 'mobile-operator', label: 'ویژه همراه' },
-    { id: 'dubbed', label: 'دوبله فارسی' },
-    { id: 'subtitled', label: 'زیرنویس فارسی' },
-  ];
-  const availableCountryCodes = [...new Set(
+  const availableCountryCodes = useMemo(() => [...new Set(
     catalog.flatMap((item) => item.countryCodes || []),
   )].sort((a, b) => {
     const aIndex = COUNTRY_FILTER_PRIORITY.indexOf(a);
@@ -1382,34 +1376,161 @@ function SearchScreen({
       return aIndex - bIndex;
     }
     return countryLabel(a, catalog).localeCompare(countryLabel(b, catalog), 'fa');
-  });
-  const countryFilters: { id: SearchFilter; label: string }[] = availableCountryCodes.map((code) => ({
-    id: countryFilter(code),
-    label: countryLabel(code, catalog),
-  }));
-  const allFilters = [...basicFilters, ...countryFilters];
-  const visibleFilters = allFilters.some((entry) => entry.id === initialFilter)
-    ? allFilters
-    : [{ id: initialFilter, label: filterTitle(initialFilter) }, ...allFilters];
+  }), [catalog]);
+
+  const availableGenres = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of catalog) {
+      for (const genre of item.genres || []) {
+        const cleaned = genre.trim();
+        if (!cleaned) continue;
+        counts.set(cleaned, (counts.get(cleaned) || 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'fa'))
+      .map(([genre]) => genre);
+  }, [catalog]);
+
+  const availableYears = useMemo(() => [...new Set(
+    catalog
+      .map((item) => Number(item.year))
+      .filter((year) => Number.isFinite(year) && year > 1800),
+  )].sort((a, b) => b - a), [catalog]);
+
+  const availablePeople = useMemo(() => {
+    const people = new Map<string, { person: CatalogPerson; count: number }>();
+    for (const item of catalog) {
+      for (const person of item.people || []) {
+        const current = people.get(person.id);
+        people.set(person.id, {
+          person: current?.person || person,
+          count: (current?.count || 0) + 1,
+        });
+      }
+    }
+    return [...people.values()].sort((a, b) =>
+      b.count - a.count || personName(a.person).localeCompare(personName(b.person), 'fa'),
+    );
+  }, [catalog]);
+
+  const personSuggestions = useMemo(() => {
+    if (!normalizedPersonQuery) return [];
+    return availablePeople
+      .filter(({ person }) => {
+        if (personRole !== 'all' && person.role !== personRole) return false;
+        return [person.nameFa, person.name]
+          .filter(Boolean)
+          .some((name) => String(name).toLowerCase().includes(normalizedPersonQuery));
+      })
+      .slice(0, 12);
+  }, [availablePeople, normalizedPersonQuery, personRole]);
+
+  const results = useMemo(() => sortForCatalogFilter(
+    catalog.filter((item) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        item.nameFa.toLowerCase().includes(normalizedQuery) ||
+        item.name.toLowerCase().includes(normalizedQuery) ||
+        item.genres.some((genre) => genre.toLowerCase().includes(normalizedQuery)) ||
+        (item.countryLabels || []).some((country) => country.toLowerCase().includes(normalizedQuery)) ||
+        (item.countryNames || []).some((country) => country.toLowerCase().includes(normalizedQuery)) ||
+        (item.people || []).some((person) =>
+          person.nameFa.toLowerCase().includes(normalizedQuery) ||
+          (person.name || '').toLowerCase().includes(normalizedQuery),
+        );
+
+      const matchesCountry =
+        !selectedCountry || item.countryCodes?.includes(selectedCountry);
+      const matchesGenre =
+        !selectedGenre || item.genres.includes(selectedGenre);
+      const matchesYear =
+        !selectedYear || item.year === selectedYear;
+
+      const eligiblePeople = (item.people || []).filter((person) =>
+        personRole === 'all' || person.role === personRole,
+      );
+      const matchesPersonRole = personRole === 'all' || eligiblePeople.length > 0;
+      const matchesPerson = selectedPersonId
+        ? eligiblePeople.some((person) => person.id === selectedPersonId)
+        : !normalizedPersonQuery || eligiblePeople.some((person) =>
+          person.nameFa.toLowerCase().includes(normalizedPersonQuery) ||
+          (person.name || '').toLowerCase().includes(normalizedPersonQuery),
+        );
+
+      return (
+        matchesQuery &&
+        matchesCatalogFilter(item, filter) &&
+        matchesCountry &&
+        matchesGenre &&
+        matchesYear &&
+        matchesPersonRole &&
+        matchesPerson
+      );
+    }),
+    filter,
+  ), [
+    catalog,
+    filter,
+    normalizedPersonQuery,
+    normalizedQuery,
+    personRole,
+    selectedCountry,
+    selectedGenre,
+    selectedPersonId,
+    selectedYear,
+  ]);
+
+  const basicFilters: { id: SearchFilter; label: string }[] = [
+    { id: 'all', label: 'همه' },
+    { id: 'movie', label: 'فیلم' },
+    { id: 'series', label: 'سریال' },
+    { id: 'mobile-operator', label: 'ویژه همراه' },
+    { id: 'dubbed', label: 'دوبله فارسی' },
+    { id: 'subtitled', label: 'زیرنویس فارسی' },
+  ];
+  const visibleFilters = basicFilters.some((entry) => entry.id === filter)
+    ? basicFilters
+    : [{ id: filter, label: filterTitle(filter) }, ...basicFilters];
+
+  const activeAdvancedCount = [
+    Boolean(selectedCountry),
+    Boolean(selectedGenre),
+    Boolean(selectedYear),
+    Boolean(normalizedPersonQuery || selectedPersonId),
+    personRole !== 'all',
+  ].filter(Boolean).length;
+
+  const clearAdvancedFilters = () => {
+    setSelectedCountry('');
+    setSelectedGenre('');
+    setSelectedYear(null);
+    setPersonQuery('');
+    setSelectedPersonId('');
+    setPersonRole('all');
+  };
 
   const columnCount = screenWidth >= 720 ? 5 : screenWidth >= 590 ? 4 : screenWidth >= 480 ? 3 : 2;
   const gridGap = 12;
   const cardWidth = Math.floor(
     (screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount,
   );
+  const screenTitle = selectedCountry
+    ? `آثار ${countryLabel(selectedCountry, catalog)}`
+    : selectedGenre || filterTitle(filter);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
       <View style={styles.simpleHeader}>
         <Logo />
-        <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{filterTitle(filter)}</Text>
+        <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{screenTitle}</Text>
       </View>
       <View style={styles.searchBox}>
         <Ionicons name="search-outline" color={COLORS.muted} size={21} />
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="نام فارسی یا انگلیسی…"
+          placeholder="نام فیلم، سریال یا شخص…"
           placeholderTextColor="#646A74"
           style={styles.searchInput}
           textAlign="right"
@@ -1430,17 +1551,224 @@ function SearchScreen({
           </Pressable>
         ))}
       </ScrollView>
-      <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text>
-      <View style={[styles.searchGrid, { columnGap: gridGap }]}>
-        {results.map((item) => (
-          <PosterCard
-            key={item.id}
-            item={item}
-            width={cardWidth}
-            onOpen={() => onOpen(item)}
+
+      <Pressable
+        onPress={() => setAdvancedOpen((current) => !current)}
+        style={[styles.advancedFilterToggle, advancedOpen && styles.advancedFilterToggleOpen]}
+      >
+        <View style={styles.advancedFilterToggleMain}>
+          <View style={styles.advancedFilterIcon}>
+            <Ionicons name="options-outline" color={COLORS.gold} size={19} />
+          </View>
+          <View style={styles.advancedFilterToggleText}>
+            <Text style={styles.advancedFilterTitle}>فیلتر پیشرفته</Text>
+            <Text style={styles.advancedFilterHint}>
+              {activeAdvancedCount
+                ? `${toPersianDigits(activeAdvancedCount)} فیلتر فعال`
+                : 'کشور، ژانر، سال، بازیگر و کارگردان'}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.advancedFilterToggleSide}>
+          {activeAdvancedCount ? (
+            <View style={styles.activeFilterBadge}>
+              <Text style={styles.activeFilterBadgeText}>{toPersianDigits(activeAdvancedCount)}</Text>
+            </View>
+          ) : null}
+          <Ionicons
+            name={advancedOpen ? 'chevron-up' : 'chevron-down'}
+            color={COLORS.muted}
+            size={18}
           />
-        ))}
-      </View>
+        </View>
+      </Pressable>
+
+      {advancedOpen ? (
+        <View style={styles.advancedFilterPanel}>
+          <View style={styles.advancedFilterSection}>
+            <Text style={styles.advancedFilterSectionTitle}>کشور سازنده</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.advancedFilterChips}
+            >
+              <Pressable
+                onPress={() => setSelectedCountry('')}
+                style={[styles.filterChip, !selectedCountry && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, !selectedCountry && styles.filterChipTextActive]}>همه کشورها</Text>
+              </Pressable>
+              {availableCountryCodes.map((code) => (
+                <Pressable
+                  key={code}
+                  onPress={() => setSelectedCountry(code)}
+                  style={[styles.filterChip, selectedCountry === code && styles.filterChipActive]}
+                >
+                  <Text style={[styles.filterChipText, selectedCountry === code && styles.filterChipTextActive]}>
+                    {countryLabel(code, catalog)}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.advancedFilterSection}>
+            <Text style={styles.advancedFilterSectionTitle}>ژانر</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.advancedFilterChips}
+            >
+              <Pressable
+                onPress={() => setSelectedGenre('')}
+                style={[styles.filterChip, !selectedGenre && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, !selectedGenre && styles.filterChipTextActive]}>همه ژانرها</Text>
+              </Pressable>
+              {availableGenres.map((genre) => (
+                <Pressable
+                  key={genre}
+                  onPress={() => setSelectedGenre(genre)}
+                  style={[styles.filterChip, selectedGenre === genre && styles.filterChipActive]}
+                >
+                  <Text style={[styles.filterChipText, selectedGenre === genre && styles.filterChipTextActive]}>{genre}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.advancedFilterSection}>
+            <Text style={styles.advancedFilterSectionTitle}>سال انتشار</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.advancedFilterChips}
+            >
+              <Pressable
+                onPress={() => setSelectedYear(null)}
+                style={[styles.filterChip, !selectedYear && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, !selectedYear && styles.filterChipTextActive]}>همه سال‌ها</Text>
+              </Pressable>
+              {availableYears.map((year) => (
+                <Pressable
+                  key={year}
+                  onPress={() => setSelectedYear(year)}
+                  style={[styles.filterChip, selectedYear === year && styles.filterChipActive]}
+                >
+                  <Text style={[styles.filterChipText, selectedYear === year && styles.filterChipTextActive]}>
+                    {toPersianDigits(year)}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.advancedFilterSection}>
+            <Text style={styles.advancedFilterSectionTitle}>بازیگر یا کارگردان</Text>
+            <View style={styles.personFilterRoleRow}>
+              {([
+                ['all', 'همه عوامل'],
+                ['actor', 'بازیگران'],
+                ['director', 'کارگردان‌ها'],
+              ] as [PersonRoleFilter, string][]).map(([role, label]) => (
+                <Pressable
+                  key={role}
+                  onPress={() => {
+                    setPersonRole(role);
+                    setSelectedPersonId('');
+                  }}
+                  style={[styles.personRoleChip, personRole === role && styles.personRoleChipActive]}
+                >
+                  <Text style={[styles.personRoleChipText, personRole === role && styles.filterChipTextActive]}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.personFilterSearchBox}>
+              <Ionicons name="person-outline" color={COLORS.muted} size={18} />
+              <TextInput
+                value={personQuery}
+                onChangeText={(value) => {
+                  setPersonQuery(value);
+                  setSelectedPersonId('');
+                }}
+                placeholder="نام بازیگر یا کارگردان را بنویسید…"
+                placeholderTextColor="#646A74"
+                style={styles.personFilterInput}
+                textAlign="right"
+              />
+              {personQuery ? (
+                <Pressable
+                  onPress={() => {
+                    setPersonQuery('');
+                    setSelectedPersonId('');
+                  }}
+                  hitSlop={8}
+                >
+                  <Ionicons name="close-circle" color={COLORS.muted} size={18} />
+                </Pressable>
+              ) : null}
+            </View>
+            {personSuggestions.length ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.personSuggestions}
+              >
+                {personSuggestions.map(({ person, count }) => (
+                  <Pressable
+                    key={person.id}
+                    onPress={() => {
+                      setSelectedPersonId(person.id);
+                      setPersonQuery(personName(person));
+                    }}
+                    style={[
+                      styles.personSuggestionChip,
+                      selectedPersonId === person.id && styles.personSuggestionChipActive,
+                    ]}
+                  >
+                    <Text style={styles.personSuggestionName}>{personName(person)}</Text>
+                    <Text style={styles.personSuggestionMeta}>
+                      {personRoleTitle(person)} • {toPersianDigits(count)} اثر
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
+          </View>
+
+          {activeAdvancedCount ? (
+            <Pressable onPress={clearAdvancedFilters} style={styles.clearAdvancedFiltersButton}>
+              <Ionicons name="refresh-outline" color={COLORS.red} size={17} />
+              <Text style={styles.clearAdvancedFiltersText}>پاک‌کردن فیلترهای پیشرفته</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text>
+      {results.length ? (
+        <View style={[styles.searchGrid, { columnGap: gridGap }]}>
+          {results.map((item) => (
+            <PosterCard
+              key={item.id}
+              item={item}
+              width={cardWidth}
+              onOpen={() => onOpen(item)}
+            />
+          ))}
+        </View>
+      ) : (
+        <View style={styles.searchEmptyState}>
+          <View style={styles.largeEmptyIcon}>
+            <Ionicons name="search-outline" color={COLORS.gold} size={30} />
+          </View>
+          <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
+          <Text style={styles.largeEmptyText}>
+            عبارت جست‌وجو یا یکی از فیلترها را تغییر دهید.
+          </Text>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -3267,8 +3595,36 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: 'rgba(222,35,66,0.13)', borderColor: 'rgba(222,35,66,0.45)' },
   filterChipText: { color: COLORS.muted, fontSize: 10, fontWeight: '800' },
   filterChipTextActive: { color: COLORS.text },
+  advancedFilterToggle: { minHeight: 66, marginTop: 15, paddingHorizontal: 13, borderRadius: 15, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  advancedFilterToggleOpen: { borderColor: 'rgba(213,175,86,0.42)', borderBottomLeftRadius: 8, borderBottomRightRadius: 8 },
+  advancedFilterToggleMain: { flex: 1, flexDirection: 'row-reverse', alignItems: 'center', gap: 10 },
+  advancedFilterIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(213,175,86,0.08)', borderWidth: 1, borderColor: 'rgba(213,175,86,0.22)' },
+  advancedFilterToggleText: { flex: 1, alignItems: 'flex-end' },
+  advancedFilterTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900' },
+  advancedFilterHint: { ...rtlText, color: COLORS.muted, fontSize: 8.5, marginTop: 4 },
+  advancedFilterToggleSide: { flexDirection: 'row-reverse', alignItems: 'center', gap: 7 },
+  activeFilterBadge: { minWidth: 23, height: 23, paddingHorizontal: 6, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.red },
+  activeFilterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
+  advancedFilterPanel: { paddingHorizontal: 12, paddingTop: 4, paddingBottom: 13, borderBottomLeftRadius: 15, borderBottomRightRadius: 15, backgroundColor: 'rgba(16,19,24,0.96)', borderWidth: 1, borderTopWidth: 0, borderColor: 'rgba(213,175,86,0.34)' },
+  advancedFilterSection: { paddingTop: 14 },
+  advancedFilterSectionTitle: { ...rtlText, color: '#D8DBE0', fontSize: 10.5, fontWeight: '900', marginBottom: 9 },
+  advancedFilterChips: { flexDirection: 'row-reverse', gap: 7, paddingBottom: 2 },
+  personFilterRoleRow: { flexDirection: 'row-reverse', gap: 7, marginBottom: 9 },
+  personRoleChip: { flex: 1, minHeight: 36, paddingHorizontal: 8, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  personRoleChipActive: { backgroundColor: 'rgba(222,35,66,0.13)', borderColor: 'rgba(222,35,66,0.45)' },
+  personRoleChipText: { ...rtlText, color: COLORS.muted, fontSize: 9, fontWeight: '800', textAlign: 'center' },
+  personFilterSearchBox: { height: 45, flexDirection: 'row-reverse', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderRadius: 12, backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.border },
+  personFilterInput: { flex: 1, color: COLORS.text, fontSize: 11, writingDirection: 'rtl' },
+  personSuggestions: { flexDirection: 'row-reverse', gap: 8, paddingTop: 9, paddingBottom: 2 },
+  personSuggestionChip: { minWidth: 128, maxWidth: 190, paddingHorizontal: 11, paddingVertical: 9, borderRadius: 11, alignItems: 'flex-end', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  personSuggestionChipActive: { borderColor: COLORS.gold, backgroundColor: 'rgba(213,175,86,0.08)' },
+  personSuggestionName: { ...rtlText, color: COLORS.text, fontSize: 9.5, fontWeight: '900' },
+  personSuggestionMeta: { ...rtlText, color: COLORS.muted, fontSize: 7.5, marginTop: 4 },
+  clearAdvancedFiltersButton: { height: 42, marginTop: 15, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: 'rgba(222,35,66,0.07)', borderWidth: 1, borderColor: 'rgba(222,35,66,0.25)' },
+  clearAdvancedFiltersText: { ...rtlText, color: COLORS.red, fontSize: 9.5, fontWeight: '900' },
   resultCount: { ...rtlText, color: COLORS.muted, fontSize: 10, marginTop: 22, marginBottom: 12 },
   searchGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 20 },
+  searchEmptyState: { minHeight: 330, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 38 },
   largeEmpty: { minHeight: 420, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 38 },
   largeEmptyIcon: { width: 74, height: 74, borderRadius: 25, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.22)' },
   largeEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 18 },
