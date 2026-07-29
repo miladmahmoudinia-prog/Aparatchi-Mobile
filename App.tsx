@@ -1,4 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
+import * as Notifications from 'expo-notifications';
 import { useEvent, useEventListener } from 'expo';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -53,6 +54,11 @@ import {
   loadLibraryState,
   saveLibraryState,
 } from './src/libraryManager';
+import {
+  initializeEpisodeAlertSystem,
+  setSeriesEpisodeAlert,
+  syncEpisodeAlerts,
+} from './src/notificationManager';
 
 type MainTab = 'home' | 'search' | 'favorites' | 'downloads';
 type PlayerDisplayMode = 'auto' | 'fit' | 'fill';
@@ -2561,6 +2567,9 @@ function DetailModal({
   onClose,
   favorite,
   onFavorite,
+  episodeAlertEnabled,
+  episodeAlertBusy,
+  onEpisodeAlert,
   onStream,
   onDownload,
   onOperatorOpen,
@@ -2573,6 +2582,9 @@ function DetailModal({
   onClose: () => void;
   favorite: boolean;
   onFavorite: () => void;
+  episodeAlertEnabled: boolean;
+  episodeAlertBusy: boolean;
+  onEpisodeAlert: () => void;
   onStream: (item: CatalogItem, episodeGroup?: DownloadSection | null, language?: MediaLanguage) => void;
   onDownload: (item: CatalogItem, file: DownloadFile) => void;
   onOperatorOpen: (item: CatalogItem, file: DownloadFile) => void;
@@ -2642,9 +2654,28 @@ function DetailModal({
               <Pressable onPress={onClose} style={styles.detailCircleButton}>
                 <Ionicons name="arrow-forward" color="#fff" size={21} />
               </Pressable>
-              <Pressable onPress={onFavorite} style={styles.detailCircleButton}>
-                <Ionicons name={favorite ? 'bookmark' : 'bookmark-outline'} color={favorite ? COLORS.gold : '#fff'} size={21} />
-              </Pressable>
+              <View style={styles.detailTopActions}>
+                {item.type === 'series' ? (
+                  <Pressable
+                    disabled={episodeAlertBusy}
+                    onPress={onEpisodeAlert}
+                    style={[styles.detailCircleButton, episodeAlertBusy && styles.detailCircleButtonDisabled]}
+                  >
+                    {episodeAlertBusy ? (
+                      <ActivityIndicator color={COLORS.gold} size="small" />
+                    ) : (
+                      <Ionicons
+                        name={episodeAlertEnabled ? 'notifications' : 'notifications-outline'}
+                        color={episodeAlertEnabled ? COLORS.gold : '#fff'}
+                        size={21}
+                      />
+                    )}
+                  </Pressable>
+                ) : null}
+                <Pressable onPress={onFavorite} style={styles.detailCircleButton}>
+                  <Ionicons name={favorite ? 'bookmark' : 'bookmark-outline'} color={favorite ? COLORS.gold : '#fff'} size={21} />
+                </Pressable>
+              </View>
             </View>
             <View style={styles.detailIdentity}>
               <Image source={{ uri: item.poster }} style={styles.detailPoster} contentFit="cover" />
@@ -3386,6 +3417,8 @@ function AppContent() {
   const [watchProgress, setWatchProgress] = useState<WatchProgressRecord[]>([]);
   const [watchHistory, setWatchHistory] = useState<WatchHistoryRecord[]>([]);
   const [libraryLoaded, setLibraryLoaded] = useState(false);
+  const [episodeAlertSeriesIds, setEpisodeAlertSeriesIds] = useState<string[]>([]);
+  const [episodeAlertBusyId, setEpisodeAlertBusyId] = useState<string | null>(null);
   const [content, setContent] = useState<LoadedContent | null>(null);
   const [contentLoading, setContentLoading] = useState(true);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
@@ -3400,6 +3433,9 @@ function AppContent() {
     setContentLoading(true);
     const nextContent = await loadContent();
     setContent(nextContent);
+    if (nextContent.source === 'remote') {
+      void syncEpisodeAlerts(nextContent.items, true);
+    }
     setContentLoading(false);
   };
 
@@ -3413,6 +3449,9 @@ function AppContent() {
         setWatchHistory(library.watchHistory);
       })
       .finally(() => setLibraryLoaded(true));
+    initializeEpisodeAlertSystem()
+      .then((state) => setEpisodeAlertSeriesIds(state.subscribedSeriesIds))
+      .catch(() => undefined);
 
     const warningTimer = setTimeout(() => {
       Alert.alert(
@@ -3451,7 +3490,26 @@ function AppContent() {
       .catch(() => undefined);
 
     const subscription = Linking.addEventListener('url', ({ url }) => queueDeepLink(url));
-    return () => subscription.remove();
+    const queueNotificationResponse = (response: Notifications.NotificationResponse | null) => {
+      const url = response?.notification.request.content.data?.url;
+      if (typeof url === 'string') queueDeepLink(url);
+    };
+
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        queueNotificationResponse(response);
+        if (response) return Notifications.clearLastNotificationResponseAsync();
+        return undefined;
+      })
+      .catch(() => undefined);
+    const notificationSubscription = Notifications.addNotificationResponseReceivedListener(
+      queueNotificationResponse,
+    );
+
+    return () => {
+      subscription.remove();
+      notificationSubscription.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -3497,6 +3555,36 @@ function AppContent() {
     setFavorites((current) =>
       current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id],
     );
+  };
+
+  const toggleEpisodeAlert = async (item: CatalogItem) => {
+    if (item.type !== 'series' || episodeAlertBusyId) return;
+
+    const itemId = String(item.id);
+    const currentlyEnabled = episodeAlertSeriesIds.includes(itemId);
+    setEpisodeAlertBusyId(itemId);
+    try {
+      const result = await setSeriesEpisodeAlert(item, !currentlyEnabled);
+      setEpisodeAlertSeriesIds(result.state.subscribedSeriesIds);
+
+      if (!result.permissionGranted) {
+        Alert.alert(
+          'اجازه اعلان داده نشد',
+          'برای دریافت خبر قسمت‌های جدید، اعلان‌های آپاراتچی را از تنظیمات گوشی فعال کنید.',
+        );
+      } else {
+        Alert.alert(
+          result.enabled ? 'اعلان قسمت جدید فعال شد' : 'اعلان قسمت جدید خاموش شد',
+          result.enabled
+            ? `از این به بعد انتشار قسمت جدید «${item.nameFa}» بررسی می‌شود.`
+            : `برای «${item.nameFa}» دیگر اعلان قسمت جدید نمایش داده نمی‌شود.`,
+        );
+      }
+    } catch {
+      Alert.alert('اعلان قسمت جدید', 'تنظیم اعلان انجام نشد. دوباره تلاش کنید.');
+    } finally {
+      setEpisodeAlertBusyId(null);
+    }
   };
 
   const updateWatchProgress = (
@@ -4127,6 +4215,13 @@ function AppContent() {
         onClose={() => setSelectedItem(null)}
         favorite={selectedItem ? favorites.includes(selectedItem.id) : false}
         onFavorite={() => selectedItem && toggleFavorite(selectedItem.id)}
+        episodeAlertEnabled={Boolean(
+          selectedItem?.type === 'series' && episodeAlertSeriesIds.includes(String(selectedItem.id)),
+        )}
+        episodeAlertBusy={Boolean(
+          selectedItem?.type === 'series' && episodeAlertBusyId === String(selectedItem.id),
+        )}
+        onEpisodeAlert={() => selectedItem && void toggleEpisodeAlert(selectedItem)}
         onStream={openStreamInsideApp}
         onDownload={startDownloadInsideApp}
         onOperatorOpen={openOperatorAccess}
@@ -4378,7 +4473,9 @@ const styles = StyleSheet.create({
   detailContent: { paddingBottom: 36 },
   detailHero: { height: 410, justifyContent: 'flex-end' },
   detailTopBar: { position: 'absolute', top: 0, left: 0, right: 0, minHeight: 66, paddingHorizontal: 16, paddingTop: 12, flexDirection: 'row-reverse', justifyContent: 'space-between' },
+  detailTopActions: { flexDirection: 'row-reverse', gap: 8 },
   detailCircleButton: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
+  detailCircleButtonDisabled: { opacity: 0.62 },
   detailIdentity: { paddingHorizontal: 18, paddingBottom: 16, flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 14 },
   detailPoster: { width: 94, height: 134, borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   detailTitleBlock: { flex: 1, alignItems: 'flex-end', paddingBottom: 4 },

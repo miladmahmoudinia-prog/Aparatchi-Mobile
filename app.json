@@ -3,7 +3,7 @@
     "name": "آپاراتچی",
     "slug": "aparatchi-mobile",
     "scheme": "aparatchi",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -21,7 +21,7 @@
       "icon": "./assets/icon.png",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "versionCode": 5
+      "versionCode": 6
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -31,6 +31,13 @@
         "expo-video",
         {
           "supportsPictureInPicture": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#D6A84B",
+          "defaultChannel": "episode-updates"
         }
       ]
     ]
