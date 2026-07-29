@@ -27,6 +27,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
 import { loadContent, LoadedContent } from './src/contentService';
+import { checkIranNetworkAccess, IranAccessStatus } from './src/ipAccess';
 import { CatalogItem, DayId, DownloadFile, DownloadSection, MediaLanguage, ScheduleEntry } from './src/types';
 import {
   DownloadRecord,
@@ -77,6 +78,15 @@ const isPlaceholderUrl = (url?: string) =>
 
 const isDirectMediaUrl = (url: string) =>
   /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
+
+const showNetworkAccessAlert = (status: IranAccessStatus) => {
+  Alert.alert(
+    status === 'blocked' ? 'فیلترشکن را خاموش کنید' : 'بررسی اتصال انجام نشد',
+    status === 'blocked'
+      ? 'برای پخش و دانلود فیلم‌ها، فیلترشکن خود را خاموش کنید.'
+      : 'اینترنت را بررسی کنید و از صفحه جزئیات، «بررسی دوباره» را بزنید.',
+  );
+};
 
 const downloadModeFor = (file: DownloadFile) =>
   file.mode === 'play' ? 'play' : 'download';
@@ -1422,11 +1432,21 @@ function DetailModal({
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [openLanguage, setOpenLanguage] = useState<string | null>(null);
+  const [accessStatus, setAccessStatus] = useState<IranAccessStatus | 'checking'>('checking');
+
+  const verifyNetworkAccess = async (forceRefresh = false) => {
+    setAccessStatus('checking');
+    const result = await checkIranNetworkAccess(forceRefresh);
+    setAccessStatus(result.status);
+  };
 
   useEffect(() => {
     setOpenGroup(null);
     setOpenLanguage(null);
-  }, [item?.id]);
+    if (visible && item?.id) {
+      void verifyNetworkAccess(false);
+    }
+  }, [item?.id, visible]);
 
   if (!item) return null;
   const downloadGroups = item.downloads || [];
@@ -1444,6 +1464,7 @@ function DetailModal({
     : movieDownloadGroups.length > 0;
   const latestEpisode = newestEpisodeGroup(item);
   const hasPlayableStream = playableVersionsFor(item).length > 0;
+  const accessAllowed = accessStatus === 'allowed';
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -1485,15 +1506,17 @@ function DetailModal({
 
           <View style={styles.detailBody}>
             <View style={styles.detailActions}>
-              <Pressable
-                onPress={() => hasPlayableStream
-                  ? onStream(item)
-                  : Alert.alert('پخش آنلاین', 'برای این عنوان هنوز لینک مستقیم پخش موجود نیست.')}
-                style={[styles.watchButton, !hasPlayableStream && styles.watchButtonDisabled]}
-              >
-                <Ionicons name="play" color="#fff" size={19} />
-                <Text style={styles.watchButtonText}>پخش آنلاین</Text>
-              </Pressable>
+              {item.type === 'movie' && accessAllowed ? (
+                <Pressable
+                  onPress={() => hasPlayableStream
+                    ? onStream(item)
+                    : Alert.alert('پخش آنلاین', 'برای این عنوان هنوز لینک مستقیم پخش موجود نیست.')}
+                  style={[styles.watchButton, !hasPlayableStream && styles.watchButtonDisabled]}
+                >
+                  <Ionicons name="play" color="#fff" size={19} />
+                  <Text style={styles.watchButtonText}>پخش آنلاین</Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 onPress={() => Alert.alert('اشتراک‌گذاری', 'اشتراک‌گذاری مستقیم در نسخه بعد فعال می‌شود.')}
                 style={styles.detailSecondaryButton}
@@ -1527,48 +1550,85 @@ function DetailModal({
               />
             </View>
 
-            {item.type === 'series' && episodeGroups.length ? (
-              <SeriesEpisodeList
-                item={item}
-                openGroup={openGroup}
-                openLanguage={openLanguage}
-                onToggleEpisode={(id) => {
-                  if (openGroup === id) {
-                    setOpenGroup(null);
-                    setOpenLanguage(null);
-                    return;
-                  }
-                  setOpenGroup(id);
-                  setOpenLanguage(null);
-                }}
-                onToggleLanguage={(id) => setOpenLanguage(openLanguage === id ? null : id)}
-                onOpenFile={(file) => onDownload(item, file)}
-                onPlayLanguage={(group, language) => onStream(item, group, language)}
-              />
-            ) : (
-              movieDownloadGroups.map((group) => (
-                <DownloadGroup
-                  key={group.id}
-                  group={group}
-                  open={openGroup === group.id}
-                  onToggle={() => setOpenGroup(openGroup === group.id ? null : group.id)}
-                  onOpenFile={(file) => onDownload(item, file)}
-                  onPlay={group.language && playableVersionsFor(item).some((version) => version.language === group.language)
-                    ? () => onStream(item, null, group.language)
-                    : undefined}
-                />
-              ))
-            )}
-
-            {!hasDownloads ? (
-              <View style={styles.noDownloadsCard}>
-                <Ionicons name="link-outline" color={COLORS.muted} size={25} />
-                <Text style={styles.noDownloadsTitle}>
-                  {item.type === 'series' ? 'هنوز قسمتی برای نمایش نیست' : 'لینک دریافت موجود نیست'}
-                </Text>
-                <Text style={styles.noDownloadsText}>بعداً دوباره بررسی کنید.</Text>
+            {!accessAllowed ? (
+              <View style={styles.networkAccessCard}>
+                {accessStatus === 'checking' ? (
+                  <>
+                    <ActivityIndicator color={COLORS.gold} size="small" />
+                    <Text style={styles.networkAccessTitle}>در حال بررسی اتصال…</Text>
+                    <Text style={styles.networkAccessText}>لطفاً چند لحظه صبر کنید.</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons
+                      name={accessStatus === 'blocked' ? 'shield-outline' : 'cloud-offline-outline'}
+                      color={COLORS.gold}
+                      size={27}
+                    />
+                    <Text style={styles.networkAccessTitle}>
+                      {accessStatus === 'blocked' ? 'فیلترشکن را خاموش کنید' : 'بررسی اتصال انجام نشد'}
+                    </Text>
+                    <Text style={styles.networkAccessText}>
+                      {accessStatus === 'blocked'
+                        ? 'برای پخش و دانلود فیلم‌ها، فیلترشکن خود را خاموش کنید.'
+                        : 'اینترنت را بررسی کنید و دوباره تلاش کنید.'}
+                    </Text>
+                    <Pressable
+                      onPress={() => void verifyNetworkAccess(true)}
+                      style={styles.networkRetryButton}
+                    >
+                      <Ionicons name="refresh" color="#fff" size={17} />
+                      <Text style={styles.networkRetryButtonText}>بررسی دوباره</Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
-            ) : null}
+            ) : (
+              <>
+                {item.type === 'series' && episodeGroups.length ? (
+                  <SeriesEpisodeList
+                    item={item}
+                    openGroup={openGroup}
+                    openLanguage={openLanguage}
+                    onToggleEpisode={(id) => {
+                      if (openGroup === id) {
+                        setOpenGroup(null);
+                        setOpenLanguage(null);
+                        return;
+                      }
+                      setOpenGroup(id);
+                      setOpenLanguage(null);
+                    }}
+                    onToggleLanguage={(id) => setOpenLanguage(openLanguage === id ? null : id)}
+                    onOpenFile={(file) => onDownload(item, file)}
+                    onPlayLanguage={(group, language) => onStream(item, group, language)}
+                  />
+                ) : (
+                  movieDownloadGroups.map((group) => (
+                    <DownloadGroup
+                      key={group.id}
+                      group={group}
+                      open={openGroup === group.id}
+                      onToggle={() => setOpenGroup(openGroup === group.id ? null : group.id)}
+                      onOpenFile={(file) => onDownload(item, file)}
+                      onPlay={group.language && playableVersionsFor(item).some((version) => version.language === group.language)
+                        ? () => onStream(item, null, group.language)
+                        : undefined}
+                    />
+                  ))
+                )}
+
+                {!hasDownloads ? (
+                  <View style={styles.noDownloadsCard}>
+                    <Ionicons name="link-outline" color={COLORS.muted} size={25} />
+                    <Text style={styles.noDownloadsTitle}>
+                      {item.type === 'series' ? 'هنوز قسمتی برای نمایش نیست' : 'لینک دریافت موجود نیست'}
+                    </Text>
+                    <Text style={styles.noDownloadsText}>بعداً دوباره بررسی کنید.</Text>
+                  </View>
+                ) : null}
+              </>
+            )}
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -1743,11 +1803,22 @@ function AppContent() {
     reloadContent();
     loadDownloadRecords().then(setDownloads);
 
+    const warningTimer = setTimeout(() => {
+      Alert.alert(
+        'پخش و دانلود',
+        'برای پخش و دانلود فیلم‌ها، فیلترشکن خود را خاموش کنید.',
+        [{ text: 'متوجه شدم' }],
+      );
+    }, 650);
+
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') reloadContent();
     });
 
-    return () => subscription.remove();
+    return () => {
+      clearTimeout(warningTimer);
+      subscription.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -1769,11 +1840,17 @@ function AppContent() {
     setActiveTab('search');
   };
 
-  const openStreamInsideApp = (
+  const openStreamInsideApp = async (
     item: CatalogItem,
     episodeGroup: DownloadSection | null = null,
     _requestedLanguage?: MediaLanguage,
   ) => {
+    const access = await checkIranNetworkAccess();
+    if (access.status !== 'allowed') {
+      showNetworkAccessAlert(access.status);
+      return;
+    }
+
     const versions = playableVersionsFor(item, episodeGroup);
     if (!versions.length) {
       Alert.alert('پخش آنلاین', 'لینک مستقیم و معتبر پخش برای این نسخه ثبت نشده است.');
@@ -1878,6 +1955,12 @@ function AppContent() {
   };
 
   const startDownloadInsideApp = async (item: CatalogItem, file: DownloadFile) => {
+    const access = await checkIranNetworkAccess();
+    if (access.status !== 'allowed') {
+      showNetworkAccessAlert(access.status);
+      return;
+    }
+
     if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url)) {
       Alert.alert('دریافت فایل', 'این لینک نمونه است یا لینک واقعی برای آن ثبت نشده است.');
       return;
@@ -2300,6 +2383,11 @@ const styles = StyleSheet.create({
   seasonTitleRow: { minHeight: 38, paddingHorizontal: 4, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   seasonTitle: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900' },
   seasonCount: { color: COLORS.gold, fontSize: 9, fontWeight: '800' },
+  networkAccessCard: { minHeight: 170, marginTop: 8, paddingHorizontal: 24, paddingVertical: 22, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
+  networkAccessTitle: { ...rtlText, color: COLORS.text, fontSize: 13, fontWeight: '900', textAlign: 'center', marginTop: 11 },
+  networkAccessText: { ...rtlText, color: COLORS.muted, fontSize: 10, lineHeight: 19, textAlign: 'center', marginTop: 7 },
+  networkRetryButton: { minWidth: 138, height: 42, marginTop: 16, paddingHorizontal: 16, borderRadius: 12, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: COLORS.red },
+  networkRetryButtonText: { color: '#fff', fontSize: 10, fontWeight: '900' },
   noDownloadsCard: { minHeight: 145, marginTop: 8, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   noDownloadsTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', marginTop: 9 },
   noDownloadsText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 17, textAlign: 'center', marginTop: 6 },
