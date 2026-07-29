@@ -11,6 +11,7 @@ import {
   Animated,
   AppState,
   FlatList,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -75,6 +76,29 @@ type SearchFilter =
   | 'documentaries'
   | 'mobile-operator'
   | CountrySearchFilter;
+
+type CatalogDeepLink = {
+  id: string;
+  type: CatalogItem['type'];
+};
+
+const catalogItemDeepLink = (item: CatalogItem) =>
+  `aparatchi://content/${item.type}/${encodeURIComponent(String(item.id))}`;
+
+const parseCatalogDeepLink = (url?: string | null): CatalogDeepLink | null => {
+  if (!url) return null;
+  const match = url.match(/^aparatchi:\/\/content\/(movie|series)\/([^/?#]+)/i);
+  if (!match) return null;
+
+  try {
+    return {
+      type: match[1].toLowerCase() as CatalogItem['type'],
+      id: decodeURIComponent(match[2]),
+    };
+  } catch {
+    return null;
+  }
+};
 
 const TODAY_BY_JS_DAY: Record<number, DayId> = {
   0: 'sunday',
@@ -153,9 +177,15 @@ const languageTitle = (language: MediaLanguage) =>
 
 const shareCatalogItem = async (item: CatalogItem) => {
   try {
+    const appLink = catalogItemDeepLink(item);
     await Share.share({
       title: item.nameFa,
-      message: [item.nameFa, item.name].filter(Boolean).join('\n'),
+      message: [
+        item.nameFa,
+        item.name,
+        'مشاهده در اپ آپاراتچی:',
+        appLink,
+      ].filter(Boolean).join('\n'),
     });
   } catch {
     Alert.alert('اشتراک‌گذاری', 'اشتراک‌گذاری انجام نشد. دوباره تلاش کنید.');
@@ -3363,6 +3393,8 @@ function AppContent() {
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
   const [operatorWebRequest, setOperatorWebRequest] = useState<OperatorWebRequest | null>(null);
   const [operatorGateRequest, setOperatorGateRequest] = useState<OperatorGateRequest | null>(null);
+  const [pendingDeepLink, setPendingDeepLink] = useState<CatalogDeepLink | null>(null);
+  const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
 
   const reloadContent = async () => {
     setContentLoading(true);
@@ -3399,6 +3431,51 @@ function AppContent() {
       subscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    const queueDeepLink = (url?: string | null) => {
+      const deepLink = parseCatalogDeepLink(url);
+      if (!deepLink) return;
+
+      const key = `${deepLink.type}:${deepLink.id}`;
+      const now = Date.now();
+      const previous = lastDeepLinkRef.current;
+      if (previous?.key === key && now - previous.receivedAt < 1500) return;
+
+      lastDeepLinkRef.current = { key, receivedAt: now };
+      setPendingDeepLink(deepLink);
+    };
+
+    void Linking.getInitialURL()
+      .then(queueDeepLink)
+      .catch(() => undefined);
+
+    const subscription = Linking.addEventListener('url', ({ url }) => queueDeepLink(url));
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!content || !pendingDeepLink) return;
+
+    const linkedItem = content.items.find(
+      (candidate) =>
+        candidate.type === pendingDeepLink.type &&
+        String(candidate.id) === pendingDeepLink.id,
+    );
+
+    if (linkedItem) {
+      setSelectedPerson(null);
+      setSelectedItem(linkedItem);
+      setActiveTab('home');
+    } else {
+      Alert.alert(
+        'لینک آپاراتچی',
+        'این عنوان در فهرست فعلی برنامه پیدا نشد. محتوای برنامه را به‌روز کنید و دوباره لینک را باز کنید.',
+      );
+    }
+
+    setPendingDeepLink(null);
+  }, [content, pendingDeepLink]);
 
   useEffect(() => {
     downloadsRef.current = downloads;
