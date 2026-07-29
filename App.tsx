@@ -12,6 +12,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -95,6 +96,17 @@ const LANGUAGE_ORDER: MediaLanguage[] = ['dubbed', 'subtitled'];
 
 const languageTitle = (language: MediaLanguage) =>
   language === 'dubbed' ? 'دوبله فارسی' : 'زیرنویس فارسی';
+
+const shareCatalogItem = async (item: CatalogItem) => {
+  try {
+    await Share.share({
+      title: item.nameFa,
+      message: [item.nameFa, item.name].filter(Boolean).join('\n'),
+    });
+  } catch {
+    Alert.alert('اشتراک‌گذاری', 'اشتراک‌گذاری انجام نشد. دوباره تلاش کنید.');
+  }
+};
 
 const itemLanguages = (item: CatalogItem): MediaLanguage[] => {
   const available = item.availableLanguages || [];
@@ -449,7 +461,6 @@ function Header({
       <View style={styles.headerActions}>
         <Pressable onPress={onNotifications} style={styles.iconButton}>
           <Ionicons name="notifications-outline" color={COLORS.text} size={20} />
-          <View style={styles.notificationDot} />
         </Pressable>
         <Pressable onPress={onSearch} style={styles.iconButton}>
           <Ionicons name="search-outline" color={COLORS.text} size={21} />
@@ -896,7 +907,7 @@ function HomeScreen({
   }[] = [
     {
       filter: 'latest',
-      eyebrow: 'تازه‌های آرشیو',
+      eyebrow: 'تازه‌های تماشا',
       title: 'جدیدترین‌ها',
       items: newest,
     },
@@ -988,7 +999,7 @@ function HomeScreen({
     >
       <Header
         onSearch={() => onBrowse('all')}
-        onNotifications={() => Alert.alert('اعلان‌ها', 'اعلان قسمت‌های جدید در نسخه بعد فعال می‌شود.')}
+        onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')}
       />
 
       <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} />
@@ -1279,7 +1290,7 @@ function DownloadGroup({
                 <View style={styles.qualityInfo}>
                   <Text style={styles.qualityName}>{cleanQualityLabel(file.quality)}</Text>
                   <Text style={styles.qualityMeta}>
-                    {[label, file.size].filter(Boolean).join(' • ') || 'لینک مستقیم MP4'}
+                    {[label, file.size].filter(Boolean).join(' • ') || 'فایل آماده دریافت'}
                   </Text>
                 </View>
                 <Pressable
@@ -1489,7 +1500,7 @@ function DetailModal({
               <Image source={{ uri: item.poster }} style={styles.detailPoster} contentFit="cover" />
               <View style={styles.detailTitleBlock}>
                 <Text style={styles.detailType}>{item.type === 'movie' ? 'فیلم سینمایی' : 'سریال'}</Text>
-                <Text style={styles.detailTitle}>{item.nameFa}</Text>
+                <Text numberOfLines={2} style={styles.detailTitle}>{item.nameFa}</Text>
                 <Text style={styles.detailEnglish}>{item.name}</Text>
                 <View style={styles.detailMeta}>
                   <Text style={styles.detailMetaText}>{toPersianDigits(item.year)}</Text>
@@ -1510,7 +1521,7 @@ function DetailModal({
                 <Pressable
                   onPress={() => hasPlayableStream
                     ? onStream(item)
-                    : Alert.alert('پخش آنلاین', 'برای این عنوان هنوز لینک مستقیم پخش موجود نیست.')}
+                    : Alert.alert('پخش آنلاین', 'پخش این عنوان فعلاً در دسترس نیست.')}
                   style={[styles.watchButton, !hasPlayableStream && styles.watchButtonDisabled]}
                 >
                   <Ionicons name="play" color="#fff" size={19} />
@@ -1518,7 +1529,7 @@ function DetailModal({
                 </Pressable>
               ) : null}
               <Pressable
-                onPress={() => Alert.alert('اشتراک‌گذاری', 'اشتراک‌گذاری مستقیم در نسخه بعد فعال می‌شود.')}
+                onPress={() => void shareCatalogItem(item)}
                 style={styles.detailSecondaryButton}
               >
                 <Ionicons name="share-social-outline" color={COLORS.text} size={20} />
@@ -1853,7 +1864,7 @@ function AppContent() {
 
     const versions = playableVersionsFor(item, episodeGroup);
     if (!versions.length) {
-      Alert.alert('پخش آنلاین', 'لینک مستقیم و معتبر پخش برای این نسخه ثبت نشده است.');
+      Alert.alert('پخش آنلاین', 'پخش این نسخه فعلاً در دسترس نیست.');
       return;
     }
 
@@ -1945,7 +1956,7 @@ function AppContent() {
     } catch (error) {
       const stillExists = downloadsRef.current.some((item) => item.id === record.id);
       if (!stillExists) return;
-      const message = error instanceof Error ? error.message : 'دریافت فایل ناموفق بود.';
+      const message = 'دریافت فایل انجام نشد. دوباره تلاش کنید.';
       setDownloads((current) => current.map((item) =>
         item.id === record.id
           ? { ...item, status: 'failed' as const, error: message }
@@ -1962,7 +1973,7 @@ function AppContent() {
     }
 
     if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url)) {
-      Alert.alert('دریافت فایل', 'این لینک نمونه است یا لینک واقعی برای آن ثبت نشده است.');
+      Alert.alert('دریافت فایل', 'این فایل فعلاً در دسترس نیست.');
       return;
     }
 
@@ -1975,7 +1986,7 @@ function AppContent() {
     }
 
     if (!/\.mp4(?:$|[?#])/i.test(file.url)) {
-      Alert.alert('دریافت فایل', 'برای این کیفیت لینک مستقیم MP4 ثبت نشده است.');
+      Alert.alert('دریافت فایل', 'دریافت این کیفیت فعلاً در دسترس نیست.');
       return;
     }
 
@@ -2034,7 +2045,7 @@ function AppContent() {
           : item,
       ));
     } catch (error) {
-      Alert.alert('توقف دانلود', error instanceof Error ? error.message : 'توقف دانلود انجام نشد.');
+      Alert.alert('توقف دانلود', 'توقف دانلود انجام نشد. دوباره تلاش کنید.');
     }
   };
 
@@ -2064,7 +2075,7 @@ function AppContent() {
       await saveDownloadedFileToGallery(record.localUri);
       Alert.alert('ذخیره شد', 'ویدئو در گالری گوشی ذخیره شد.');
     } catch (error) {
-      Alert.alert('ذخیره در گالری', error instanceof Error ? error.message : 'ذخیره فایل انجام نشد.');
+      Alert.alert('ذخیره در گالری', 'ذخیره فایل انجام نشد. دسترسی گالری را بررسی کنید.');
     }
   };
 
@@ -2180,6 +2191,7 @@ export default function App() {
 const rtlText = {
   writingDirection: 'rtl' as const,
   textAlign: 'right' as const,
+  includeFontPadding: false,
 };
 
 const styles = StyleSheet.create({
@@ -2194,7 +2206,7 @@ const styles = StyleSheet.create({
   contentUnavailable: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 25 },
   retryButton: { marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12, backgroundColor: COLORS.red },
   retryButtonText: { color: '#fff', fontSize: 11, fontWeight: '900' },
-  homeContent: { paddingBottom: 28 },
+  homeContent: { paddingBottom: 34 },
   tabScreenContent: { paddingHorizontal: 16, paddingBottom: 28, paddingTop: 18 },
   header: {
     height: 66,
@@ -2207,7 +2219,7 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   logoWrap: { alignItems: 'flex-end' },
-  logo: { ...rtlText, color: COLORS.text, fontSize: 23, fontWeight: '900', letterSpacing: -1.2 },
+  logo: { ...rtlText, color: COLORS.text, fontSize: 22, fontWeight: '900', letterSpacing: -1 },
   logoTag: { ...rtlText, color: COLORS.gold, fontSize: 8, fontWeight: '700', marginTop: -1 },
   headerActions: { flexDirection: 'row', gap: 9 },
   iconButton: {
@@ -2220,20 +2232,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  notificationDot: {
-    position: 'absolute',
-    top: 8,
-    right: 9,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: COLORS.red,
-  },
   contentStatus: { marginHorizontal: 18, marginTop: 12, marginBottom: 2, minHeight: 55, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   contentStatusTextWrap: { flex: 1, alignItems: 'flex-end', marginLeft: 10 },
   contentStatusTitle: { ...rtlText, color: COLORS.text, fontSize: 10, fontWeight: '900' },
   contentStatusMeta: { ...rtlText, color: COLORS.muted, fontSize: 8, marginTop: 4 },
-  heroSlider: { height: 465, position: 'relative', overflow: 'hidden', backgroundColor: COLORS.surface },
+  heroSlider: { height: 448, position: 'relative', overflow: 'hidden', backgroundColor: COLORS.surface },
   heroSlide: { flex: 1 },
   hero: { flex: 1, overflow: 'hidden', justifyContent: 'flex-end' },
   heroDots: { position: 'absolute', bottom: 13, left: 0, right: 0, zIndex: 5, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
@@ -2245,14 +2248,14 @@ const styles = StyleSheet.create({
   redBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
   yearBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', backgroundColor: 'rgba(0,0,0,0.25)' },
   yearBadgeText: { color: COLORS.text, fontSize: 10, fontWeight: '800' },
-  heroTitle: { ...rtlText, color: COLORS.text, fontSize: 36, lineHeight: 46, fontWeight: '900', letterSpacing: -1.5 },
-  heroEnglish: { color: '#B3B5B7', fontSize: 12, letterSpacing: 1.8, marginTop: -2, marginBottom: 13 },
+  heroTitle: { ...rtlText, color: COLORS.text, fontSize: 32, lineHeight: 41, fontWeight: '900', letterSpacing: -1.1, maxWidth: '94%' },
+  heroEnglish: { color: '#A4A8AE', fontSize: 10.5, letterSpacing: 1, marginTop: 1, marginBottom: 12, width: '100%', textAlign: 'right' },
   heroMeta: { flexDirection: 'row-reverse', alignItems: 'center', gap: 7 },
   ratingChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(216,180,90,0.45)', backgroundColor: 'rgba(0,0,0,0.25)' },
   imdb: { color: COLORS.text, fontSize: 8, fontWeight: '900' },
   rating: { color: COLORS.gold, fontSize: 12, fontWeight: '900' },
   metaChip: { color: '#E1E2E3', fontSize: 10, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)', backgroundColor: 'rgba(0,0,0,0.2)' },
-  heroOverview: { ...rtlText, color: '#C5C7CB', fontSize: 12, lineHeight: 21, marginTop: 13, maxWidth: 360 },
+  heroOverview: { ...rtlText, color: '#BEC2C8', fontSize: 11.5, lineHeight: 20, marginTop: 12, maxWidth: 360 },
   heroButtons: { flexDirection: 'row-reverse', gap: 10, marginTop: 16, alignSelf: 'stretch' },
   primaryButton: { height: 48, alignSelf: 'stretch', marginTop: 16, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red, shadowColor: COLORS.red, shadowOpacity: 0.35, shadowRadius: 18, elevation: 5 },
   primaryButtonText: { color: '#fff', fontSize: 13, fontWeight: '900' },
@@ -2260,7 +2263,7 @@ const styles = StyleSheet.create({
   scheduleSection: { marginHorizontal: 12, marginTop: 34, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(216,180,90,0.24)', backgroundColor: '#0C0F14', shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 20, elevation: 6 },
   scheduleHeader: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   eyebrow: { ...rtlText, color: COLORS.red, fontSize: 10, fontWeight: '900', marginBottom: 4 },
-  sectionTitle: { ...rtlText, color: COLORS.text, fontSize: 20, fontWeight: '900', letterSpacing: -0.7 },
+  sectionTitle: { ...rtlText, color: COLORS.text, fontSize: 18, lineHeight: 27, fontWeight: '900', letterSpacing: -0.45 },
   verifiedPill: { flexDirection: 'row-reverse', alignItems: 'center', gap: 5, borderRadius: 20, paddingHorizontal: 9, paddingVertical: 6, backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.22)' },
   verifiedText: { color: '#C9B174', fontSize: 8, fontWeight: '800' },
   daysRow: { flexDirection: 'row-reverse', gap: 7, paddingVertical: 14 },
@@ -2299,7 +2302,7 @@ const styles = StyleSheet.create({
   horizontalCatalogList: { direction: 'ltr' },
   horizontalCatalog: { gap: 11, paddingHorizontal: 18, paddingTop: 14 },
   posterCard: { width: 137, alignItems: 'flex-end' },
-  posterImageWrap: { width: 137, height: 194, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
+  posterImageWrap: { width: 137, height: 194, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', backgroundColor: COLORS.surface },
   posterImage: { width: '100%', height: '100%' },
   posterGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 65 },
   posterAccess: { position: 'absolute', top: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.9)' },
@@ -2308,10 +2311,10 @@ const styles = StyleSheet.create({
   posterEpisodeText: { color: COLORS.text, fontSize: 8, fontWeight: '900' },
   posterRating: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.82)' },
   posterRatingText: { color: COLORS.text, fontSize: 9, fontWeight: '800' },
-  posterName: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '800', marginTop: 9, width: '100%' },
-  posterEnglish: { color: COLORS.muted, fontSize: 9, marginTop: 3, width: '100%', textAlign: 'right' },
+  posterName: { ...rtlText, color: COLORS.text, fontSize: 11, lineHeight: 18, fontWeight: '700', letterSpacing: -0.15, marginTop: 8, width: '100%' },
+  posterEnglish: { color: '#777D87', fontSize: 8.5, lineHeight: 14, marginTop: 1, width: '100%', textAlign: 'right' },
   simpleHeader: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 },
-  simpleHeaderTitle: { ...rtlText, color: COLORS.text, fontSize: 19, fontWeight: '900' },
+  simpleHeaderTitle: { ...rtlText, color: COLORS.text, fontSize: 18, lineHeight: 27, fontWeight: '900', letterSpacing: -0.35 },
   searchBox: { height: 52, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, paddingHorizontal: 15, borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   searchInput: { flex: 1, color: COLORS.text, fontSize: 13, writingDirection: 'rtl' },
   searchFilters: { flexDirection: 'row-reverse', gap: 8, paddingTop: 13, paddingBottom: 2 },
@@ -2327,15 +2330,15 @@ const styles = StyleSheet.create({
   largeEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 11, lineHeight: 20, textAlign: 'center', marginTop: 8 },
   detailScreen: { flex: 1, backgroundColor: COLORS.background },
   detailContent: { paddingBottom: 36 },
-  detailHero: { height: 435, justifyContent: 'flex-end' },
+  detailHero: { height: 410, justifyContent: 'flex-end' },
   detailTopBar: { position: 'absolute', top: 0, left: 0, right: 0, minHeight: 66, paddingHorizontal: 16, paddingTop: 12, flexDirection: 'row-reverse', justifyContent: 'space-between' },
   detailCircleButton: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
-  detailIdentity: { paddingHorizontal: 18, paddingBottom: 18, flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 15 },
-  detailPoster: { width: 100, height: 143, borderRadius: 13, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  detailIdentity: { paddingHorizontal: 18, paddingBottom: 16, flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 14 },
+  detailPoster: { width: 94, height: 134, borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   detailTitleBlock: { flex: 1, alignItems: 'flex-end', paddingBottom: 4 },
   detailType: { color: COLORS.red, fontSize: 9, fontWeight: '900', marginBottom: 7 },
-  detailTitle: { ...rtlText, color: COLORS.text, fontSize: 29, lineHeight: 38, fontWeight: '900', letterSpacing: -1.1 },
-  detailEnglish: { color: COLORS.muted, fontSize: 11, marginTop: 2 },
+  detailTitle: { ...rtlText, color: COLORS.text, fontSize: 26, lineHeight: 34, fontWeight: '900', letterSpacing: -0.8, width: '100%' },
+  detailEnglish: { color: '#8B9099', fontSize: 10, lineHeight: 16, marginTop: 2, width: '100%', textAlign: 'right' },
   detailMeta: { flexDirection: 'row-reverse', gap: 7, marginTop: 11 },
   detailMetaText: { color: '#CFD1D4', fontSize: 9, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 7, borderWidth: 1, borderColor: COLORS.border, backgroundColor: 'rgba(7,9,12,0.55)' },
   detailBody: { paddingHorizontal: 18 },
@@ -2346,10 +2349,10 @@ const styles = StyleSheet.create({
   detailSecondaryButton: { width: 50, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   genreRow: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 7, marginTop: 17 },
   detailGenre: { color: '#C5C8CD', fontSize: 9, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  detailSectionTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 26 },
-  detailOverview: { ...rtlText, color: '#A8ADB5', fontSize: 12, lineHeight: 23, marginTop: 9 },
+  detailSectionTitle: { ...rtlText, color: COLORS.text, fontSize: 16, lineHeight: 25, fontWeight: '900', letterSpacing: -0.25, marginTop: 25 },
+  detailOverview: { ...rtlText, color: '#AEB3BB', fontSize: 11.5, lineHeight: 22, marginTop: 9 },
   downloadHeader: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, marginBottom: 12 },
-  downloadHeaderText: { ...rtlText, color: COLORS.muted, fontSize: 9, marginTop: 6 },
+  downloadHeaderText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 17, marginTop: 5 },
   downloadGroup: { marginTop: 8, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
   downloadGroupOpen: { borderColor: 'rgba(216,180,90,0.5)' },
   downloadGroupHead: { minHeight: 72, paddingHorizontal: 12, flexDirection: 'row-reverse', alignItems: 'center', gap: 10 },
@@ -2363,7 +2366,7 @@ const styles = StyleSheet.create({
   languagePlayButtonText: { color: '#fff', fontSize: 10, fontWeight: '900' },
   qualityRow: { minHeight: 67, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.border },
   qualityInfo: { flex: 1, alignItems: 'flex-end' },
-  qualityName: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900' },
+  qualityName: { ...rtlText, color: COLORS.text, fontSize: 13, lineHeight: 20, fontWeight: '900' },
   qualityMeta: { ...rtlText, color: COLORS.muted, fontSize: 8, marginTop: 4 },
   downloadButton: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: COLORS.blue },
   downloadButtonText: { color: '#fff', fontSize: 9, fontWeight: '900' },
@@ -2395,7 +2398,7 @@ const styles = StyleSheet.create({
   bottomTab: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   bottomIconWrap: { width: 37, height: 29, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   bottomIconWrapActive: { backgroundColor: 'rgba(222,35,66,0.16)' },
-  bottomLabel: { color: COLORS.muted, fontSize: 8, fontWeight: '700', marginTop: 3 },
+  bottomLabel: { color: COLORS.muted, fontSize: 8.5, fontWeight: '700', marginTop: 3 },
   bottomLabelActive: { color: COLORS.text },
   downloadLibrary: { gap: 10 },
   downloadLibraryCard: { minHeight: 112, flexDirection: 'row-reverse', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
