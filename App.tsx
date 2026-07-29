@@ -65,6 +65,33 @@ const downloadModeFor = (file: DownloadFile) =>
 const streamModeFor = (item: CatalogItem) =>
   item.streamMode || (item.streamUrl && isDirectMediaUrl(item.streamUrl) ? 'video' : 'web');
 
+const isEpisodeSection = (group: DownloadSection) =>
+  Number(group.episodeNumber || 0) > 0;
+
+const compareEpisodeGroupsNewestFirst = (a: DownloadSection, b: DownloadSection) => {
+  const seasonDifference = Number(b.seasonNumber || 0) - Number(a.seasonNumber || 0);
+  if (seasonDifference) return seasonDifference;
+  return Number(b.episodeNumber || 0) - Number(a.episodeNumber || 0);
+};
+
+const newestEpisodeGroup = (item?: CatalogItem | null) =>
+  [...(item?.downloads || [])]
+    .filter(isEpisodeSection)
+    .sort(compareEpisodeGroupsNewestFirst)[0] || null;
+
+const latestEpisodeTimestamp = (item: CatalogItem) => {
+  const latestGroup = newestEpisodeGroup(item);
+  const value =
+    latestGroup?.sourceUpdatedAt ||
+    item.updatedAt ||
+    item.sourceUpdatedAt ||
+    item.createdAt ||
+    item.sourceCreatedAt ||
+    '';
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
 function Logo() {
   return (
     <View style={styles.logoWrap}>
@@ -267,10 +294,7 @@ function WeeklySchedule({
           <Text style={styles.eyebrow}>برنامه دقیق انتشار</Text>
           <Text style={styles.sectionTitle}>این هفته چی میاد؟</Text>
         </View>
-        <View style={styles.verifiedPill}>
-          <Ionicons name="shield-checkmark" color={COLORS.gold} size={14} />
-          <Text style={styles.verifiedText}>فقط برنامه تأییدشده</Text>
-        </View>
+        <Ionicons name="calendar-outline" color={COLORS.gold} size={22} />
       </View>
 
       <ScrollView
@@ -315,7 +339,7 @@ function WeeklySchedule({
       {loadingForeign && filter !== 'iranian' ? (
         <View style={styles.scheduleLoading}>
           <ActivityIndicator color={COLORS.gold} size="small" />
-          <Text style={styles.scheduleLoadingText}>بررسی قسمت‌های بعدی سریال‌های خارجی…</Text>
+          <Text style={styles.scheduleLoadingText}>در حال آماده‌سازی برنامه هفتگی…</Text>
         </View>
       ) : null}
 
@@ -328,16 +352,11 @@ function WeeklySchedule({
         {!loadingForeign && !dayEntries.length ? (
           <View style={styles.scheduleEmpty}>
             <Ionicons name="calendar-outline" color={COLORS.muted} size={28} />
-            <Text style={styles.scheduleEmptyTitle}>برنامه تأییدشده‌ای برای این روز نداریم</Text>
-            <Text style={styles.scheduleEmptyText}>
-              عنوان تمام‌شده یا برنامه‌ای که قسمت بعدی مشخص ندارد نمایش داده نمی‌شود.
-            </Text>
+            <Text style={styles.scheduleEmptyTitle}>برای این روز برنامه‌ای ثبت نشده است</Text>
+            <Text style={styles.scheduleEmptyText}>روز دیگری را انتخاب کنید.</Text>
           </View>
         ) : null}
       </View>
-      <Text style={styles.scheduleFootnote}>
-        برنامه ایرانی از فایل محتوای قابل‌به‌روزرسانی و برنامه خارجی از داده قسمت بعدی TVmaze بررسی می‌شود.
-      </Text>
     </View>
   );
 }
@@ -356,7 +375,13 @@ function PosterCard({
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
         <View style={styles.posterAccess}>
           <Text style={styles.posterAccessText}>
-            {item.access === 'free' ? 'رایگان' : item.access === 'operator' ? 'اپراتوری' : 'خرید'}
+            {item.type === 'series' && newestEpisodeGroup(item)
+              ? `قسمت ${toPersianDigits(newestEpisodeGroup(item)?.episodeNumber || 0)}`
+              : item.access === 'free'
+                ? 'رایگان'
+                : item.access === 'operator'
+                  ? 'اپراتوری'
+                  : 'خرید'}
           </Text>
         </View>
         {typeof item.rate === 'number' ? (
@@ -398,8 +423,6 @@ function HorizontalCatalog({
 function HomeScreen({
   catalog,
   iranianSchedule,
-  contentSource,
-  contentUpdatedAt,
   onReloadContent,
   onOpen,
   onSearch,
@@ -408,17 +431,22 @@ function HomeScreen({
 }: {
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
-  contentSource: 'remote' | 'local';
-  contentUpdatedAt: string;
   onReloadContent: () => void;
   onOpen: (item: CatalogItem) => void;
   onSearch: () => void;
   favorites: string[];
   toggleFavorite: (id: string) => void;
 }) {
-  const hero = catalog.find((item) => item.id === 'land-of-sometimes') || catalog[0];
+  const hero = catalog[0];
   const movies = catalog.filter((item) => item.type === 'movie');
   const series = catalog.filter((item) => item.type === 'series');
+  const seriesWithEpisodes = series.filter((item) =>
+    (item.downloads || []).some(isEpisodeSection),
+  );
+  const freshEpisodeSeries = [...seriesWithEpisodes].sort(
+    (a, b) => latestEpisodeTimestamp(b) - latestEpisodeTimestamp(a),
+  );
+  const featuredSeries = seriesWithEpisodes.length ? seriesWithEpisodes : series;
 
   if (!hero) {
     return (
@@ -439,20 +467,6 @@ function HomeScreen({
         onNotifications={() => Alert.alert('اعلان‌ها', 'اعلان قسمت‌های جدید در نسخه بعد فعال می‌شود.')}
       />
 
-      <Pressable onPress={onReloadContent} style={styles.contentStatus}>
-        <View style={styles.contentStatusTextWrap}>
-          <Text style={styles.contentStatusTitle}>
-            {contentSource === 'remote' ? 'اطلاعات آنلاین فعال است' : 'اطلاعات داخلی اپ نمایش داده می‌شود'}
-          </Text>
-          <Text style={styles.contentStatusMeta}>آخرین به‌روزرسانی: {contentUpdatedAt}</Text>
-        </View>
-        <Ionicons
-          name={contentSource === 'remote' ? 'cloud-done-outline' : 'cloud-offline-outline'}
-          color={contentSource === 'remote' ? COLORS.blue : COLORS.gold}
-          size={21}
-        />
-      </Pressable>
-
       <Hero
         item={hero}
         onOpen={() => onOpen(hero)}
@@ -466,10 +480,19 @@ function HomeScreen({
         <HorizontalCatalog items={movies} onOpen={onOpen} />
       </View>
 
-      <View style={styles.catalogSection}>
-        <SectionTitle eyebrow="قسمت‌های تازه" title="سریال‌های منتخب" action="مشاهده همه" onAction={onSearch} />
-        <HorizontalCatalog items={series} onOpen={onOpen} />
-      </View>
+      {freshEpisodeSeries.length ? (
+        <View style={styles.catalogSection}>
+          <SectionTitle eyebrow="تازه‌ترین انتشارها" title="قسمت‌های تازه" action="مشاهده همه" onAction={onSearch} />
+          <HorizontalCatalog items={freshEpisodeSeries} onOpen={onOpen} />
+        </View>
+      ) : null}
+
+      {featuredSeries.length ? (
+        <View style={styles.catalogSection}>
+          <SectionTitle eyebrow="پیشنهاد برای تماشا" title="سریال‌های منتخب" action="مشاهده همه" onAction={onSearch} />
+          <HorizontalCatalog items={featuredSeries} onOpen={onOpen} />
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -690,6 +713,53 @@ function DownloadGroup({
   );
 }
 
+function SeriesEpisodeList({
+  item,
+  openGroup,
+  onToggle,
+  onOpenFile,
+}: {
+  item: CatalogItem;
+  openGroup: string | null;
+  onToggle: (id: string) => void;
+  onOpenFile: (file: DownloadFile) => void;
+}) {
+  const episodeGroups = [...(item.downloads || [])]
+    .filter(isEpisodeSection)
+    .sort(compareEpisodeGroupsNewestFirst);
+
+  const seasons = episodeGroups.reduce<Record<number, DownloadSection[]>>((result, group) => {
+    const seasonNumber = Number(group.seasonNumber || 1);
+    if (!result[seasonNumber]) result[seasonNumber] = [];
+    result[seasonNumber].push(group);
+    return result;
+  }, {});
+
+  return (
+    <View style={styles.seriesEpisodes}>
+      {Object.entries(seasons)
+        .sort(([a], [b]) => Number(b) - Number(a))
+        .map(([seasonNumber, groups]) => (
+          <View key={seasonNumber} style={styles.seasonBlock}>
+            <View style={styles.seasonTitleRow}>
+              <Text style={styles.seasonTitle}>فصل {toPersianDigits(seasonNumber)}</Text>
+              <Text style={styles.seasonCount}>{toPersianDigits(groups.length)} قسمت</Text>
+            </View>
+            {groups.map((group) => (
+              <DownloadGroup
+                key={group.id}
+                group={group}
+                open={openGroup === group.id}
+                onToggle={() => onToggle(group.id)}
+                onOpenFile={onOpenFile}
+              />
+            ))}
+          </View>
+        ))}
+    </View>
+  );
+}
+
 function DetailModal({
   item,
   visible,
@@ -710,11 +780,16 @@ function DetailModal({
   const [openGroup, setOpenGroup] = useState<string | null>(null);
 
   useEffect(() => {
-    setOpenGroup(item?.downloads?.[0]?.id || null);
+    const firstGroup = item?.type === 'series'
+      ? newestEpisodeGroup(item)
+      : item?.downloads?.[0] || null;
+    setOpenGroup(firstGroup?.id || null);
   }, [item?.id]);
 
   if (!item) return null;
   const downloadGroups = item.downloads || [];
+  const episodeGroups = downloadGroups.filter(isEpisodeSection);
+  const latestEpisode = newestEpisodeGroup(item);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -744,6 +819,11 @@ function DetailModal({
                 <View style={styles.detailMeta}>
                   <Text style={styles.detailMetaText}>{toPersianDigits(item.year)}</Text>
                   {typeof item.rate === 'number' ? <Text style={styles.detailMetaText}>IMDb {toPersianDigits(item.rate)}</Text> : null}
+                  {item.type === 'series' && latestEpisode ? (
+                    <Text style={styles.detailMetaText}>
+                      تا قسمت {toPersianDigits(latestEpisode.episodeNumber || 0)}
+                    </Text>
+                  ) : null}
                 </View>
               </View>
             </View>
@@ -754,7 +834,7 @@ function DetailModal({
               <Pressable
                 onPress={() => item.streamUrl
                   ? onStream(item)
-                  : Alert.alert('پخش آنلاین', 'برای این عنوان هنوز لینک پخش در catalog.json ثبت نشده است.')}
+                  : Alert.alert('پخش آنلاین', 'برای این عنوان هنوز لینک پخش موجود نیست.')}
                 style={[styles.watchButton, !item.streamUrl && styles.watchButtonDisabled]}
               >
                 <Ionicons name="play" color="#fff" size={19} />
@@ -777,29 +857,48 @@ function DetailModal({
 
             <View style={styles.downloadHeader}>
               <View>
-                <Text style={styles.detailSectionTitle}>لینک‌های دریافت</Text>
-                <Text style={styles.downloadHeaderText}>پخش هر قسمت و دانلود کیفیت‌ها، داخل خود اپ انجام می‌شود.</Text>
+                <Text style={styles.detailSectionTitle}>
+                  {item.type === 'series' ? 'فصل‌ها و قسمت‌ها' : 'لینک‌های دریافت'}
+                </Text>
+                <Text style={styles.downloadHeaderText}>
+                  {item.type === 'series'
+                    ? 'برای دیدن کیفیت‌ها، قسمت موردنظر را باز کنید.'
+                    : 'کیفیت موردنظر را برای پخش یا دریافت انتخاب کنید.'}
+                </Text>
               </View>
-              <Ionicons name="cloud-download-outline" color={COLORS.gold} size={24} />
+              <Ionicons
+                name={item.type === 'series' ? 'albums-outline' : 'cloud-download-outline'}
+                color={COLORS.gold}
+                size={24}
+              />
             </View>
 
-            {downloadGroups.map((group) => (
-              <DownloadGroup
-                key={group.id}
-                group={group}
-                open={openGroup === group.id}
-                onToggle={() => setOpenGroup(openGroup === group.id ? null : group.id)}
+            {item.type === 'series' && episodeGroups.length ? (
+              <SeriesEpisodeList
+                item={item}
+                openGroup={openGroup}
+                onToggle={(id) => setOpenGroup(openGroup === id ? null : id)}
                 onOpenFile={(file) => onDownload(item, file)}
               />
-            ))}
+            ) : (
+              downloadGroups.map((group) => (
+                <DownloadGroup
+                  key={group.id}
+                  group={group}
+                  open={openGroup === group.id}
+                  onToggle={() => setOpenGroup(openGroup === group.id ? null : group.id)}
+                  onOpenFile={(file) => onDownload(item, file)}
+                />
+              ))
+            )}
 
             {!downloadGroups.length ? (
               <View style={styles.noDownloadsCard}>
                 <Ionicons name="link-outline" color={COLORS.muted} size={25} />
-                <Text style={styles.noDownloadsTitle}>لینک دانلود ثبت نشده است</Text>
-                <Text style={styles.noDownloadsText}>
-                  این عنوان در catalog.json فقط اطلاعات و پوستر دارد و لینک واقعی دانلود برایش وارد نشده است.
+                <Text style={styles.noDownloadsTitle}>
+                  {item.type === 'series' ? 'هنوز قسمتی برای نمایش نیست' : 'لینک دریافت موجود نیست'}
                 </Text>
+                <Text style={styles.noDownloadsText}>بعداً دوباره بررسی کنید.</Text>
               </View>
             ) : null}
           </View>
@@ -1070,7 +1169,7 @@ function AppContent() {
         <StatusBar style="light" />
         <ActivityIndicator color={COLORS.gold} size="large" />
         <Text style={styles.initialLoadingTitle}>در حال آماده‌سازی آپاراتچی…</Text>
-        <Text style={styles.initialLoadingText}>فهرست داخلی و اطلاعات آنلاین بررسی می‌شود.</Text>
+        <Text style={styles.initialLoadingText}>در حال دریافت تازه‌ترین فیلم‌ها و سریال‌ها…</Text>
       </SafeAreaView>
     );
   }
@@ -1086,8 +1185,6 @@ function AppContent() {
           <HomeScreen
             catalog={content.items}
             iranianSchedule={content.iranianSchedule}
-            contentSource={content.source}
-            contentUpdatedAt={content.updatedAt}
             onReloadContent={reloadContent}
             onOpen={setSelectedItem}
             onSearch={() => setActiveTab('search')}
@@ -1335,6 +1432,11 @@ const styles = StyleSheet.create({
   downloadButtonText: { color: '#fff', fontSize: 9, fontWeight: '900' },
   downloadEmptyRow: { minHeight: 64, alignItems: 'center', justifyContent: 'center' },
   downloadEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9 },
+  seriesEpisodes: { gap: 18 },
+  seasonBlock: { gap: 7 },
+  seasonTitleRow: { minHeight: 38, paddingHorizontal: 4, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
+  seasonTitle: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900' },
+  seasonCount: { color: COLORS.gold, fontSize: 9, fontWeight: '800' },
   noDownloadsCard: { minHeight: 145, marginTop: 8, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   noDownloadsTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', marginTop: 9 },
   noDownloadsText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 17, textAlign: 'center', marginTop: 6 },
