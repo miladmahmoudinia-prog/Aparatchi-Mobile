@@ -645,10 +645,12 @@ function ScheduleCard({
 function WeeklySchedule({
   catalog,
   iranianSchedule,
+  weeklySchedule,
   onOpenItem,
 }: {
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
+  weeklySchedule: ScheduleEntry[];
   onOpenItem: (item: CatalogItem) => void;
 }) {
   const [selectedDay, setSelectedDay] = useState<DayId>(TODAY_BY_JS_DAY[new Date().getDay()]);
@@ -671,22 +673,54 @@ function WeeklySchedule({
     };
   }, [catalog]);
 
-  const allEntries = useMemo(
-    () => [...iranianSchedule, ...foreignEntries],
-    [iranianSchedule, foreignEntries],
+  const catalogById = useMemo(
+    () => new Map(catalog.map((item) => [String(item.id), item])),
+    [catalog],
   );
+
+  const allEntries = useMemo(() => {
+    const merged = new Map<string, ScheduleEntry>();
+
+    const addEntry = (entry: ScheduleEntry) => {
+      const item = catalogById.get(String(entry.itemId));
+      if (!item || item.type !== 'series') return;
+
+      const normalized: ScheduleEntry = {
+        ...entry,
+        itemId: String(item.id),
+        nameFa: item.nameFa || entry.nameFa,
+        poster: item.poster || entry.poster,
+        region: item.ir ? 'iranian' : 'foreign',
+      };
+
+      const key = `${normalized.itemId}:${normalized.day}:${normalized.region}`;
+      merged.set(key, normalized);
+    };
+
+    // نتیجهٔ آنلاین خارجی نقش پشتیبان دارد؛ برنامهٔ داخل کاتالوگ اولویت بالاتری دارد.
+    foreignEntries.forEach(addEntry);
+    iranianSchedule.forEach(addEntry);
+    weeklySchedule.forEach(addEntry);
+
+    return [...merged.values()].sort((a, b) => {
+      const timeDiff = String(a.time || '').localeCompare(String(b.time || ''), 'fa');
+      if (timeDiff) return timeDiff;
+      return String(a.nameFa || '').localeCompare(String(b.nameFa || ''), 'fa');
+    });
+  }, [catalogById, foreignEntries, iranianSchedule, weeklySchedule]);
 
   const dayEntries = allEntries.filter(
     (entry) =>
       entry.day === selectedDay && (filter === 'all' || entry.region === filter),
   );
+  const scheduleLoading = loadingForeign && filter !== 'iranian';
 
   return (
     <View style={styles.scheduleSection}>
       <View style={styles.scheduleHeader}>
         <View>
-          <Text style={styles.eyebrow}>برنامه دقیق انتشار</Text>
-          <Text style={styles.sectionTitle}>این هفته چی میاد؟</Text>
+          <Text style={styles.eyebrow}>زمان‌بندی پخش</Text>
+          <Text style={styles.sectionTitle}>برنامه هفتگی سریال‌ها</Text>
         </View>
         <Ionicons name="calendar-outline" color={COLORS.gold} size={22} />
       </View>
@@ -707,7 +741,7 @@ function WeeklySchedule({
             >
               <Text style={[styles.dayLabel, active && styles.dayLabelActive]}>{day.label}</Text>
               <Text style={[styles.dayCount, active && styles.dayCountActive]}>
-                {count ? `${toPersianDigits(count)} عنوان` : 'بدون برنامه'}
+                {count ? `${toPersianDigits(count)} عنوان` : 'برنامه‌ای نداریم'}
               </Text>
             </Pressable>
           );
@@ -730,10 +764,10 @@ function WeeklySchedule({
         ))}
       </View>
 
-      {loadingForeign && filter !== 'iranian' ? (
+      {scheduleLoading ? (
         <View style={styles.scheduleLoading}>
           <ActivityIndicator color={COLORS.gold} size="small" />
-          <Text style={styles.scheduleLoadingText}>در حال آماده‌سازی برنامه هفتگی…</Text>
+          <Text style={styles.scheduleLoadingText}>در حال دریافت برنامه سریال‌ها…</Text>
         </View>
       ) : null}
 
@@ -743,11 +777,11 @@ function WeeklySchedule({
           if (!item) return null;
           return <ScheduleCard key={entry.id} entry={entry} onOpen={() => onOpenItem(item)} />;
         })}
-        {!loadingForeign && !dayEntries.length ? (
+        {!scheduleLoading && !dayEntries.length ? (
           <View style={styles.scheduleEmpty}>
             <Ionicons name="calendar-outline" color={COLORS.muted} size={28} />
-            <Text style={styles.scheduleEmptyTitle}>برای این روز برنامه‌ای ثبت نشده است</Text>
-            <Text style={styles.scheduleEmptyText}>روز دیگری را انتخاب کنید.</Text>
+            <Text style={styles.scheduleEmptyTitle}>برای این روز برنامه‌ای نداریم</Text>
+            <Text style={styles.scheduleEmptyText}>می‌توانید روز دیگری را انتخاب کنید.</Text>
           </View>
         ) : null}
       </View>
@@ -823,12 +857,14 @@ function HorizontalCatalog({
 function HomeScreen({
   catalog,
   iranianSchedule,
+  weeklySchedule,
   onReloadContent,
   onOpen,
   onBrowse,
 }: {
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
+  weeklySchedule: ScheduleEntry[];
   onReloadContent: () => void;
   onOpen: (item: CatalogItem) => void;
   onBrowse: (filter: SearchFilter) => void;
@@ -961,6 +997,7 @@ function HomeScreen({
       <WeeklySchedule
         catalog={catalog}
         iranianSchedule={iranianSchedule}
+        weeklySchedule={weeklySchedule}
         onOpenItem={onOpen}
       />
     </ScrollView>
@@ -1851,6 +1888,7 @@ function AppContent() {
           <HomeScreen
             catalog={content.items}
             iranianSchedule={content.iranianSchedule}
+            weeklySchedule={content.weeklySchedule || []}
             onReloadContent={reloadContent}
             onOpen={setSelectedItem}
             onBrowse={openCatalogFilter}

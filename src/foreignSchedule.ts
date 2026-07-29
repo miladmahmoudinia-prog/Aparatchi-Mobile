@@ -3,7 +3,6 @@ import { CatalogItem, DayId, ScheduleEntry } from './types';
 
 type TvMazeShow = {
   id: number;
-  name: string;
   status: string;
   _links?: {
     nextepisode?: {
@@ -14,7 +13,6 @@ type TvMazeShow = {
 
 type TvMazeEpisode = {
   id: number;
-  season?: number;
   number?: number;
   airdate?: string;
   airtime?: string;
@@ -32,6 +30,26 @@ const JS_DAY_TO_ID: Record<number, DayId> = {
 
 const toPersianDigits = (value: string | number) =>
   String(value).replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[Number(digit)]);
+
+const startOfCurrentWeek = () => {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysSinceSaturday = (start.getDay() + 1) % 7;
+  start.setDate(start.getDate() - daysSinceSaturday);
+  return start;
+};
+
+const isInCurrentWeek = (airdate: string) => {
+  const parts = airdate.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return false;
+
+  const episodeDate = new Date(parts[0], parts[1] - 1, parts[2]);
+  const weekStart = startOfCurrentWeek();
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+
+  return episodeDate >= weekStart && episodeDate < weekEnd;
+};
 
 export async function loadVerifiedForeignSchedule(catalog: CatalogItem[]): Promise<ScheduleEntry[]> {
   const candidates = catalog.filter((item) => item.type === 'series' && !item.ir && item.imdb);
@@ -53,22 +71,21 @@ export async function loadVerifiedForeignSchedule(catalog: CatalogItem[]): Promi
         if (!episodeResponse.ok) return null;
 
         const episode = (await episodeResponse.json()) as TvMazeEpisode;
-        if (!episode.airdate) return null;
+        if (!episode.airdate || !isInCurrentWeek(episode.airdate)) return null;
 
-        const day = JS_DAY_TO_ID[new Date(`${episode.airdate}T12:00:00Z`).getUTCDay()];
-        const episodeNumber = episode.number || undefined;
+        const [year, month, dayOfMonth] = episode.airdate.split('-').map(Number);
+        const episodeDate = new Date(year, month - 1, dayOfMonth);
+        const day = JS_DAY_TO_ID[episodeDate.getDay()];
 
         return {
-          id: `tvmaze-${show.id}-${episode.id}`,
+          id: `weekly-${show.id}-${episode.id}`,
           itemId: item.id,
           nameFa: item.nameFa,
           poster: item.poster,
           day,
           time: episode.airtime ? toPersianDigits(episode.airtime) : 'زمان نامشخص',
-          episode: episodeNumber,
+          ...(episode.number ? { episode: episode.number } : {}),
           region: 'foreign',
-          sourceLabel: 'برنامه قسمت بعدی TVmaze',
-          verifiedAt: new Intl.DateTimeFormat('fa-IR').format(new Date()),
         };
       } catch {
         return null;
@@ -81,4 +98,3 @@ export async function loadVerifiedForeignSchedule(catalog: CatalogItem[]): Promi
 
 export const getDayLabel = (day: DayId) =>
   DAYS.find((entry) => entry.id === day)?.label || day;
-
