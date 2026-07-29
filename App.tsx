@@ -30,9 +30,12 @@ import { loadContent, LoadedContent } from './src/contentService';
 import { CatalogItem, DayId, DownloadFile, DownloadSection, MediaLanguage, ScheduleEntry } from './src/types';
 import {
   DownloadRecord,
-  downloadToApp,
+  cancelDownload,
   loadDownloadRecords,
+  pauseDownload,
   removeDownloadedFile,
+  runDownload,
+  saveDownloadedFileToGallery,
   saveDownloadRecords,
 } from './src/downloadManager';
 
@@ -1134,11 +1137,15 @@ function FavoritesScreen({
 function DownloadsScreen({
   downloads,
   onPlay,
-  onDelete,
+  onPause,
+  onResume,
+  onMenu,
 }: {
   downloads: DownloadRecord[];
   onPlay: (record: DownloadRecord) => void;
-  onDelete: (record: DownloadRecord) => void;
+  onPause: (record: DownloadRecord) => void;
+  onResume: (record: DownloadRecord) => void;
+  onMenu: (record: DownloadRecord) => void;
 }) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
@@ -1153,43 +1160,62 @@ function DownloadsScreen({
           </View>
           <Text style={styles.largeEmptyTitle}>هنوز فایلی دریافت نشده</Text>
           <Text style={styles.largeEmptyText}>
-            لینک مستقیم هر کیفیت از صفحه فیلم یا سریال داخل خود برنامه دانلود می‌شود و اینجا باقی می‌ماند.
+            فایل‌های دریافتی همراه با وضعیت و درصد پیشرفت در این بخش نگه‌داری می‌شوند.
           </Text>
         </View>
       ) : (
         <View style={styles.downloadLibrary}>
-          {downloads.map((record) => (
-            <View key={record.id} style={styles.downloadLibraryCard}>
-              <View style={styles.downloadLibraryInfo}>
-                <Text numberOfLines={1} style={styles.downloadLibraryTitle}>{record.title}</Text>
-                <Text style={styles.downloadLibraryMeta}>
-                  {[record.subtitle, record.quality].filter(Boolean).join(' • ')}
-                </Text>
-                {record.status === 'downloading' ? (
-                  <View style={styles.progressTrack}>
-                    <View style={[styles.progressFill, { width: `${Math.round(record.progress * 100)}%` }]} />
-                  </View>
-                ) : null}
-                <Text style={styles.downloadLibraryStatus}>
-                  {record.status === 'completed'
-                    ? 'آماده پخش داخل اپ'
-                    : record.status === 'downloading'
-                      ? `${toPersianDigits(Math.round(record.progress * 100))}٪ در حال دریافت`
-                      : record.error || 'دریافت ناموفق بود'}
-                </Text>
-              </View>
-              <View style={styles.downloadLibraryActions}>
-                {record.status === 'completed' && record.localUri ? (
-                  <Pressable onPress={() => onPlay(record)} style={styles.downloadLibraryPlay}>
-                    <Ionicons name="play" color="#fff" size={18} />
+          {downloads.map((record) => {
+            const percent = Math.round(record.progress * 100);
+            const canPlay = record.status === 'completed' && Boolean(record.localUri);
+            const canResume = record.status === 'paused' || record.status === 'failed';
+
+            return (
+              <View key={record.id} style={styles.downloadLibraryCard}>
+                <View style={styles.downloadLibraryInfo}>
+                  <Text numberOfLines={1} style={styles.downloadLibraryTitle}>{record.title}</Text>
+                  <Text style={styles.downloadLibraryMeta}>
+                    {[record.subtitle, record.quality].filter(Boolean).join(' • ')}
+                  </Text>
+                  {record.status !== 'completed' ? (
+                    <View style={styles.progressTrack}>
+                      <View style={[styles.progressFill, { width: `${percent}%` }]} />
+                    </View>
+                  ) : null}
+                  <Text style={styles.downloadLibraryStatus}>
+                    {record.status === 'completed'
+                      ? 'دانلود کامل شده و آماده پخش است'
+                      : record.status === 'downloading'
+                        ? `${toPersianDigits(percent)}٪ در حال دریافت`
+                        : record.status === 'paused'
+                          ? `${toPersianDigits(percent)}٪ متوقف شده`
+                          : record.error || 'دریافت ناموفق بود'}
+                  </Text>
+                </View>
+
+                <View style={styles.downloadLibraryActions}>
+                  {record.status === 'downloading' ? (
+                    <Pressable onPress={() => onPause(record)} style={styles.downloadLibraryControl}>
+                      <Ionicons name="pause" color={COLORS.text} size={18} />
+                    </Pressable>
+                  ) : null}
+                  {canResume ? (
+                    <Pressable onPress={() => onResume(record)} style={styles.downloadLibraryControl}>
+                      <Ionicons name="play" color={COLORS.text} size={18} />
+                    </Pressable>
+                  ) : null}
+                  {canPlay ? (
+                    <Pressable onPress={() => onPlay(record)} style={styles.downloadLibraryPlay}>
+                      <Ionicons name="play" color="#fff" size={18} />
+                    </Pressable>
+                  ) : null}
+                  <Pressable onPress={() => onMenu(record)} style={styles.downloadLibraryMenu}>
+                    <Ionicons name="ellipsis-vertical" color={COLORS.muted} size={20} />
                   </Pressable>
-                ) : null}
-                <Pressable onPress={() => onDelete(record)} style={styles.downloadLibraryDelete}>
-                  <Ionicons name="trash-outline" color={COLORS.muted} size={18} />
-                </Pressable>
+                </View>
               </View>
-            </View>
-          ))}
+            );
+          })}
         </View>
       )}
     </ScrollView>
@@ -1703,6 +1729,7 @@ function AppContent() {
   const [content, setContent] = useState<LoadedContent | null>(null);
   const [contentLoading, setContentLoading] = useState(true);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
+  const downloadsRef = useRef<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
 
   const reloadContent = async () => {
@@ -1722,6 +1749,14 @@ function AppContent() {
 
     return () => subscription.remove();
   }, []);
+
+  useEffect(() => {
+    downloadsRef.current = downloads;
+    const timer = setTimeout(() => {
+      saveDownloadRecords(downloads).catch(() => undefined);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [downloads]);
 
   const toggleFavorite = (id: string) => {
     setFavorites((current) =>
@@ -1775,6 +1810,73 @@ function AppContent() {
     );
   };
 
+  const playDownloadedRecord = (record: DownloadRecord) => {
+    if (!record.localUri) return;
+    const source: PlaybackSource = {
+      id: record.id,
+      url: record.localUri,
+      quality: record.quality || 'فایل ذخیره‌شده',
+      rank: 0,
+    };
+    setVideoRequest({ title: record.title, sources: [source], initialSourceId: source.id });
+  };
+
+  const executeDownload = async (record: DownloadRecord) => {
+    const runningRecord: DownloadRecord = {
+      ...record,
+      status: 'downloading',
+      error: undefined,
+    };
+
+    setDownloads((current) => current.map((item) =>
+      item.id === record.id ? runningRecord : item,
+    ));
+
+    try {
+      const result = await runDownload({
+        record: runningRecord,
+        onProgress: ({ progress, bytesWritten, totalBytes }) => {
+          setDownloads((current) => current.map((item) =>
+            item.id === record.id
+              ? {
+                  ...item,
+                  progress,
+                  bytesWritten,
+                  totalBytes,
+                  destinationUri: item.destinationUri || runningRecord.destinationUri,
+                }
+              : item,
+          ));
+        },
+      });
+
+      if (result.paused || !result.localUri) return;
+
+      setDownloads((current) => current.map((item) =>
+        item.id === record.id
+          ? {
+              ...item,
+              localUri: result.localUri,
+              destinationUri: result.localUri,
+              resumeData: undefined,
+              progress: 1,
+              status: 'completed' as const,
+              error: undefined,
+            }
+          : item,
+      ));
+    } catch (error) {
+      const stillExists = downloadsRef.current.some((item) => item.id === record.id);
+      if (!stillExists) return;
+      const message = error instanceof Error ? error.message : 'دریافت فایل ناموفق بود.';
+      setDownloads((current) => current.map((item) =>
+        item.id === record.id
+          ? { ...item, status: 'failed' as const, error: message }
+          : item,
+      ));
+    }
+  };
+
   const startDownloadInsideApp = async (item: CatalogItem, file: DownloadFile) => {
     if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url)) {
       Alert.alert('دریافت فایل', 'این لینک نمونه است یا لینک واقعی برای آن ثبت نشده است.');
@@ -1795,13 +1897,19 @@ function AppContent() {
     }
 
     const recordId = `${item.id}-${file.id}`;
-    const existing = downloads.find((record) => record.id === recordId);
+    const existing = downloadsRef.current.find((record) => record.id === recordId);
     if (existing?.status === 'completed' && existing.localUri) {
       Alert.alert('دریافت فایل', 'این کیفیت قبلاً دانلود شده و در بخش «دریافت‌ها» آماده پخش است.');
       return;
     }
     if (existing?.status === 'downloading') {
       Alert.alert('دریافت فایل', 'این فایل همین حالا در حال دانلود است.');
+      return;
+    }
+    if (existing && (existing.status === 'paused' || existing.status === 'failed')) {
+      setActiveTab('downloads');
+      setSelectedItem(null);
+      void executeDownload(existing);
       return;
     }
 
@@ -1812,6 +1920,7 @@ function AppContent() {
       subtitle: item.name,
       quality: cleanQualityLabel(file.quality),
       sourceUrl: file.url,
+      fileName: `${item.name}-${cleanQualityLabel(file.quality)}`,
       progress: 0,
       status: 'downloading',
       createdAt: new Date().toISOString(),
@@ -1820,47 +1929,74 @@ function AppContent() {
     setDownloads((current) => [pending, ...current.filter((record) => record.id !== recordId)]);
     setActiveTab('downloads');
     setSelectedItem(null);
+    void executeDownload(pending);
+  };
 
+  const pauseDownloadRecord = async (record: DownloadRecord) => {
     try {
-      const localUri = await downloadToApp({
-        id: recordId,
-        url: file.url,
-        fileName: `${item.name}-${cleanQualityLabel(file.quality)}`,
-        onProgress: (progress) => {
-          setDownloads((current) => current.map((record) =>
-            record.id === recordId ? { ...record, progress } : record,
-          ));
-        },
-      });
-
-      setDownloads((current) => {
-        const next = current.map((record) =>
-          record.id === recordId
-            ? { ...record, localUri, progress: 1, status: 'completed' as const, error: undefined }
-            : record,
-        );
-        saveDownloadRecords(next).catch(() => undefined);
-        return next;
-      });
+      const snapshot = await pauseDownload(record.id);
+      if (!snapshot) {
+        Alert.alert('توقف دانلود', 'این دانلود در حال حاضر فعال نیست.');
+        return;
+      }
+      setDownloads((current) => current.map((item) =>
+        item.id === record.id
+          ? {
+              ...item,
+              status: 'paused' as const,
+              destinationUri: snapshot.destinationUri,
+              resumeData: snapshot.resumeData,
+              error: undefined,
+            }
+          : item,
+      ));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'دریافت فایل ناموفق بود.';
-      setDownloads((current) => {
-        const next = current.map((record) =>
-          record.id === recordId ? { ...record, status: 'failed' as const, error: message } : record,
-        );
-        saveDownloadRecords(next).catch(() => undefined);
-        return next;
-      });
+      Alert.alert('توقف دانلود', error instanceof Error ? error.message : 'توقف دانلود انجام نشد.');
     }
   };
 
-  const deleteDownload = async (record: DownloadRecord) => {
-    await removeDownloadedFile(record.localUri).catch(() => undefined);
-    setDownloads((current) => {
-      const next = current.filter((item) => item.id !== record.id);
-      saveDownloadRecords(next).catch(() => undefined);
-      return next;
-    });
+  const resumeDownloadRecord = (record: DownloadRecord) => {
+    void executeDownload(record);
+  };
+
+  const deleteDownloadNow = async (record: DownloadRecord) => {
+    await cancelDownload(record.id).catch(() => undefined);
+    await removeDownloadedFile(record.localUri, record.destinationUri).catch(() => undefined);
+    setDownloads((current) => current.filter((item) => item.id !== record.id));
+  };
+
+  const confirmDeleteDownload = (record: DownloadRecord) => {
+    Alert.alert(
+      'حذف فایل',
+      'این فایل از حافظه برنامه حذف شود؟',
+      [
+        { text: 'انصراف', style: 'cancel' },
+        { text: 'حذف', style: 'destructive', onPress: () => void deleteDownloadNow(record) },
+      ],
+    );
+  };
+
+  const saveDownloadInGallery = async (record: DownloadRecord) => {
+    try {
+      await saveDownloadedFileToGallery(record.localUri);
+      Alert.alert('ذخیره شد', 'ویدئو در گالری گوشی ذخیره شد.');
+    } catch (error) {
+      Alert.alert('ذخیره در گالری', error instanceof Error ? error.message : 'ذخیره فایل انجام نشد.');
+    }
+  };
+
+  const showDownloadMenu = (record: DownloadRecord) => {
+    const completed = record.status === 'completed' && Boolean(record.localUri);
+    Alert.alert(
+      record.title,
+      [record.subtitle, record.quality].filter(Boolean).join(' • '),
+      [
+        ...(completed ? [{ text: 'پخش فایل', onPress: () => playDownloadedRecord(record) }] : []),
+        ...(completed ? [{ text: 'ذخیره در گالری', onPress: () => void saveDownloadInGallery(record) }] : []),
+        { text: 'حذف فایل', style: 'destructive', onPress: () => confirmDeleteDownload(record) },
+        { text: 'انصراف', style: 'cancel' },
+      ],
+    );
   };
 
   if (!content) {
@@ -1907,17 +2043,10 @@ function AppContent() {
         {activeTab === 'downloads' ? (
           <DownloadsScreen
             downloads={downloads}
-            onPlay={(record) => {
-              if (!record.localUri) return;
-              const source: PlaybackSource = {
-                id: record.id,
-                url: record.localUri,
-                quality: record.quality || 'فایل ذخیره‌شده',
-                rank: 0,
-              };
-              setVideoRequest({ title: record.title, sources: [source], initialSourceId: source.id });
-            }}
-            onDelete={deleteDownload}
+            onPlay={playDownloadedRecord}
+            onPause={pauseDownloadRecord}
+            onResume={resumeDownloadRecord}
+            onMenu={showDownloadMenu}
           />
         ) : null}
         {contentLoading ? (
@@ -2188,7 +2317,8 @@ const styles = StyleSheet.create({
   downloadLibraryStatus: { ...rtlText, color: COLORS.gold, fontSize: 9, marginTop: 7, width: '100%' },
   downloadLibraryActions: { gap: 8 },
   downloadLibraryPlay: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.red },
-  downloadLibraryDelete: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  downloadLibraryControl: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.12)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
+  downloadLibraryMenu: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
   progressTrack: { width: '100%', height: 6, borderRadius: 4, overflow: 'hidden', backgroundColor: '#080A0E', marginTop: 11 },
   progressFill: { height: '100%', borderRadius: 4, backgroundColor: COLORS.gold },
   playerQualityButton: { minWidth: 82, height: 38, paddingHorizontal: 9, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
