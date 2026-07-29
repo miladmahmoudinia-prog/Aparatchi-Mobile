@@ -118,6 +118,130 @@ const sortedDownloadFiles = (files: DownloadFile[]) =>
     .filter((file) => downloadModeFor(file) === 'download')
     .sort((a, b) => qualityRank(a) - qualityRank(b));
 
+
+type PlaybackSource = {
+  id: string;
+  url: string;
+  quality: string;
+  rank: number;
+};
+
+type PlayableVersion = {
+  language: MediaLanguage;
+  sources: PlaybackSource[];
+  defaultSource: PlaybackSource;
+};
+
+type VideoRequest = {
+  title: string;
+  sources: PlaybackSource[];
+  initialSourceId: string;
+};
+
+const playbackQualityLabel = (file: DownloadFile) => {
+  const text = `${file.quality || ''} ${file.label || ''}`;
+  if (/\.m3u8(?:$|[?#])/i.test(file.url) && !/(2160|1440|1080|720|480|360)/i.test(text)) {
+    return 'خودکار';
+  }
+  return cleanQualityLabel(file.quality || file.label);
+};
+
+const playbackSourcesForLanguage = (
+  files: DownloadFile[],
+  language: MediaLanguage,
+): PlaybackSource[] => {
+  const seen = new Set<string>();
+  const sources = files
+    .filter(
+      (file) =>
+        file.language === language &&
+        isSafeHttpUrl(file.url) &&
+        isDirectMediaUrl(file.url) &&
+        !isPlaceholderUrl(file.url),
+    )
+    .flatMap((file) => {
+      if (seen.has(file.url)) return [];
+      seen.add(file.url);
+      return [{
+        id: file.id,
+        url: file.url,
+        quality: playbackQualityLabel(file),
+        rank: qualityRank(file),
+      } satisfies PlaybackSource];
+    })
+    .sort((a, b) => {
+      const aAuto = a.quality === 'خودکار';
+      const bAuto = b.quality === 'خودکار';
+      if (aAuto !== bAuto) return aAuto ? 1 : -1;
+      return a.rank - b.rank;
+    });
+
+  return sources;
+};
+
+const defaultPlaybackSource = (sources: PlaybackSource[]) => {
+  const exact480 = sources.find((source) => /(^|\D)480(?:p|\D|$)/i.test(source.quality));
+  if (exact480) return exact480;
+
+  const numeric = sources.filter((source) => source.rank > 0 && source.rank < 100000);
+  if (numeric.length) {
+    return [...numeric].sort((a, b) => {
+      const distance = Math.abs(a.rank - 480) - Math.abs(b.rank - 480);
+      return distance || a.rank - b.rank;
+    })[0];
+  }
+
+  return sources[0];
+};
+
+const playableVersionsFor = (
+  item: CatalogItem,
+  episodeGroup?: DownloadSection | null,
+): PlayableVersion[] => {
+  const latestGroup = item.type === 'series' ? newestEpisodeGroup(item) : null;
+  const targetSections = episodeGroup
+    ? [episodeGroup]
+    : item.type === 'series'
+      ? (latestGroup ? [latestGroup] : [])
+      : (item.downloads || []).filter((group) => !isEpisodeSection(group));
+
+  const files = targetSections.flatMap((section) => section.files || []);
+  const versions = LANGUAGE_ORDER.flatMap((language) => {
+    const sources = playbackSourcesForLanguage(files, language);
+    if (!sources.length) return [];
+    return [{
+      language,
+      sources,
+      defaultSource: defaultPlaybackSource(sources),
+    } satisfies PlayableVersion];
+  });
+
+  if (versions.length) return versions;
+
+  const languages = itemLanguages(item);
+  if (
+    languages.length === 1 &&
+    item.streamUrl &&
+    isSafeHttpUrl(item.streamUrl) &&
+    isDirectMediaUrl(item.streamUrl) &&
+    !isPlaceholderUrl(item.streamUrl)
+  ) {
+    const source: PlaybackSource = {
+      id: `stream-${item.id}-${languages[0]}`,
+      url: item.streamUrl,
+      quality: /\.m3u8(?:$|[?#])/i.test(item.streamUrl) ? 'خودکار' : 'پخش آنلاین',
+      rank: 0,
+    };
+    return [{
+      language: languages[0],
+      sources: [source],
+      defaultSource: source,
+    }];
+  }
+
+  return [];
+};
+
 const languageSectionsForFiles = (
   files: DownloadFile[],
   idPrefix: string,
@@ -733,11 +857,13 @@ function DownloadGroup({
   open,
   onToggle,
   onOpenFile,
+  onPlay,
 }: {
   group: DownloadSection;
   open: boolean;
   onToggle: () => void;
   onOpenFile: (file: DownloadFile) => void;
+  onPlay?: () => void;
 }) {
   const files = sortedDownloadFiles(group.files);
   if (!files.length) return null;
@@ -760,6 +886,12 @@ function DownloadGroup({
       </Pressable>
       {open ? (
         <View style={styles.qualityList}>
+          {onPlay ? (
+            <Pressable onPress={onPlay} style={styles.languagePlayButton}>
+              <Ionicons name="play" color="#fff" size={17} />
+              <Text style={styles.languagePlayButtonText}>پخش آنلاین این نسخه</Text>
+            </Pressable>
+          ) : null}
           {files.map((file) => {
             const label = cleanMediaLabel(file.label);
             return (
@@ -793,6 +925,7 @@ function EpisodeDownloadGroup({
   onToggle,
   onToggleLanguage,
   onOpenFile,
+  onPlayLanguage,
 }: {
   group: DownloadSection;
   open: boolean;
@@ -800,6 +933,7 @@ function EpisodeDownloadGroup({
   onToggle: (defaultLanguageId: string | null) => void;
   onToggleLanguage: (id: string) => void;
   onOpenFile: (file: DownloadFile) => void;
+  onPlayLanguage: (language: MediaLanguage) => void;
 }) {
   const languageGroups = languageSectionsForFiles(group.files, group.id);
   if (!languageGroups.length) return null;
@@ -832,6 +966,9 @@ function EpisodeDownloadGroup({
               open={openLanguage === languageGroup.id}
               onToggle={() => onToggleLanguage(languageGroup.id)}
               onOpenFile={onOpenFile}
+              onPlay={playbackSourcesForLanguage(group.files, languageGroup.language!).length
+                ? () => onPlayLanguage(languageGroup.language!)
+                : undefined}
             />
           ))}
         </View>
@@ -847,6 +984,7 @@ function SeriesEpisodeList({
   onToggleEpisode,
   onToggleLanguage,
   onOpenFile,
+  onPlayLanguage,
 }: {
   item: CatalogItem;
   openGroup: string | null;
@@ -854,6 +992,7 @@ function SeriesEpisodeList({
   onToggleEpisode: (id: string, defaultLanguageId: string | null) => void;
   onToggleLanguage: (id: string) => void;
   onOpenFile: (file: DownloadFile) => void;
+  onPlayLanguage: (group: DownloadSection, language: MediaLanguage) => void;
 }) {
   const episodeGroups = [...(item.downloads || [])]
     .filter((group) => isEpisodeSection(group) && languageSectionsForFiles(group.files, group.id).length > 0)
@@ -885,6 +1024,7 @@ function SeriesEpisodeList({
                 onToggle={(defaultLanguageId) => onToggleEpisode(group.id, defaultLanguageId)}
                 onToggleLanguage={onToggleLanguage}
                 onOpenFile={onOpenFile}
+                onPlayLanguage={(language) => onPlayLanguage(group, language)}
               />
             ))}
           </View>
@@ -907,36 +1047,14 @@ function DetailModal({
   onClose: () => void;
   favorite: boolean;
   onFavorite: () => void;
-  onStream: (item: CatalogItem) => void;
+  onStream: (item: CatalogItem, episodeGroup?: DownloadSection | null, language?: MediaLanguage) => void;
   onDownload: (item: CatalogItem, file: DownloadFile) => void;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [openLanguage, setOpenLanguage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!item) {
-      setOpenGroup(null);
-      setOpenLanguage(null);
-      return;
-    }
-
-    if (item.type === 'series') {
-      const firstEpisode = newestEpisodeGroup(item);
-      const firstLanguage = firstEpisode
-        ? languageSectionsForFiles(firstEpisode.files, firstEpisode.id)[0]
-        : null;
-      setOpenGroup(firstEpisode?.id || null);
-      setOpenLanguage(firstLanguage?.id || null);
-      return;
-    }
-
-    const firstLanguageGroup = (item.downloads || [])
-      .filter((group) => !isEpisodeSection(group) && sortedDownloadFiles(group.files).length > 0)
-      .sort((a, b) =>
-        LANGUAGE_ORDER.indexOf(a.language || 'subtitled') -
-        LANGUAGE_ORDER.indexOf(b.language || 'subtitled'),
-      )[0];
-    setOpenGroup(firstLanguageGroup?.id || null);
+    setOpenGroup(null);
     setOpenLanguage(null);
   }, [item?.id]);
 
@@ -955,6 +1073,7 @@ function DetailModal({
     ? episodeGroups.length > 0
     : movieDownloadGroups.length > 0;
   const latestEpisode = newestEpisodeGroup(item);
+  const hasPlayableStream = playableVersionsFor(item).length > 0;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -997,10 +1116,10 @@ function DetailModal({
           <View style={styles.detailBody}>
             <View style={styles.detailActions}>
               <Pressable
-                onPress={() => item.streamUrl
+                onPress={() => hasPlayableStream
                   ? onStream(item)
-                  : Alert.alert('پخش آنلاین', 'برای این عنوان هنوز لینک پخش موجود نیست.')}
-                style={[styles.watchButton, !item.streamUrl && styles.watchButtonDisabled]}
+                  : Alert.alert('پخش آنلاین', 'برای این عنوان هنوز لینک مستقیم پخش موجود نیست.')}
+                style={[styles.watchButton, !hasPlayableStream && styles.watchButtonDisabled]}
               >
                 <Ionicons name="play" color="#fff" size={19} />
                 <Text style={styles.watchButtonText}>پخش آنلاین</Text>
@@ -1043,17 +1162,18 @@ function DetailModal({
                 item={item}
                 openGroup={openGroup}
                 openLanguage={openLanguage}
-                onToggleEpisode={(id, defaultLanguageId) => {
+                onToggleEpisode={(id) => {
                   if (openGroup === id) {
                     setOpenGroup(null);
                     setOpenLanguage(null);
                     return;
                   }
                   setOpenGroup(id);
-                  setOpenLanguage(defaultLanguageId);
+                  setOpenLanguage(null);
                 }}
                 onToggleLanguage={(id) => setOpenLanguage(openLanguage === id ? null : id)}
                 onOpenFile={(file) => onDownload(item, file)}
+                onPlayLanguage={(group, language) => onStream(item, group, language)}
               />
             ) : (
               movieDownloadGroups.map((group) => (
@@ -1063,6 +1183,9 @@ function DetailModal({
                   open={openGroup === group.id}
                   onToggle={() => setOpenGroup(openGroup === group.id ? null : group.id)}
                   onOpenFile={(file) => onDownload(item, file)}
+                  onPlay={group.language && playableVersionsFor(item).some((version) => version.language === group.language)
+                    ? () => onStream(item, null, group.language)
+                    : undefined}
                 />
               ))
             )}
@@ -1084,17 +1207,44 @@ function DetailModal({
 }
 
 function VideoPlayerModal({
-  source,
-  title,
+  request,
   onClose,
 }: {
-  source: string;
-  title: string;
+  request: VideoRequest;
   onClose: () => void;
 }) {
-  const player = useVideoPlayer(source, (instance) => {
+  const initialSource =
+    request.sources.find((source) => source.id === request.initialSourceId) ||
+    request.sources[0];
+  const [activeSource, setActiveSource] = useState(initialSource);
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [switchingQuality, setSwitchingQuality] = useState(false);
+  const player = useVideoPlayer(initialSource.url, (instance) => {
     instance.play();
   });
+
+  const switchQuality = async (nextSource: PlaybackSource) => {
+    if (nextSource.id === activeSource.id || switchingQuality) {
+      setQualityMenuOpen(false);
+      return;
+    }
+
+    const currentTime = Number(player.currentTime || 0);
+    setSwitchingQuality(true);
+    setQualityMenuOpen(false);
+    try {
+      player.pause();
+      await player.replaceAsync(nextSource.url);
+      if (currentTime > 0) player.currentTime = currentTime;
+      setActiveSource(nextSource);
+      player.play();
+    } catch {
+      Alert.alert('کیفیت پخش', 'تغییر کیفیت انجام نشد. دوباره تلاش کنید.');
+      player.play();
+    } finally {
+      setSwitchingQuality(false);
+    }
+  };
 
   return (
     <Modal visible animationType="fade" onRequestClose={onClose}>
@@ -1107,7 +1257,14 @@ function VideoPlayerModal({
           <Pressable onPress={onClose} style={styles.mediaCloseButton}>
             <Ionicons name="close" color="#fff" size={23} />
           </Pressable>
-          <Text numberOfLines={1} style={styles.mediaModalTitle}>{title}</Text>
+          <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
+          <Pressable
+            onPress={() => request.sources.length > 1 && setQualityMenuOpen(true)}
+            style={[styles.playerQualityButton, request.sources.length <= 1 && styles.playerQualityButtonDisabled]}
+          >
+            <Ionicons name="settings-outline" color={COLORS.gold} size={18} />
+            <Text style={styles.playerQualityButtonText}>{activeSource.quality}</Text>
+          </Pressable>
         </View>
         <View style={styles.videoStage}>
           <VideoView
@@ -1117,6 +1274,42 @@ function VideoPlayerModal({
             contentFit="contain"
             allowsPictureInPicture
           />
+          {switchingQuality ? (
+            <View style={styles.qualitySwitchLoading}>
+              <ActivityIndicator color={COLORS.gold} size="large" />
+              <Text style={styles.qualitySwitchLoadingText}>در حال تغییر کیفیت…</Text>
+            </View>
+          ) : null}
+          {qualityMenuOpen ? (
+            <View style={styles.playerQualityOverlay}>
+              <Pressable style={StyleSheet.absoluteFill} onPress={() => setQualityMenuOpen(false)} />
+              <View style={styles.playerQualityCard}>
+                <View style={styles.playerQualityHeader}>
+                  <Text style={styles.playerQualityTitle}>کیفیت پخش</Text>
+                  <Text style={styles.playerQualityDescription}>کیفیت پیش‌فرض ۴۸۰p است.</Text>
+                </View>
+                {request.sources.map((source) => {
+                  const selected = source.id === activeSource.id;
+                  return (
+                    <Pressable
+                      key={source.id}
+                      onPress={() => switchQuality(source)}
+                      style={[styles.playerQualityOption, selected && styles.playerQualityOptionSelected]}
+                    >
+                      <Text style={[styles.playerQualityOptionText, selected && styles.playerQualityOptionTextSelected]}>
+                        {source.quality}
+                      </Text>
+                      <Ionicons
+                        name={selected ? 'radio-button-on' : 'radio-button-off'}
+                        color={selected ? COLORS.gold : COLORS.muted}
+                        size={20}
+                      />
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
         </View>
       </SafeAreaView>
     </Modal>
@@ -1165,7 +1358,7 @@ function AppContent() {
   const [content, setContent] = useState<LoadedContent | null>(null);
   const [contentLoading, setContentLoading] = useState(true);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
-  const [videoRequest, setVideoRequest] = useState<{ source: string; title: string } | null>(null);
+  const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
 
   const reloadContent = async () => {
     setContentLoading(true);
@@ -1191,13 +1384,45 @@ function AppContent() {
     );
   };
 
-  const openStreamInsideApp = (item: CatalogItem) => {
-    const url = item.streamUrl;
-    if (!url || !isSafeHttpUrl(url) || !isDirectMediaUrl(url) || isPlaceholderUrl(url)) {
-      Alert.alert('پخش آنلاین', 'لینک مستقیم و معتبر پخش برای این عنوان ثبت نشده است.');
+  const openStreamInsideApp = (
+    item: CatalogItem,
+    episodeGroup: DownloadSection | null = null,
+    _requestedLanguage?: MediaLanguage,
+  ) => {
+    const versions = playableVersionsFor(item, episodeGroup);
+    if (!versions.length) {
+      Alert.alert('پخش آنلاین', 'لینک مستقیم و معتبر پخش برای این نسخه ثبت نشده است.');
       return;
     }
-    setVideoRequest({ source: url, title: item.nameFa });
+
+    const playVersion = (version: PlayableVersion) => {
+      const episodeLabel = episodeGroup
+        ? ` — فصل ${toPersianDigits(episodeGroup.seasonNumber || 1)}، قسمت ${toPersianDigits(episodeGroup.episodeNumber || 0)}`
+        : '';
+      setVideoRequest({
+        title: `${item.nameFa}${episodeLabel} — ${languageTitle(version.language)}`,
+        sources: version.sources,
+        initialSourceId: version.defaultSource.id,
+      });
+    };
+
+    if (versions.length === 1) {
+      playVersion(versions[0]);
+      return;
+    }
+
+    const dubbed = versions.find((version) => version.language === 'dubbed');
+    const subtitled = versions.find((version) => version.language === 'subtitled');
+
+    Alert.alert(
+      'انتخاب نسخه پخش',
+      'نسخه دوبله را می‌خواهید یا زیرنویس؟',
+      [
+        ...(dubbed ? [{ text: 'دوبله فارسی', onPress: () => playVersion(dubbed) }] : []),
+        ...(subtitled ? [{ text: 'زیرنویس فارسی', onPress: () => playVersion(subtitled) }] : []),
+        { text: 'انصراف', style: 'cancel' },
+      ],
+    );
   };
 
   const startDownloadInsideApp = async (item: CatalogItem, file: DownloadFile) => {
@@ -1209,7 +1434,8 @@ function AppContent() {
     const fileMode = downloadModeFor(file);
 
     if (fileMode === 'play') {
-      setVideoRequest({ source: file.url, title: `${item.nameFa} — ${cleanQualityLabel(file.quality)}` });
+      const source: PlaybackSource = { id: file.id, url: file.url, quality: cleanQualityLabel(file.quality), rank: qualityRank(file) };
+      setVideoRequest({ title: `${item.nameFa} — ${cleanQualityLabel(file.quality)}`, sources: [source], initialSourceId: source.id });
       return;
     }
 
@@ -1326,7 +1552,16 @@ function AppContent() {
         {activeTab === 'downloads' ? (
           <DownloadsScreen
             downloads={downloads}
-            onPlay={(record) => record.localUri && setVideoRequest({ source: record.localUri, title: record.title })}
+            onPlay={(record) => {
+              if (!record.localUri) return;
+              const source: PlaybackSource = {
+                id: record.id,
+                url: record.localUri,
+                quality: record.quality || 'فایل ذخیره‌شده',
+                rank: 0,
+              };
+              setVideoRequest({ title: record.title, sources: [source], initialSourceId: source.id });
+            }}
             onDelete={deleteDownload}
           />
         ) : null}
@@ -1353,8 +1588,7 @@ function AppContent() {
       />
       {videoRequest ? (
         <VideoPlayerModal
-          source={videoRequest.source}
-          title={videoRequest.title}
+          request={videoRequest}
           onClose={() => setVideoRequest(null)}
         />
       ) : null}
@@ -1547,6 +1781,8 @@ const styles = StyleSheet.create({
   downloadGroupBadge: { minWidth: 38, height: 36, paddingHorizontal: 7, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(216,180,90,0.4)', backgroundColor: 'rgba(216,180,90,0.08)' },
   downloadGroupBadgeText: { color: COLORS.gold, fontSize: 9, fontWeight: '900' },
   qualityList: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingHorizontal: 12 },
+  languagePlayButton: { minHeight: 44, marginTop: 10, marginBottom: 3, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red },
+  languagePlayButtonText: { color: '#fff', fontSize: 10, fontWeight: '900' },
   qualityRow: { minHeight: 67, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.border },
   qualityInfo: { flex: 1, alignItems: 'flex-end' },
   qualityName: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900' },
@@ -1589,6 +1825,20 @@ const styles = StyleSheet.create({
   downloadLibraryDelete: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
   progressTrack: { width: '100%', height: 6, borderRadius: 4, overflow: 'hidden', backgroundColor: '#080A0E', marginTop: 11 },
   progressFill: { height: '100%', borderRadius: 4, backgroundColor: COLORS.gold },
+  playerQualityButton: { minWidth: 82, height: 38, paddingHorizontal: 9, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
+  playerQualityButtonDisabled: { opacity: 0.55 },
+  playerQualityButtonText: { color: COLORS.text, fontSize: 10, fontWeight: '900' },
+  qualitySwitchLoading: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.72)' },
+  qualitySwitchLoadingText: { ...rtlText, color: COLORS.text, fontSize: 11, fontWeight: '800', marginTop: 12 },
+  playerQualityOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.56)', paddingHorizontal: 24 },
+  playerQualityCard: { width: '100%', maxWidth: 330, borderRadius: 18, padding: 14, backgroundColor: '#101319', borderWidth: 1, borderColor: COLORS.border },
+  playerQualityHeader: { alignItems: 'flex-end', paddingHorizontal: 4, paddingBottom: 10 },
+  playerQualityTitle: { ...rtlText, color: COLORS.text, fontSize: 15, fontWeight: '900' },
+  playerQualityDescription: { ...rtlText, color: COLORS.muted, fontSize: 9, marginTop: 5 },
+  playerQualityOption: { minHeight: 48, paddingHorizontal: 12, marginTop: 7, borderRadius: 12, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#0B0E13', borderWidth: 1, borderColor: COLORS.border },
+  playerQualityOptionSelected: { borderColor: 'rgba(216,180,90,0.58)', backgroundColor: 'rgba(216,180,90,0.07)' },
+  playerQualityOptionText: { color: COLORS.text, fontSize: 12, fontWeight: '800' },
+  playerQualityOptionTextSelected: { color: COLORS.gold },
   mediaModal: { flex: 1, backgroundColor: '#000' },
   webModal: { flex: 1, backgroundColor: COLORS.background },
   mediaModalHeader: { height: 62, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
