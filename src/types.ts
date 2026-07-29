@@ -16,6 +16,17 @@ export type DownloadSection = {
   subtitle?: string;
   badge?: string;
   files: DownloadFile[];
+  sourceEpisodeId?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  sourceUpdatedAt?: string;
+};
+
+export type LatestEpisode = {
+  id: string;
+  seasonNumber: number;
+  episodeNumber: number;
+  title?: string;
 };
 
 export type CatalogItem = {
@@ -37,6 +48,16 @@ export type CatalogItem = {
   /** video: پلیر داخلی، web: صفحه پخش در مرورگر داخلی */
   streamMode?: 'video' | 'web';
   downloads?: DownloadSection[];
+  episodeCount?: number;
+  seasonCount?: number;
+  latestEpisode?: LatestEpisode | null;
+  updateLabel?: string;
+  categoryKeys?: string[];
+  categoryLabels?: string[];
+  contentKind?: string;
+  isAnimation?: boolean;
+  isTalkShow?: boolean;
+  isDocumentary?: boolean;
   createdAt?: string;
   updatedAt?: string;
   sourceCreatedAt?: string;
@@ -52,8 +73,8 @@ export type ScheduleEntry = {
   time: string;
   episode?: number;
   region: 'iranian' | 'foreign';
-  sourceLabel: string;
-  verifiedAt: string;
+  sourceLabel?: string;
+  verifiedAt?: string;
 };
 
 export type CatalogPayload = {
@@ -61,6 +82,7 @@ export type CatalogPayload = {
   updatedAt: string;
   items: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
+  weeklySchedule?: ScheduleEntry[];
 };
 
 export type DayId =
