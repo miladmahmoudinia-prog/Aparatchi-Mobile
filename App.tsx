@@ -227,11 +227,17 @@ const cleanQualityLabel = (value?: string) => {
   return cleaned;
 };
 
-const qualityRank = (file: DownloadFile) => {
-  const text = `${file.quality} ${file.label || ''}`;
+const resolutionRank = (file: Pick<DownloadFile, 'quality' | 'label'>) => {
+  const text = `${file.quality || ''} ${file.label || ''}`;
   const match = text.match(/(2160|1440|1080|720|480|360)/i);
-  let rank = match ? Number(match[1]) : 0;
-  if (/hq\s*1080/i.test(text)) rank = 1180;
+  if (!match) return 0;
+  if (/hq\s*1080/i.test(text)) return 1180;
+  return Number(match[1]);
+};
+
+const downloadSortRank = (file: DownloadFile) => {
+  const text = `${file.quality || ''} ${file.label || ''}`;
+  let rank = resolutionRank(file);
   if (/blu[\s._-]*ray|bluray/i.test(text)) rank += 100000;
   if (/remux/i.test(text)) rank += 110000;
   return rank;
@@ -240,7 +246,7 @@ const qualityRank = (file: DownloadFile) => {
 const sortedDownloadFiles = (files: DownloadFile[]) =>
   [...files]
     .filter((file) => downloadModeFor(file) === 'download')
-    .sort((a, b) => qualityRank(a) - qualityRank(b));
+    .sort((a, b) => downloadSortRank(a) - downloadSortRank(b));
 
 
 type PlaybackSource = {
@@ -301,7 +307,7 @@ const playbackSourcesForLanguage = (
         id: file.id,
         url: file.url,
         quality: playbackQualityLabel(file),
-        rank: qualityRank(file),
+        rank: resolutionRank(file),
       } satisfies PlaybackSource];
     })
     .sort((a, b) => {
@@ -2874,7 +2880,7 @@ function AppContent() {
     const fileMode = downloadModeFor(file);
 
     if (fileMode === 'play') {
-      const source: PlaybackSource = { id: file.id, url: file.url, quality: cleanQualityLabel(file.quality), rank: qualityRank(file) };
+      const source: PlaybackSource = { id: file.id, url: file.url, quality: cleanQualityLabel(file.quality), rank: resolutionRank(file) };
       setVideoRequest({ title: `${item.nameFa} — ${cleanQualityLabel(file.quality)}`, sources: [source], initialSourceId: source.id });
       return;
     }
