@@ -6,6 +6,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   AppState,
   FlatList,
   Modal,
@@ -14,6 +15,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import {
@@ -21,7 +23,7 @@ import {
   SafeAreaProvider,
   SafeAreaView,
 } from 'react-native-safe-area-context';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
 import { loadContent, LoadedContent } from './src/contentService';
@@ -36,7 +38,21 @@ import {
 
 type MainTab = 'home' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
-type SearchFilter = 'all' | 'movie' | 'series' | MediaLanguage;
+type SearchFilter =
+  | 'all'
+  | 'movie'
+  | 'series'
+  | MediaLanguage
+  | 'latest'
+  | 'updated'
+  | 'iranian-movies'
+  | 'foreign-movies'
+  | 'iranian-series'
+  | 'foreign-series'
+  | 'animation-movies'
+  | 'animation-series'
+  | 'programs'
+  | 'documentaries';
 
 const TODAY_BY_JS_DAY: Record<number, DayId> = {
   0: 'sunday',
@@ -289,6 +305,115 @@ const latestEpisodeTimestamp = (item: CatalogItem) => {
   return Number.isFinite(timestamp) ? timestamp : 0;
 };
 
+const catalogItemTimestamp = (item: CatalogItem) => {
+  const value =
+    item.updatedAt ||
+    item.sourceUpdatedAt ||
+    item.createdAt ||
+    item.sourceCreatedAt ||
+    '';
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const hasCategory = (item: CatalogItem, key: string) =>
+  Boolean(item.categoryKeys?.includes(key));
+
+const isAnimationItem = (item: CatalogItem) =>
+  Boolean(
+    item.isAnimation ||
+    item.contentKind === 'animation-movie' ||
+    item.contentKind === 'animation-series' ||
+    hasCategory(item, 'animation-movies') ||
+    hasCategory(item, 'animation-series') ||
+    item.genres.some((genre) => /انیمیشن|animation/i.test(genre)),
+  );
+
+const isProgramItem = (item: CatalogItem) =>
+  Boolean(
+    item.isTalkShow ||
+    item.contentKind === 'talk-show' ||
+    hasCategory(item, 'talk-shows') ||
+    item.genres.some((genre) => /تاک[‌\s-]*شو|talk[\s_-]*show|رئالیتی|reality/i.test(genre)),
+  );
+
+const isDocumentaryItem = (item: CatalogItem) =>
+  Boolean(
+    item.isDocumentary ||
+    item.contentKind === 'documentary' ||
+    hasCategory(item, 'documentaries') ||
+    item.genres.some((genre) => /مستند|documentary/i.test(genre)),
+  );
+
+const filterTitle = (filter: SearchFilter) => {
+  const titles: Record<SearchFilter, string> = {
+    all: 'همه محتوا',
+    movie: 'همه فیلم‌ها',
+    series: 'همه سریال‌ها',
+    dubbed: 'دوبله فارسی',
+    subtitled: 'زیرنویس فارسی',
+    latest: 'جدیدترین‌ها',
+    updated: 'به‌روزشده‌ها',
+    'iranian-movies': 'فیلم‌های ایرانی',
+    'foreign-movies': 'فیلم‌های خارجی',
+    'iranian-series': 'سریال‌های ایرانی',
+    'foreign-series': 'سریال‌های خارجی',
+    'animation-movies': 'انیمیشن‌های سینمایی',
+    'animation-series': 'انیمیشن‌های سریالی',
+    programs: 'تاک‌شوها و برنامه‌ها',
+    documentaries: 'مستندها',
+  };
+  return titles[filter];
+};
+
+const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
+  switch (filter) {
+    case 'all':
+    case 'latest':
+      return true;
+    case 'movie':
+    case 'series':
+      return item.type === filter;
+    case 'dubbed':
+    case 'subtitled':
+      return itemLanguages(item).includes(filter);
+    case 'updated':
+      return Boolean(item.updateLabel || (item.type === 'series' && newestEpisodeGroup(item)));
+    case 'iranian-movies':
+      return item.type === 'movie' && item.ir;
+    case 'foreign-movies':
+      return item.type === 'movie' && !item.ir;
+    case 'iranian-series':
+      return item.type === 'series' && item.ir;
+    case 'foreign-series':
+      return item.type === 'series' && !item.ir;
+    case 'animation-movies':
+      return item.type === 'movie' && isAnimationItem(item);
+    case 'animation-series':
+      return item.type === 'series' && isAnimationItem(item);
+    case 'programs':
+      return isProgramItem(item);
+    case 'documentaries':
+      return isDocumentaryItem(item);
+    default:
+      return true;
+  }
+};
+
+const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
+  if (filter === 'updated') {
+    return [...items].sort((a, b) => {
+      const aEpisodeUpdate = a.type === 'series' && newestEpisodeGroup(a) ? 1 : 0;
+      const bEpisodeUpdate = b.type === 'series' && newestEpisodeGroup(b) ? 1 : 0;
+      const episodeDifference = bEpisodeUpdate - aEpisodeUpdate;
+      if (episodeDifference) return episodeDifference;
+      return latestEpisodeTimestamp(b) - latestEpisodeTimestamp(a);
+    });
+  }
+
+  return [...items].sort((a, b) => catalogItemTimestamp(b) - catalogItemTimestamp(a));
+};
+
 function Logo() {
   return (
     <View style={styles.logoWrap}>
@@ -348,20 +473,21 @@ function SectionTitle({
   );
 }
 
-function Hero({
+function HeroSlide({
   item,
   onOpen,
-  favorite,
-  onFavorite,
 }: {
   item: CatalogItem;
   onOpen: () => void;
-  favorite: boolean;
-  onFavorite: () => void;
 }) {
   return (
     <View style={styles.hero}>
-      <Image source={{ uri: item.backdrop }} style={StyleSheet.absoluteFill} contentFit="cover" transition={280} />
+      <Image
+        source={{ uri: item.backdrop || item.poster }}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        transition={240}
+      />
       <LinearGradient
         colors={['rgba(7,9,12,0.04)', 'rgba(7,9,12,0.54)', COLORS.background]}
         locations={[0.15, 0.62, 1]}
@@ -383,8 +509,8 @@ function Hero({
             <Text style={styles.yearBadgeText}>{toPersianDigits(item.year)}</Text>
           </View>
         </View>
-        <Text style={styles.heroTitle}>{item.nameFa}</Text>
-        <Text style={styles.heroEnglish}>{item.name}</Text>
+        <Text numberOfLines={2} style={styles.heroTitle}>{item.nameFa}</Text>
+        <Text numberOfLines={1} style={styles.heroEnglish}>{item.name}</Text>
         <View style={styles.heroMeta}>
           {typeof item.rate === 'number' ? (
             <View style={styles.ratingChip}>
@@ -401,16 +527,87 @@ function Hero({
         <Text numberOfLines={2} style={styles.heroOverview}>
           {item.overview}
         </Text>
-        <View style={styles.heroButtons}>
-          <Pressable onPress={onOpen} style={styles.primaryButton}>
-            <Ionicons name="play" color="#fff" size={18} />
-            <Text style={styles.primaryButtonText}>مشاهده و دریافت</Text>
-          </Pressable>
-          <Pressable onPress={onFavorite} style={styles.roundButton}>
-            <Ionicons name={favorite ? 'bookmark' : 'bookmark-outline'} color={favorite ? COLORS.gold : '#fff'} size={21} />
-          </Pressable>
-        </View>
+        <Pressable onPress={onOpen} style={styles.primaryButton}>
+          <Ionicons name="play" color="#fff" size={18} />
+          <Text style={styles.primaryButtonText}>مشاهده و دریافت</Text>
+        </Pressable>
       </View>
+    </View>
+  );
+}
+
+function HeroSlider({
+  items,
+  onOpen,
+}: {
+  items: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+}) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const fade = useRef(new Animated.Value(1)).current;
+  const safeItems = items.slice(0, 5);
+  const activeItem = safeItems[activeIndex] || safeItems[0];
+
+  useEffect(() => {
+    if (safeItems.length <= 1) return;
+    const timer = setTimeout(() => {
+      const nextIndex = (activeIndex + 1) % safeItems.length;
+      Animated.timing(fade, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }).start(() => {
+        setActiveIndex(nextIndex);
+        Animated.timing(fade, {
+          toValue: 1,
+          duration: 420,
+          useNativeDriver: true,
+        }).start();
+      });
+    }, 5200);
+
+    return () => clearTimeout(timer);
+  }, [activeIndex, fade, safeItems.length]);
+
+  useEffect(() => {
+    if (activeIndex >= safeItems.length) setActiveIndex(0);
+  }, [activeIndex, safeItems.length]);
+
+  const selectSlide = (index: number) => {
+    if (index === activeIndex) return;
+    Animated.timing(fade, {
+      toValue: 0,
+      duration: 170,
+      useNativeDriver: true,
+    }).start(() => {
+      setActiveIndex(index);
+      Animated.timing(fade, {
+        toValue: 1,
+        duration: 320,
+        useNativeDriver: true,
+      }).start();
+    });
+  };
+
+  if (!activeItem) return null;
+
+  return (
+    <View style={styles.heroSlider}>
+      <Animated.View style={[styles.heroSlide, { opacity: fade }]}>
+        <HeroSlide item={activeItem} onOpen={() => onOpen(activeItem)} />
+      </Animated.View>
+      {safeItems.length > 1 ? (
+        <View style={styles.heroDots}>
+          {safeItems.map((item, index) => (
+            <Pressable
+              key={item.id}
+              accessibilityLabel={`اسلاید ${toPersianDigits(index + 1)}`}
+              onPress={() => selectSlide(index)}
+              style={[styles.heroDot, activeIndex === index && styles.heroDotActive]}
+            />
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -561,16 +758,18 @@ function WeeklySchedule({
 function PosterCard({
   item,
   onOpen,
+  width = 137,
 }: {
   item: CatalogItem;
   onOpen: () => void;
+  width?: number;
 }) {
   const languageBadge = itemLanguageBadge(item);
   const latestEpisode = item.type === 'series' ? newestEpisodeGroup(item) : null;
 
   return (
-    <Pressable onPress={onOpen} style={styles.posterCard}>
-      <View style={styles.posterImageWrap}>
+    <Pressable onPress={onOpen} style={[styles.posterCard, { width }]}>
+      <View style={[styles.posterImageWrap, { width, height: Math.round(width * 1.42) }]}>
         <Image source={{ uri: item.poster }} style={styles.posterImage} contentFit="cover" transition={220} />
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
         {languageBadge ? (
@@ -626,30 +825,101 @@ function HomeScreen({
   iranianSchedule,
   onReloadContent,
   onOpen,
-  onSearch,
-  favorites,
-  toggleFavorite,
+  onBrowse,
 }: {
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
   onReloadContent: () => void;
   onOpen: (item: CatalogItem) => void;
-  onSearch: () => void;
-  favorites: string[];
-  toggleFavorite: (id: string) => void;
+  onBrowse: (filter: SearchFilter) => void;
 }) {
-  const hero = catalog[0];
-  const movies = catalog.filter((item) => item.type === 'movie');
-  const series = catalog.filter((item) => item.type === 'series');
-  const seriesWithEpisodes = series.filter((item) =>
-    (item.downloads || []).some(isEpisodeSection),
+  const newest = sortForCatalogFilter(catalog, 'latest');
+  const updated = sortForCatalogFilter(
+    catalog.filter((item) => matchesCatalogFilter(item, 'updated')),
+    'updated',
   );
-  const freshEpisodeSeries = [...seriesWithEpisodes].sort(
-    (a, b) => latestEpisodeTimestamp(b) - latestEpisodeTimestamp(a),
-  );
-  const featuredSeries = seriesWithEpisodes.length ? seriesWithEpisodes : series;
 
-  if (!hero) {
+  const rows: {
+    filter: SearchFilter;
+    eyebrow: string;
+    title: string;
+    items: CatalogItem[];
+  }[] = [
+    {
+      filter: 'latest',
+      eyebrow: 'تازه‌های آرشیو',
+      title: 'جدیدترین‌ها',
+      items: newest,
+    },
+    {
+      filter: 'updated',
+      eyebrow: 'قسمت‌ها و نسخه‌های تازه',
+      title: 'به‌روزشده‌ها',
+      items: updated,
+    },
+    {
+      filter: 'iranian-movies',
+      eyebrow: 'سینمای ایران',
+      title: 'فیلم‌های ایرانی',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'iranian-movies')),
+    },
+    {
+      filter: 'foreign-movies',
+      eyebrow: 'سینمای جهان',
+      title: 'فیلم‌های خارجی',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'foreign-movies')),
+    },
+    {
+      filter: 'iranian-series',
+      eyebrow: 'سریال‌های داخلی',
+      title: 'سریال‌های ایرانی',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'iranian-series')),
+    },
+    {
+      filter: 'foreign-series',
+      eyebrow: 'سریال‌های جهان',
+      title: 'سریال‌های خارجی',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'foreign-series')),
+    },
+    {
+      filter: 'animation-movies',
+      eyebrow: 'برای همه سنین',
+      title: 'انیمیشن‌های سینمایی',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'animation-movies')),
+    },
+    {
+      filter: 'animation-series',
+      eyebrow: 'ماجراهای دنباله‌دار',
+      title: 'انیمیشن‌های سریالی',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'animation-series')),
+    },
+    {
+      filter: 'programs',
+      eyebrow: 'گفت‌وگو و سرگرمی',
+      title: 'تاک‌شوها و برنامه‌ها',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'programs')),
+    },
+    {
+      filter: 'documentaries',
+      eyebrow: 'واقعیت تماشایی',
+      title: 'مستندها',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'documentaries')),
+    },
+    {
+      filter: 'dubbed',
+      eyebrow: 'با صدای فارسی',
+      title: 'دوبله فارسی',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'dubbed')),
+    },
+    {
+      filter: 'subtitled',
+      eyebrow: 'با زیرنویس فارسی',
+      title: 'زیرنویس فارسی',
+      items: newest.filter((item) => matchesCatalogFilter(item, 'subtitled')),
+    },
+  ];
+
+  if (!newest.length) {
     return (
       <View style={[styles.screen, styles.contentUnavailable]}>
         <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={42} />
@@ -662,65 +932,93 @@ function HomeScreen({
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.homeContent} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.homeContent}
+      showsVerticalScrollIndicator={false}
+    >
       <Header
-        onSearch={onSearch}
+        onSearch={() => onBrowse('all')}
         onNotifications={() => Alert.alert('اعلان‌ها', 'اعلان قسمت‌های جدید در نسخه بعد فعال می‌شود.')}
       />
 
-      <Hero
-        item={hero}
-        onOpen={() => onOpen(hero)}
-        favorite={favorites.includes(hero.id)}
-        onFavorite={() => toggleFavorite(hero.id)}
+      <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} />
+
+      {rows.map((row) => (
+        row.items.length ? (
+          <View key={row.filter} style={styles.catalogSection}>
+            <SectionTitle
+              eyebrow={row.eyebrow}
+              title={row.title}
+              action="مشاهده همه"
+              onAction={() => onBrowse(row.filter)}
+            />
+            <HorizontalCatalog items={row.items.slice(0, 12)} onOpen={onOpen} />
+          </View>
+        ) : null
+      ))}
+
+      <WeeklySchedule
+        catalog={catalog}
+        iranianSchedule={iranianSchedule}
+        onOpenItem={onOpen}
       />
-      <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} onOpenItem={onOpen} />
-
-      <View style={styles.catalogSection}>
-        <SectionTitle eyebrow="تازه‌های آرشیو" title="جدیدترین فیلم‌ها" action="مشاهده همه" onAction={onSearch} />
-        <HorizontalCatalog items={movies} onOpen={onOpen} />
-      </View>
-
-      {freshEpisodeSeries.length ? (
-        <View style={styles.catalogSection}>
-          <SectionTitle eyebrow="تازه‌ترین انتشارها" title="قسمت‌های تازه" action="مشاهده همه" onAction={onSearch} />
-          <HorizontalCatalog items={freshEpisodeSeries} onOpen={onOpen} />
-        </View>
-      ) : null}
-
-      {featuredSeries.length ? (
-        <View style={styles.catalogSection}>
-          <SectionTitle eyebrow="پیشنهاد برای تماشا" title="سریال‌های منتخب" action="مشاهده همه" onAction={onSearch} />
-          <HorizontalCatalog items={featuredSeries} onOpen={onOpen} />
-        </View>
-      ) : null}
     </ScrollView>
   );
 }
 
-function SearchScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (item: CatalogItem) => void }) {
+function SearchScreen({
+  catalog,
+  onOpen,
+  initialFilter,
+}: {
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+  initialFilter: SearchFilter;
+}) {
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<SearchFilter>('all');
+  const [filter, setFilter] = useState<SearchFilter>(initialFilter);
+  const { width: screenWidth } = useWindowDimensions();
 
-  const results = catalog.filter((item) => {
-    const normalized = query.trim().toLowerCase();
-    const matchesQuery =
-      !normalized ||
-      item.nameFa.includes(normalized) ||
-      item.name.toLowerCase().includes(normalized);
-    const matchesFilter =
-      filter === 'all' ||
-      item.type === filter ||
-      ((filter === 'dubbed' || filter === 'subtitled') && itemLanguages(item).includes(filter));
+  useEffect(() => {
+    setFilter(initialFilter);
+    setQuery('');
+  }, [initialFilter]);
 
-    return matchesQuery && matchesFilter;
-  });
+  const normalizedQuery = query.trim().toLowerCase();
+  const results = sortForCatalogFilter(
+    catalog.filter((item) => {
+      const matchesQuery =
+        !normalizedQuery ||
+        item.nameFa.toLowerCase().includes(normalizedQuery) ||
+        item.name.toLowerCase().includes(normalizedQuery);
+      return matchesQuery && matchesCatalogFilter(item, filter);
+    }),
+    filter,
+  );
+
+  const basicFilters: { id: SearchFilter; label: string }[] = [
+    { id: 'all', label: 'همه' },
+    { id: 'movie', label: 'فیلم' },
+    { id: 'series', label: 'سریال' },
+    { id: 'dubbed', label: 'دوبله فارسی' },
+    { id: 'subtitled', label: 'زیرنویس فارسی' },
+  ];
+  const visibleFilters = basicFilters.some((entry) => entry.id === initialFilter)
+    ? basicFilters
+    : [{ id: initialFilter, label: filterTitle(initialFilter) }, ...basicFilters];
+
+  const columnCount = screenWidth >= 720 ? 5 : screenWidth >= 590 ? 4 : screenWidth >= 480 ? 3 : 2;
+  const gridGap = 12;
+  const cardWidth = Math.floor(
+    (screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount,
+  );
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
       <View style={styles.simpleHeader}>
         <Logo />
-        <Text style={styles.simpleHeaderTitle}>جست‌وجو</Text>
+        <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{filterTitle(filter)}</Text>
       </View>
       <View style={styles.searchBox}>
         <Ionicons name="search-outline" color={COLORS.muted} size={21} />
@@ -733,22 +1031,31 @@ function SearchScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (it
           textAlign="right"
         />
       </View>
-      <View style={styles.searchFilters}>
-        {([
-          ['all', 'همه'],
-          ['movie', 'فیلم'],
-          ['series', 'سریال'],
-          ['dubbed', 'دوبله فارسی'],
-          ['subtitled', 'زیرنویس فارسی'],
-        ] as const).map(([id, label]) => (
-          <Pressable key={id} onPress={() => setFilter(id)} style={[styles.filterChip, filter === id && styles.filterChipActive]}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.searchFilters}
+      >
+        {visibleFilters.map(({ id, label }) => (
+          <Pressable
+            key={id}
+            onPress={() => setFilter(id)}
+            style={[styles.filterChip, filter === id && styles.filterChipActive]}
+          >
             <Text style={[styles.filterChipText, filter === id && styles.filterChipTextActive]}>{label}</Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
       <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text>
-      <View style={styles.searchGrid}>
-        {results.map((item) => <PosterCard key={item.id} item={item} onOpen={() => onOpen(item)} />)}
+      <View style={[styles.searchGrid, { columnGap: gridGap }]}>
+        {results.map((item) => (
+          <PosterCard
+            key={item.id}
+            item={item}
+            width={cardWidth}
+            onOpen={() => onOpen(item)}
+          />
+        ))}
       </View>
     </ScrollView>
   );
@@ -1353,6 +1660,7 @@ function BottomNavigation({
 
 function AppContent() {
   const [activeTab, setActiveTab] = useState<MainTab>('home');
+  const [searchFilter, setSearchFilter] = useState<SearchFilter>('all');
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [content, setContent] = useState<LoadedContent | null>(null);
@@ -1382,6 +1690,11 @@ function AppContent() {
     setFavorites((current) =>
       current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id],
     );
+  };
+
+  const openCatalogFilter = (filter: SearchFilter) => {
+    setSearchFilter(filter);
+    setActiveTab('search');
   };
 
   const openStreamInsideApp = (
@@ -1540,12 +1853,16 @@ function AppContent() {
             iranianSchedule={content.iranianSchedule}
             onReloadContent={reloadContent}
             onOpen={setSelectedItem}
-            onSearch={() => setActiveTab('search')}
-            favorites={favorites}
-            toggleFavorite={toggleFavorite}
+            onBrowse={openCatalogFilter}
           />
         ) : null}
-        {activeTab === 'search' ? <SearchScreen catalog={content.items} onOpen={setSelectedItem} /> : null}
+        {activeTab === 'search' ? (
+          <SearchScreen
+            catalog={content.items}
+            onOpen={setSelectedItem}
+            initialFilter={searchFilter}
+          />
+        ) : null}
         {activeTab === 'favorites' ? (
           <FavoritesScreen catalog={content.items} favorites={favorites} onOpen={setSelectedItem} />
         ) : null}
@@ -1575,7 +1892,13 @@ function AppContent() {
         style={styles.bottomNavigationSafeArea}
         edges={['right', 'bottom', 'left']}
       >
-        <BottomNavigation active={activeTab} onChange={setActiveTab} />
+        <BottomNavigation
+          active={activeTab}
+          onChange={(tab) => {
+            if (tab === 'search') setSearchFilter('all');
+            setActiveTab(tab);
+          }}
+        />
       </SafeAreaView>
       <DetailModal
         item={selectedItem}
@@ -1660,7 +1983,12 @@ const styles = StyleSheet.create({
   contentStatusTextWrap: { flex: 1, alignItems: 'flex-end', marginLeft: 10 },
   contentStatusTitle: { ...rtlText, color: COLORS.text, fontSize: 10, fontWeight: '900' },
   contentStatusMeta: { ...rtlText, color: COLORS.muted, fontSize: 8, marginTop: 4 },
-  hero: { height: 465, overflow: 'hidden', justifyContent: 'flex-end' },
+  heroSlider: { height: 465, position: 'relative', overflow: 'hidden', backgroundColor: COLORS.surface },
+  heroSlide: { flex: 1 },
+  hero: { flex: 1, overflow: 'hidden', justifyContent: 'flex-end' },
+  heroDots: { position: 'absolute', bottom: 13, left: 0, right: 0, zIndex: 5, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  heroDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.34)' },
+  heroDotActive: { width: 23, backgroundColor: COLORS.red },
   heroContent: { paddingHorizontal: 20, paddingBottom: 34, alignItems: 'flex-end' },
   heroBadgeRow: { flexDirection: 'row-reverse', gap: 8, marginBottom: 10 },
   redBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.92)' },
@@ -1676,10 +2004,10 @@ const styles = StyleSheet.create({
   metaChip: { color: '#E1E2E3', fontSize: 10, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)', backgroundColor: 'rgba(0,0,0,0.2)' },
   heroOverview: { ...rtlText, color: '#C5C7CB', fontSize: 12, lineHeight: 21, marginTop: 13, maxWidth: 360 },
   heroButtons: { flexDirection: 'row-reverse', gap: 10, marginTop: 16, alignSelf: 'stretch' },
-  primaryButton: { height: 48, flex: 1, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red, shadowColor: COLORS.red, shadowOpacity: 0.35, shadowRadius: 18, elevation: 5 },
+  primaryButton: { height: 48, alignSelf: 'stretch', marginTop: 16, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red, shadowColor: COLORS.red, shadowOpacity: 0.35, shadowRadius: 18, elevation: 5 },
   primaryButtonText: { color: '#fff', fontSize: 13, fontWeight: '900' },
   roundButton: { width: 48, height: 48, borderRadius: 13, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', backgroundColor: 'rgba(10,12,15,0.65)' },
-  scheduleSection: { marginHorizontal: 12, marginTop: -8, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(216,180,90,0.24)', backgroundColor: '#0C0F14', shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 20, elevation: 6 },
+  scheduleSection: { marginHorizontal: 12, marginTop: 34, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(216,180,90,0.24)', backgroundColor: '#0C0F14', shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 20, elevation: 6 },
   scheduleHeader: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   eyebrow: { ...rtlText, color: COLORS.red, fontSize: 10, fontWeight: '900', marginBottom: 4 },
   sectionTitle: { ...rtlText, color: COLORS.text, fontSize: 20, fontWeight: '900', letterSpacing: -0.7 },
@@ -1736,13 +2064,13 @@ const styles = StyleSheet.create({
   simpleHeaderTitle: { ...rtlText, color: COLORS.text, fontSize: 19, fontWeight: '900' },
   searchBox: { height: 52, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, paddingHorizontal: 15, borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   searchInput: { flex: 1, color: COLORS.text, fontSize: 13, writingDirection: 'rtl' },
-  searchFilters: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginTop: 13 },
+  searchFilters: { flexDirection: 'row-reverse', gap: 8, paddingTop: 13, paddingBottom: 2 },
   filterChip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   filterChipActive: { backgroundColor: 'rgba(222,35,66,0.13)', borderColor: 'rgba(222,35,66,0.45)' },
   filterChipText: { color: COLORS.muted, fontSize: 10, fontWeight: '800' },
   filterChipTextActive: { color: COLORS.text },
   resultCount: { ...rtlText, color: COLORS.muted, fontSize: 10, marginTop: 22, marginBottom: 12 },
-  searchGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 20 },
+  searchGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 20 },
   largeEmpty: { minHeight: 420, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 38 },
   largeEmptyIcon: { width: 74, height: 74, borderRadius: 25, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.22)' },
   largeEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 18 },
