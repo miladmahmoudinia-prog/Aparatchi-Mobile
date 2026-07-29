@@ -3,7 +3,6 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { WebView } from 'react-native-webview';
 import {
   ActivityIndicator,
   Alert,
@@ -26,7 +25,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
 import { loadContent, LoadedContent } from './src/contentService';
-import { CatalogItem, DayId, DownloadFile, DownloadSection, ScheduleEntry } from './src/types';
+import { CatalogItem, DayId, DownloadFile, DownloadSection, MediaLanguage, ScheduleEntry } from './src/types';
 import {
   DownloadRecord,
   downloadToApp,
@@ -37,6 +36,7 @@ import {
 
 type MainTab = 'home' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
+type SearchFilter = 'all' | 'movie' | 'series' | MediaLanguage;
 
 const TODAY_BY_JS_DAY: Record<number, DayId> = {
   0: 'sunday',
@@ -57,13 +57,86 @@ const isPlaceholderUrl = (url?: string) =>
   Boolean(url && (/example\.com/i.test(url) || /replace-with/i.test(url)));
 
 const isDirectMediaUrl = (url: string) =>
-  /\.(m3u8|mp4|m4v|mov|webm|mkv|ts)(?:$|[?#])/i.test(url);
+  /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
 
 const downloadModeFor = (file: DownloadFile) =>
-  file.mode || (isDirectMediaUrl(file.url) ? 'download' : 'web');
+  file.mode === 'play' ? 'play' : 'download';
 
-const streamModeFor = (item: CatalogItem) =>
-  item.streamMode || (item.streamUrl && isDirectMediaUrl(item.streamUrl) ? 'video' : 'web');
+const LANGUAGE_ORDER: MediaLanguage[] = ['dubbed', 'subtitled'];
+
+const languageTitle = (language: MediaLanguage) =>
+  language === 'dubbed' ? 'دوبله فارسی' : 'زیرنویس فارسی';
+
+const itemLanguages = (item: CatalogItem): MediaLanguage[] => {
+  const available = item.availableLanguages || [];
+  if (available.length) {
+    return LANGUAGE_ORDER.filter((language) => available.includes(language));
+  }
+
+  return LANGUAGE_ORDER.filter((language) =>
+    (item.downloads || []).some((section) =>
+      section.files.some((file) => file.mode !== 'play' && file.language === language),
+    ),
+  );
+};
+
+const itemLanguageBadge = (item: CatalogItem) => {
+  const languages = itemLanguages(item);
+  if (languages.includes('dubbed') && languages.includes('subtitled')) {
+    return 'دوبله + زیرنویس';
+  }
+  if (languages.includes('dubbed')) return 'دوبله';
+  if (languages.includes('subtitled')) return 'زیرنویس';
+  return '';
+};
+
+const cleanMediaLabel = (value?: string) =>
+  String(value || '')
+    .replace(/نسخه\s*اصلی/gi, '')
+    .replace(/original\s*(?:version|audio)?/gi, '')
+    .replace(/^[\s•|\-–—]+|[\s•|\-–—]+$/g, '')
+    .trim();
+
+const cleanQualityLabel = (value?: string) => {
+  const cleaned = cleanMediaLabel(value);
+  if (!cleaned || /^کیفیت\s*اصلی$/i.test(cleaned)) return 'کیفیت فایل';
+  return cleaned;
+};
+
+const qualityRank = (file: DownloadFile) => {
+  const text = `${file.quality} ${file.label || ''}`;
+  const match = text.match(/(2160|1440|1080|720|480|360)/i);
+  let rank = match ? Number(match[1]) : 0;
+  if (/hq\s*1080/i.test(text)) rank = 1180;
+  if (/blu[\s._-]*ray|bluray/i.test(text)) rank += 100000;
+  if (/remux/i.test(text)) rank += 110000;
+  return rank;
+};
+
+const sortedDownloadFiles = (files: DownloadFile[]) =>
+  [...files]
+    .filter((file) => downloadModeFor(file) === 'download')
+    .sort((a, b) => qualityRank(a) - qualityRank(b));
+
+const languageSectionsForFiles = (
+  files: DownloadFile[],
+  idPrefix: string,
+): DownloadSection[] =>
+  LANGUAGE_ORDER.flatMap((language) => {
+    const languageFiles = sortedDownloadFiles(
+      files.filter((file) => file.language === language),
+    );
+    if (!languageFiles.length) return [];
+
+    return [{
+      id: `${idPrefix}-${language}`,
+      title: languageTitle(language),
+      subtitle: `${languageFiles.length} کیفیت دانلود مستقیم`,
+      badge: language === 'dubbed' ? 'دوبله' : 'زیرنویس',
+      language,
+      files: languageFiles,
+    }];
+  });
 
 const isEpisodeSection = (group: DownloadSection) =>
   Number(group.episodeNumber || 0) > 0;
@@ -368,22 +441,26 @@ function PosterCard({
   item: CatalogItem;
   onOpen: () => void;
 }) {
+  const languageBadge = itemLanguageBadge(item);
+  const latestEpisode = item.type === 'series' ? newestEpisodeGroup(item) : null;
+
   return (
     <Pressable onPress={onOpen} style={styles.posterCard}>
       <View style={styles.posterImageWrap}>
         <Image source={{ uri: item.poster }} style={styles.posterImage} contentFit="cover" transition={220} />
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
-        <View style={styles.posterAccess}>
-          <Text style={styles.posterAccessText}>
-            {item.type === 'series' && newestEpisodeGroup(item)
-              ? `قسمت ${toPersianDigits(newestEpisodeGroup(item)?.episodeNumber || 0)}`
-              : item.access === 'free'
-                ? 'رایگان'
-                : item.access === 'operator'
-                  ? 'اپراتوری'
-                  : 'خرید'}
-          </Text>
-        </View>
+        {languageBadge ? (
+          <View style={styles.posterAccess}>
+            <Text style={styles.posterAccessText}>{languageBadge}</Text>
+          </View>
+        ) : null}
+        {latestEpisode ? (
+          <View style={styles.posterEpisodeBadge}>
+            <Text style={styles.posterEpisodeText}>
+              قسمت {toPersianDigits(latestEpisode.episodeNumber || 0)}
+            </Text>
+          </View>
+        ) : null}
         {typeof item.rate === 'number' ? (
           <View style={styles.posterRating}>
             <Ionicons name="star" color={COLORS.gold} size={11} />
@@ -499,7 +576,7 @@ function HomeScreen({
 
 function SearchScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (item: CatalogItem) => void }) {
   const [query, setQuery] = useState('');
-  const [type, setType] = useState<'all' | 'movie' | 'series'>('all');
+  const [filter, setFilter] = useState<SearchFilter>('all');
 
   const results = catalog.filter((item) => {
     const normalized = query.trim().toLowerCase();
@@ -507,7 +584,12 @@ function SearchScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (it
       !normalized ||
       item.nameFa.includes(normalized) ||
       item.name.toLowerCase().includes(normalized);
-    return matchesQuery && (type === 'all' || item.type === type);
+    const matchesFilter =
+      filter === 'all' ||
+      item.type === filter ||
+      ((filter === 'dubbed' || filter === 'subtitled') && itemLanguages(item).includes(filter));
+
+    return matchesQuery && matchesFilter;
   });
 
   return (
@@ -532,9 +614,11 @@ function SearchScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (it
           ['all', 'همه'],
           ['movie', 'فیلم'],
           ['series', 'سریال'],
+          ['dubbed', 'دوبله فارسی'],
+          ['subtitled', 'زیرنویس فارسی'],
         ] as const).map(([id, label]) => (
-          <Pressable key={id} onPress={() => setType(id)} style={[styles.filterChip, type === id && styles.filterChipActive]}>
-            <Text style={[styles.filterChipText, type === id && styles.filterChipTextActive]}>{label}</Text>
+          <Pressable key={id} onPress={() => setFilter(id)} style={[styles.filterChip, filter === id && styles.filterChipActive]}>
+            <Text style={[styles.filterChipText, filter === id && styles.filterChipTextActive]}>{label}</Text>
           </Pressable>
         ))}
       </View>
@@ -655,58 +739,101 @@ function DownloadGroup({
   onToggle: () => void;
   onOpenFile: (file: DownloadFile) => void;
 }) {
+  const files = sortedDownloadFiles(group.files);
+  if (!files.length) return null;
+
   return (
     <View style={[styles.downloadGroup, open && styles.downloadGroupOpen]}>
       <Pressable onPress={onToggle} style={styles.downloadGroupHead}>
         <View style={styles.downloadGroupText}>
           <Text style={styles.downloadGroupTitle}>{group.title}</Text>
-          <Text style={styles.downloadGroupSubtitle}>{group.subtitle || `${toPersianDigits(group.files.length)} کیفیت`}</Text>
+          <Text style={styles.downloadGroupSubtitle}>
+            {group.subtitle || `${toPersianDigits(files.length)} کیفیت دانلود مستقیم`}
+          </Text>
         </View>
         <View style={styles.downloadGroupBadge}>
-          <Text style={styles.downloadGroupBadgeText}>{group.badge || 'DL'}</Text>
+          <Text style={styles.downloadGroupBadgeText}>
+            {group.badge || (group.language === 'dubbed' ? 'دوبله' : 'زیرنویس')}
+          </Text>
         </View>
         <Ionicons name={open ? 'chevron-up' : 'chevron-down'} color={COLORS.gold} size={19} />
       </Pressable>
       {open ? (
         <View style={styles.qualityList}>
-          {group.files.map((file) => (
-            <View key={file.id} style={styles.qualityRow}>
-              <View>
-                <Text style={styles.qualityName}>{file.quality}</Text>
-                <Text style={styles.qualityMeta}>
-                  {[file.label, file.size].filter(Boolean).join(' • ') || 'لینک مستقیم'}
-                </Text>
+          {files.map((file) => {
+            const label = cleanMediaLabel(file.label);
+            return (
+              <View key={file.id} style={styles.qualityRow}>
+                <View style={styles.qualityInfo}>
+                  <Text style={styles.qualityName}>{cleanQualityLabel(file.quality)}</Text>
+                  <Text style={styles.qualityMeta}>
+                    {[label, file.size].filter(Boolean).join(' • ') || 'لینک مستقیم MP4'}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => onOpenFile(file)}
+                  style={styles.downloadButton}
+                >
+                  <Ionicons name="download-outline" color="#fff" size={16} />
+                  <Text style={styles.downloadButtonText}>دریافت</Text>
+                </Pressable>
               </View>
-              <Pressable
-                onPress={() => onOpenFile(file)}
-                style={styles.downloadButton}
-              >
-                <Ionicons
-                  name={
-                    downloadModeFor(file) === 'play'
-                      ? 'play'
-                      : downloadModeFor(file) === 'web'
-                        ? 'open-outline'
-                        : 'download-outline'
-                  }
-                  color="#fff"
-                  size={16}
-                />
-                <Text style={styles.downloadButtonText}>
-                  {downloadModeFor(file) === 'play'
-                    ? 'پخش'
-                    : downloadModeFor(file) === 'web'
-                      ? 'بازکردن'
-                      : 'دریافت'}
-                </Text>
-              </Pressable>
-            </View>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function EpisodeDownloadGroup({
+  group,
+  open,
+  openLanguage,
+  onToggle,
+  onToggleLanguage,
+  onOpenFile,
+}: {
+  group: DownloadSection;
+  open: boolean;
+  openLanguage: string | null;
+  onToggle: (defaultLanguageId: string | null) => void;
+  onToggleLanguage: (id: string) => void;
+  onOpenFile: (file: DownloadFile) => void;
+}) {
+  const languageGroups = languageSectionsForFiles(group.files, group.id);
+  if (!languageGroups.length) return null;
+
+  return (
+    <View style={[styles.episodeGroup, open && styles.episodeGroupOpen]}>
+      <Pressable
+        onPress={() => onToggle(languageGroups[0]?.id || null)}
+        style={styles.episodeGroupHead}
+      >
+        <View style={styles.episodeGroupText}>
+          <Text style={styles.episodeGroupTitle}>
+            قسمت {toPersianDigits(group.episodeNumber || 0)}
+          </Text>
+          <Text numberOfLines={1} style={styles.episodeGroupSubtitle}>
+            {cleanMediaLabel(group.subtitle) || `${toPersianDigits(languageGroups.length)} نسخه قابل دریافت`}
+          </Text>
+        </View>
+        <View style={styles.episodeNumberBadge}>
+          <Text style={styles.episodeNumberBadgeText}>E{toPersianDigits(group.episodeNumber || 0)}</Text>
+        </View>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} color={COLORS.gold} size={19} />
+      </Pressable>
+      {open ? (
+        <View style={styles.episodeLanguageList}>
+          {languageGroups.map((languageGroup) => (
+            <DownloadGroup
+              key={languageGroup.id}
+              group={languageGroup}
+              open={openLanguage === languageGroup.id}
+              onToggle={() => onToggleLanguage(languageGroup.id)}
+              onOpenFile={onOpenFile}
+            />
           ))}
-          {!group.files.length ? (
-            <View style={styles.downloadEmptyRow}>
-              <Text style={styles.downloadEmptyText}>هنوز لینکی برای این بخش ثبت نشده است.</Text>
-            </View>
-          ) : null}
         </View>
       ) : null}
     </View>
@@ -716,16 +843,20 @@ function DownloadGroup({
 function SeriesEpisodeList({
   item,
   openGroup,
-  onToggle,
+  openLanguage,
+  onToggleEpisode,
+  onToggleLanguage,
   onOpenFile,
 }: {
   item: CatalogItem;
   openGroup: string | null;
-  onToggle: (id: string) => void;
+  openLanguage: string | null;
+  onToggleEpisode: (id: string, defaultLanguageId: string | null) => void;
+  onToggleLanguage: (id: string) => void;
   onOpenFile: (file: DownloadFile) => void;
 }) {
   const episodeGroups = [...(item.downloads || [])]
-    .filter(isEpisodeSection)
+    .filter((group) => isEpisodeSection(group) && languageSectionsForFiles(group.files, group.id).length > 0)
     .sort(compareEpisodeGroupsNewestFirst);
 
   const seasons = episodeGroups.reduce<Record<number, DownloadSection[]>>((result, group) => {
@@ -746,11 +877,13 @@ function SeriesEpisodeList({
               <Text style={styles.seasonCount}>{toPersianDigits(groups.length)} قسمت</Text>
             </View>
             {groups.map((group) => (
-              <DownloadGroup
+              <EpisodeDownloadGroup
                 key={group.id}
                 group={group}
                 open={openGroup === group.id}
-                onToggle={() => onToggle(group.id)}
+                openLanguage={openLanguage}
+                onToggle={(defaultLanguageId) => onToggleEpisode(group.id, defaultLanguageId)}
+                onToggleLanguage={onToggleLanguage}
                 onOpenFile={onOpenFile}
               />
             ))}
@@ -778,17 +911,49 @@ function DetailModal({
   onDownload: (item: CatalogItem, file: DownloadFile) => void;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [openLanguage, setOpenLanguage] = useState<string | null>(null);
 
   useEffect(() => {
-    const firstGroup = item?.type === 'series'
-      ? newestEpisodeGroup(item)
-      : item?.downloads?.[0] || null;
-    setOpenGroup(firstGroup?.id || null);
+    if (!item) {
+      setOpenGroup(null);
+      setOpenLanguage(null);
+      return;
+    }
+
+    if (item.type === 'series') {
+      const firstEpisode = newestEpisodeGroup(item);
+      const firstLanguage = firstEpisode
+        ? languageSectionsForFiles(firstEpisode.files, firstEpisode.id)[0]
+        : null;
+      setOpenGroup(firstEpisode?.id || null);
+      setOpenLanguage(firstLanguage?.id || null);
+      return;
+    }
+
+    const firstLanguageGroup = (item.downloads || [])
+      .filter((group) => !isEpisodeSection(group) && sortedDownloadFiles(group.files).length > 0)
+      .sort((a, b) =>
+        LANGUAGE_ORDER.indexOf(a.language || 'subtitled') -
+        LANGUAGE_ORDER.indexOf(b.language || 'subtitled'),
+      )[0];
+    setOpenGroup(firstLanguageGroup?.id || null);
+    setOpenLanguage(null);
   }, [item?.id]);
 
   if (!item) return null;
   const downloadGroups = item.downloads || [];
-  const episodeGroups = downloadGroups.filter(isEpisodeSection);
+  const episodeGroups = downloadGroups.filter(
+    (group) => isEpisodeSection(group) && languageSectionsForFiles(group.files, group.id).length > 0,
+  );
+  const movieDownloadGroups = downloadGroups
+    .filter((group) => !isEpisodeSection(group) && sortedDownloadFiles(group.files).length > 0)
+    .sort((a, b) =>
+      LANGUAGE_ORDER.indexOf(a.language || 'subtitled') -
+      LANGUAGE_ORDER.indexOf(b.language || 'subtitled'),
+    );
+  const hasDownloads = item.type === 'series'
+    ? episodeGroups.length > 0
+    : movieDownloadGroups.length > 0;
   const latestEpisode = newestEpisodeGroup(item);
 
   return (
@@ -862,8 +1027,8 @@ function DetailModal({
                 </Text>
                 <Text style={styles.downloadHeaderText}>
                   {item.type === 'series'
-                    ? 'برای دیدن کیفیت‌ها، قسمت موردنظر را باز کنید.'
-                    : 'کیفیت موردنظر را برای پخش یا دریافت انتخاب کنید.'}
+                    ? 'قسمت را باز کنید؛ دوبله و زیرنویس هر قسمت جدا نمایش داده می‌شوند.'
+                    : 'دوبله و زیرنویس جدا هستند؛ با باز شدن یکی، بخش دیگر بسته می‌شود.'}
                 </Text>
               </View>
               <Ionicons
@@ -877,11 +1042,21 @@ function DetailModal({
               <SeriesEpisodeList
                 item={item}
                 openGroup={openGroup}
-                onToggle={(id) => setOpenGroup(openGroup === id ? null : id)}
+                openLanguage={openLanguage}
+                onToggleEpisode={(id, defaultLanguageId) => {
+                  if (openGroup === id) {
+                    setOpenGroup(null);
+                    setOpenLanguage(null);
+                    return;
+                  }
+                  setOpenGroup(id);
+                  setOpenLanguage(defaultLanguageId);
+                }}
+                onToggleLanguage={(id) => setOpenLanguage(openLanguage === id ? null : id)}
                 onOpenFile={(file) => onDownload(item, file)}
               />
             ) : (
-              downloadGroups.map((group) => (
+              movieDownloadGroups.map((group) => (
                 <DownloadGroup
                   key={group.id}
                   group={group}
@@ -892,7 +1067,7 @@ function DetailModal({
               ))
             )}
 
-            {!downloadGroups.length ? (
+            {!hasDownloads ? (
               <View style={styles.noDownloadsCard}>
                 <Ionicons name="link-outline" color={COLORS.muted} size={25} />
                 <Text style={styles.noDownloadsTitle}>
@@ -948,49 +1123,6 @@ function VideoPlayerModal({
   );
 }
 
-function InAppWebModal({
-  url,
-  title,
-  onClose,
-}: {
-  url: string;
-  title: string;
-  onClose: () => void;
-}) {
-  const [loading, setLoading] = useState(true);
-  return (
-    <Modal visible animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView
-        style={styles.webModal}
-        edges={['top', 'right', 'bottom', 'left']}
-      >
-        <StatusBar style="light" />
-        <View style={styles.mediaModalHeader}>
-          <Pressable onPress={onClose} style={styles.mediaCloseButton}>
-            <Ionicons name="close" color="#fff" size={23} />
-          </Pressable>
-          <Text numberOfLines={1} style={styles.mediaModalTitle}>{title}</Text>
-        </View>
-        <WebView
-          source={{ uri: url }}
-          style={styles.webView}
-          onLoadStart={() => setLoading(true)}
-          onLoadEnd={() => setLoading(false)}
-          javaScriptEnabled
-          domStorageEnabled
-          allowsFullscreenVideo
-          setSupportMultipleWindows={false}
-        />
-        {loading ? (
-          <View pointerEvents="none" style={styles.webLoading}>
-            <ActivityIndicator color={COLORS.gold} size="large" />
-          </View>
-        ) : null}
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
 function BottomNavigation({
   active,
   onChange,
@@ -1034,7 +1166,6 @@ function AppContent() {
   const [contentLoading, setContentLoading] = useState(true);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<{ source: string; title: string } | null>(null);
-  const [webRequest, setWebRequest] = useState<{ url: string; title: string } | null>(null);
 
   const reloadContent = async () => {
     setContentLoading(true);
@@ -1062,15 +1193,11 @@ function AppContent() {
 
   const openStreamInsideApp = (item: CatalogItem) => {
     const url = item.streamUrl;
-    if (!url || !isSafeHttpUrl(url) || isPlaceholderUrl(url)) {
-      Alert.alert('پخش آنلاین', 'لینک واقعی و معتبر پخش برای این عنوان ثبت نشده است.');
+    if (!url || !isSafeHttpUrl(url) || !isDirectMediaUrl(url) || isPlaceholderUrl(url)) {
+      Alert.alert('پخش آنلاین', 'لینک مستقیم و معتبر پخش برای این عنوان ثبت نشده است.');
       return;
     }
-    if (streamModeFor(item) === 'video') {
-      setVideoRequest({ source: url, title: item.nameFa });
-    } else {
-      setWebRequest({ url, title: `پخش ${item.nameFa}` });
-    }
+    setVideoRequest({ source: url, title: item.nameFa });
   };
 
   const startDownloadInsideApp = async (item: CatalogItem, file: DownloadFile) => {
@@ -1082,12 +1209,12 @@ function AppContent() {
     const fileMode = downloadModeFor(file);
 
     if (fileMode === 'play') {
-      setVideoRequest({ source: file.url, title: `${item.nameFa} — ${file.quality}` });
+      setVideoRequest({ source: file.url, title: `${item.nameFa} — ${cleanQualityLabel(file.quality)}` });
       return;
     }
 
-    if (fileMode === 'web') {
-      setWebRequest({ url: file.url, title: `${item.nameFa} — ${file.quality}` });
+    if (!/\.mp4(?:$|[?#])/i.test(file.url)) {
+      Alert.alert('دریافت فایل', 'برای این کیفیت لینک مستقیم MP4 ثبت نشده است.');
       return;
     }
 
@@ -1107,7 +1234,7 @@ function AppContent() {
       itemId: item.id,
       title: item.nameFa,
       subtitle: item.name,
-      quality: file.quality,
+      quality: cleanQualityLabel(file.quality),
       sourceUrl: file.url,
       progress: 0,
       status: 'downloading',
@@ -1122,7 +1249,7 @@ function AppContent() {
       const localUri = await downloadToApp({
         id: recordId,
         url: file.url,
-        fileName: `${item.name}-${file.quality}`,
+        fileName: `${item.name}-${cleanQualityLabel(file.quality)}`,
         onProgress: (progress) => {
           setDownloads((current) => current.map((record) =>
             record.id === recordId ? { ...record, progress } : record,
@@ -1229,13 +1356,6 @@ function AppContent() {
           source={videoRequest.source}
           title={videoRequest.title}
           onClose={() => setVideoRequest(null)}
-        />
-      ) : null}
-      {webRequest ? (
-        <InAppWebModal
-          url={webRequest.url}
-          title={webRequest.title}
-          onClose={() => setWebRequest(null)}
         />
       ) : null}
     </View>
@@ -1372,6 +1492,8 @@ const styles = StyleSheet.create({
   posterGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 65 },
   posterAccess: { position: 'absolute', top: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.9)' },
   posterAccessText: { color: '#fff', fontSize: 8, fontWeight: '900' },
+  posterEpisodeBadge: { position: 'absolute', bottom: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
+  posterEpisodeText: { color: COLORS.text, fontSize: 8, fontWeight: '900' },
   posterRating: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.82)' },
   posterRatingText: { color: COLORS.text, fontSize: 9, fontWeight: '800' },
   posterName: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '800', marginTop: 9, width: '100%' },
@@ -1380,8 +1502,8 @@ const styles = StyleSheet.create({
   simpleHeaderTitle: { ...rtlText, color: COLORS.text, fontSize: 19, fontWeight: '900' },
   searchBox: { height: 52, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, paddingHorizontal: 15, borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   searchInput: { flex: 1, color: COLORS.text, fontSize: 13, writingDirection: 'rtl' },
-  searchFilters: { flexDirection: 'row-reverse', gap: 8, marginTop: 13 },
-  filterChip: { paddingHorizontal: 18, paddingVertical: 9, borderRadius: 10, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  searchFilters: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginTop: 13 },
+  filterChip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   filterChipActive: { backgroundColor: 'rgba(222,35,66,0.13)', borderColor: 'rgba(222,35,66,0.45)' },
   filterChipText: { color: COLORS.muted, fontSize: 10, fontWeight: '800' },
   filterChipTextActive: { color: COLORS.text },
@@ -1425,7 +1547,8 @@ const styles = StyleSheet.create({
   downloadGroupBadge: { minWidth: 38, height: 36, paddingHorizontal: 7, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(216,180,90,0.4)', backgroundColor: 'rgba(216,180,90,0.08)' },
   downloadGroupBadgeText: { color: COLORS.gold, fontSize: 9, fontWeight: '900' },
   qualityList: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingHorizontal: 12 },
-  qualityRow: { minHeight: 67, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.border },
+  qualityRow: { minHeight: 67, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.border },
+  qualityInfo: { flex: 1, alignItems: 'flex-end' },
   qualityName: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900' },
   qualityMeta: { ...rtlText, color: COLORS.muted, fontSize: 8, marginTop: 4 },
   downloadButton: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: COLORS.blue },
@@ -1434,6 +1557,15 @@ const styles = StyleSheet.create({
   downloadEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9 },
   seriesEpisodes: { gap: 18 },
   seasonBlock: { gap: 7 },
+  episodeGroup: { borderRadius: 15, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.border, backgroundColor: '#0D1015' },
+  episodeGroupOpen: { borderColor: 'rgba(216,180,90,0.45)' },
+  episodeGroupHead: { minHeight: 72, paddingHorizontal: 12, flexDirection: 'row-reverse', alignItems: 'center', gap: 10 },
+  episodeGroupText: { flex: 1, alignItems: 'flex-end' },
+  episodeGroupTitle: { ...rtlText, color: COLORS.text, fontSize: 13, fontWeight: '900' },
+  episodeGroupSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8, marginTop: 5, maxWidth: '100%' },
+  episodeNumberBadge: { minWidth: 42, height: 36, paddingHorizontal: 7, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.12)', borderWidth: 1, borderColor: 'rgba(222,35,66,0.35)' },
+  episodeNumberBadgeText: { color: COLORS.red, fontSize: 9, fontWeight: '900' },
+  episodeLanguageList: { paddingHorizontal: 9, paddingBottom: 9, borderTopWidth: 1, borderTopColor: COLORS.border },
   seasonTitleRow: { minHeight: 38, paddingHorizontal: 4, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   seasonTitle: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900' },
   seasonCount: { color: COLORS.gold, fontSize: 9, fontWeight: '800' },

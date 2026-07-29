@@ -1,13 +1,16 @@
 export type ContentType = 'movie' | 'series';
 
+export type MediaLanguage = 'dubbed' | 'subtitled';
+
 export type DownloadFile = {
   id: string;
   quality: string;
   label?: string;
   size?: string;
   url: string;
-  /** download: ذخیره مستقیم، play: پخش داخلی، web: مرورگر داخلی */
-  mode?: 'download' | 'play' | 'web';
+  language?: MediaLanguage;
+  /** download: ذخیره مستقیم MP4، play: پخش مستقیم MP4 یا M3U8 */
+  mode?: 'download' | 'play';
 };
 
 export type DownloadSection = {
@@ -16,6 +19,7 @@ export type DownloadSection = {
   subtitle?: string;
   badge?: string;
   files: DownloadFile[];
+  language?: MediaLanguage;
   sourceEpisodeId?: string;
   seasonNumber?: number;
   episodeNumber?: number;
@@ -45,9 +49,10 @@ export type CatalogItem = {
   rate?: number;
   access: 'free' | 'paid' | 'operator';
   streamUrl?: string;
-  /** video: پلیر داخلی، web: صفحه پخش در مرورگر داخلی */
-  streamMode?: 'video' | 'web';
+  /** فقط پخش مستقیم داخل پلیر برنامه */
+  streamMode?: 'video';
   downloads?: DownloadSection[];
+  availableLanguages?: MediaLanguage[];
   episodeCount?: number;
   seasonCount?: number;
   latestEpisode?: LatestEpisode | null;

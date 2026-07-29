@@ -7,6 +7,7 @@ import {
   DownloadFile,
   DownloadSection,
   LatestEpisode,
+  MediaLanguage,
   ScheduleEntry,
 } from './types';
 
@@ -31,6 +32,8 @@ const DAY_IDS: DayId[] = [
   'thursday',
   'friday',
 ];
+
+const LANGUAGE_ORDER: MediaLanguage[] = ['dubbed', 'subtitled'];
 
 const asString = (value: unknown, fallback = '') =>
   typeof value === 'string' || typeof value === 'number'
@@ -70,32 +73,107 @@ const newestFirst = (items: CatalogItem[]) =>
     })
     .map(({ item }) => item);
 
-const normalizeDownloadFile = (value: unknown, index: number): DownloadFile | null => {
+const isMp4Url = (url: string) => /\.mp4(?:$|[?#])/i.test(url);
+const isPlayableUrl = (url: string) => /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
+
+const detectMediaLanguage = (...values: unknown[]): MediaLanguage | null => {
+  const text = values.map((value) => asString(value)).filter(Boolean).join(' ');
+  if (!text) return null;
+
+  if (
+    /زیر\s*نویس|subtitle|subbed|soft\s*sub|hard\s*sub|\bsub\b|\.vtt\b|\.srt\b/i.test(text)
+  ) {
+    return 'subtitled';
+  }
+
+  if (
+    /دوبله|dubbed|\bdub\b|persian\s*audio|farsi\s*audio|دو\s*زبانه|dual\s*audio|فارسی|persian|farsi/i.test(text)
+  ) {
+    return 'dubbed';
+  }
+
+  return null;
+};
+
+const languageTitle = (language: MediaLanguage) =>
+  language === 'dubbed' ? 'دوبله فارسی' : 'زیرنویس فارسی';
+
+const qualityRank = (file: DownloadFile) => {
+  const text = `${file.quality} ${file.label || ''}`;
+  const match = text.match(/(2160|1440|1080|720|480|360)/i);
+  let rank = match ? Number(match[1]) : 0;
+
+  if (/hq\s*1080/i.test(text)) rank = 1180;
+  if (/blu[\s._-]*ray|bluray/i.test(text)) rank += 100000;
+  if (/remux/i.test(text)) rank += 110000;
+
+  return rank;
+};
+
+const sortFiles = (files: DownloadFile[]) =>
+  [...files].sort((a, b) => {
+    const languageDifference =
+      LANGUAGE_ORDER.indexOf(a.language || 'subtitled') -
+      LANGUAGE_ORDER.indexOf(b.language || 'subtitled');
+    if (languageDifference) return languageDifference;
+
+    const qualityDifference = qualityRank(a) - qualityRank(b);
+    if (qualityDifference) return qualityDifference;
+
+    return a.quality.localeCompare(b.quality, 'fa');
+  });
+
+const uniqueFiles = (files: DownloadFile[]) => {
+  const seen = new Set<string>();
+  return files.filter((file) => {
+    const key = `${file.mode || 'download'}:${file.url}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const normalizeDownloadFile = (
+  value: unknown,
+  index: number,
+  sectionContext: string,
+): DownloadFile | null => {
   if (!value || typeof value !== 'object') return null;
   const file = value as Record<string, unknown>;
   const url = asString(file.url ?? file.link);
   if (!/^https?:\/\//i.test(url)) return null;
 
-  const mode = file.mode === 'play' || file.mode === 'web' || file.mode === 'download'
-    ? file.mode
-    : undefined;
+  const requestedMode = asString(file.mode).toLowerCase();
+  const mode: 'download' | 'play' = requestedMode === 'play' ? 'play' : 'download';
+
+  if (mode === 'play' ? !isPlayableUrl(url) : !isMp4Url(url)) return null;
+
+  const quality = asString(file.quality, asString(file.label, 'کیفیت اصلی'));
+  const label = asString(file.label);
+  const language = detectMediaLanguage(sectionContext, quality, label, url);
 
   return {
     id: asString(file.id, `file-${index}`),
-    quality: asString(file.quality, asString(file.label, 'کیفیت اصلی')),
-    ...(asString(file.label) ? { label: asString(file.label) } : {}),
+    quality,
+    ...(label ? { label } : {}),
     ...(asString(file.size) ? { size: asString(file.size) } : {}),
     url,
-    ...(mode ? { mode } : {}),
+    ...(language ? { language } : {}),
+    mode,
   };
 };
 
 const normalizeDownloadSection = (value: unknown, index: number): DownloadSection | null => {
   if (!value || typeof value !== 'object') return null;
   const section = value as Record<string, unknown>;
+  const rawTitle = asString(section.title);
+  const rawSubtitle = asString(section.subtitle);
+  const rawBadge = asString(section.badge);
+  const sectionContext = [rawTitle, rawSubtitle, rawBadge].filter(Boolean).join(' ');
+
   const files = Array.isArray(section.files)
     ? section.files
-        .map((file, fileIndex) => normalizeDownloadFile(file, fileIndex))
+        .map((file, fileIndex) => normalizeDownloadFile(file, fileIndex, sectionContext))
         .filter((file): file is DownloadFile => Boolean(file))
     : [];
 
@@ -103,21 +181,107 @@ const normalizeDownloadSection = (value: unknown, index: number): DownloadSectio
 
   const seasonNumber = asNumber(section.seasonNumber ?? section.season_number, 0);
   const episodeNumber = asNumber(section.episodeNumber ?? section.episode_number, 0);
+  const language = detectMediaLanguage(sectionContext);
 
   return {
     id: asString(section.id, `section-${index}`),
-    title: asString(
-      section.title,
-      episodeNumber > 0 ? `فصل ${seasonNumber || 1} • قسمت ${episodeNumber}` : 'لینک‌های دریافت',
-    ),
-    ...(asString(section.subtitle) ? { subtitle: asString(section.subtitle) } : {}),
-    ...(asString(section.badge) ? { badge: asString(section.badge) } : {}),
+    title: rawTitle ||
+      (episodeNumber > 0
+        ? `فصل ${seasonNumber || 1} • قسمت ${episodeNumber}`
+        : 'لینک‌های دریافت'),
+    ...(rawSubtitle ? { subtitle: rawSubtitle } : {}),
+    ...(rawBadge ? { badge: rawBadge } : {}),
     files,
-    ...(asString(section.sourceEpisodeId) ? { sourceEpisodeId: asString(section.sourceEpisodeId) } : {}),
+    ...(language ? { language } : {}),
+    ...(asString(section.sourceEpisodeId)
+      ? { sourceEpisodeId: asString(section.sourceEpisodeId) }
+      : {}),
     ...(seasonNumber > 0 ? { seasonNumber } : {}),
     ...(episodeNumber > 0 ? { episodeNumber } : {}),
-    ...(asString(section.sourceUpdatedAt) ? { sourceUpdatedAt: asString(section.sourceUpdatedAt) } : {}),
+    ...(asString(section.sourceUpdatedAt)
+      ? { sourceUpdatedAt: asString(section.sourceUpdatedAt) }
+      : {}),
   };
+};
+
+const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[] => {
+  const rawSections = Array.isArray(value)
+    ? value
+        .map((section, index) => normalizeDownloadSection(section, index))
+        .filter((section): section is DownloadSection => Boolean(section))
+    : [];
+
+  if (!rawSections.length) return [];
+
+  const knownLanguages = new Set<MediaLanguage>();
+  for (const section of rawSections) {
+    if (section.language) knownLanguages.add(section.language);
+    for (const file of section.files) {
+      if (file.language) knownLanguages.add(file.language);
+    }
+  }
+
+  const onlyKnownLanguage = knownLanguages.size === 1
+    ? [...knownLanguages][0]
+    : null;
+
+  const inferredSections = rawSections.map((section) => {
+    const languagesInsideSection = new Set(
+      section.files
+        .map((file) => file.language)
+        .filter((language): language is MediaLanguage => Boolean(language)),
+    );
+    const singleLanguageInsideSection = languagesInsideSection.size === 1
+      ? [...languagesInsideSection][0]
+      : null;
+
+    const fallbackLanguage =
+      section.language ||
+      singleLanguageInsideSection ||
+      onlyKnownLanguage ||
+      (iranian ? 'dubbed' : 'subtitled');
+
+    return {
+      ...section,
+      files: sortFiles(
+        uniqueFiles(
+          section.files.map((file) => ({
+            ...file,
+            language: file.language || fallbackLanguage,
+          })),
+        ),
+      ),
+    };
+  });
+
+  const episodeSections = inferredSections
+    .filter((section) => (section.episodeNumber || 0) > 0)
+    .map((section) => ({
+      ...section,
+      title: `فصل ${section.seasonNumber || 1} • قسمت ${section.episodeNumber || 0}`,
+    }));
+
+  const standaloneFiles = inferredSections
+    .filter((section) => (section.episodeNumber || 0) === 0)
+    .flatMap((section) => section.files);
+
+  const languageSections = LANGUAGE_ORDER.flatMap((language) => {
+    const files = sortFiles(
+      uniqueFiles(standaloneFiles.filter((file) => file.language === language)),
+    );
+    if (!files.length) return [];
+
+    return [{
+      id: `language-${language}`,
+      title: languageTitle(language),
+      subtitle: `${files.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`,
+      badge: language === 'dubbed' ? 'دوبله' : 'زیرنویس',
+      language,
+      files,
+    } satisfies DownloadSection];
+  });
+
+  return [...episodeSections, ...languageSections];
 };
 
 const compareEpisodeSections = (a: DownloadSection, b: DownloadSection) => {
@@ -169,15 +333,11 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const name = asString(item.name ?? item.nameFa ?? item.name_fa, nameFa);
   const poster = asString(item.poster);
   const backdrop = asString(item.backdrop, poster);
+  const iranian = asBoolean(item.ir);
 
   if (!id || !type || !nameFa || !poster) return null;
 
-  const downloads = Array.isArray(item.downloads)
-    ? item.downloads
-        .map((section, index) => normalizeDownloadSection(section, index))
-        .filter((section): section is DownloadSection => Boolean(section))
-    : [];
-
+  const downloads = normalizeDownloads(item.downloads, iranian);
   const episodeSections = downloads.filter((section) => (section.episodeNumber || 0) > 0);
   const seasonNumbers = new Set(
     episodeSections.map((section) => section.seasonNumber || 1),
@@ -186,15 +346,19 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const rawAccess = asString(item.access);
   const access = rawAccess === 'paid' || rawAccess === 'operator' ? rawAccess : 'free';
   const rate = asNumber(item.rate, Number.NaN);
-  const streamMode = item.streamMode === 'web' || item.streamMode === 'video'
-    ? item.streamMode
-    : undefined;
+  const rawStreamUrl = asString(item.streamUrl);
+  const streamUrl = rawStreamUrl && isPlayableUrl(rawStreamUrl) ? rawStreamUrl : '';
+  const availableLanguages = LANGUAGE_ORDER.filter((language) =>
+    downloads.some((section) =>
+      section.files.some((file) => file.mode !== 'play' && file.language === language),
+    ),
+  );
 
   return {
     id,
     slug: asString(item.slug, `${type}-${id}`),
     type,
-    ir: asBoolean(item.ir),
+    ir: iranian,
     year: asNumber(item.year, new Date().getUTCFullYear()),
     nameFa,
     name,
@@ -205,9 +369,9 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     genres: stringArray(item.genres),
     ...(Number.isFinite(rate) ? { rate } : {}),
     access,
-    ...(asString(item.streamUrl) ? { streamUrl: asString(item.streamUrl) } : {}),
-    ...(streamMode ? { streamMode } : {}),
+    ...(streamUrl ? { streamUrl, streamMode: 'video' as const } : {}),
     ...(downloads.length ? { downloads } : {}),
+    ...(availableLanguages.length ? { availableLanguages } : {}),
     ...(type === 'series'
       ? {
           episodeCount: asNumber(item.episodeCount, episodeSections.length),
@@ -279,12 +443,22 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
   };
 };
 
+const normalizedLocalPayload = (): CatalogPayload => {
+  const items = LOCAL_PAYLOAD.items
+    .map((item) => normalizeCatalogItem(item))
+    .filter((item): item is CatalogItem => Boolean(item));
+
+  return {
+    ...LOCAL_PAYLOAD,
+    items: newestFirst(items),
+  };
+};
+
 export async function loadContent(): Promise<LoadedContent> {
   const remoteUrl = REMOTE_CONTENT_URL.trim();
   if (!remoteUrl) {
     return {
-      ...LOCAL_PAYLOAD,
-      items: newestFirst(LOCAL_PAYLOAD.items),
+      ...normalizedLocalPayload(),
       source: 'local',
     };
   }
@@ -302,8 +476,7 @@ export async function loadContent(): Promise<LoadedContent> {
     return { ...parsed, source: 'remote' };
   } catch {
     return {
-      ...LOCAL_PAYLOAD,
-      items: newestFirst(LOCAL_PAYLOAD.items),
+      ...normalizedLocalPayload(),
       source: 'local',
     };
   }
