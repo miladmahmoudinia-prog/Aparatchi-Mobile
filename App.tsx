@@ -28,6 +28,7 @@ import {
   initialWindowMetrics,
   SafeAreaProvider,
   SafeAreaView,
+  useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
@@ -3101,6 +3102,7 @@ function PersonProfileModal({
   );
 }
 
+
 function VideoPlayerModal({
   request,
   onClose,
@@ -3127,7 +3129,15 @@ function VideoPlayerModal({
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const landscape = viewportWidth > viewportHeight;
+  const safeTop = landscape ? Math.max(insets.top, 4) : Math.max(insets.top, 8);
+  const safeBottom = landscape ? Math.max(insets.bottom, 6) : Math.max(insets.bottom, 10);
+  const bottomPanelBottom = safeBottom + 8;
+  const menuMaxHeight = landscape
+    ? Math.max(220, viewportHeight - safeTop - safeBottom - 28)
+    : Math.max(280, Math.min(viewportHeight * 0.68, viewportHeight - safeTop - safeBottom - 34));
+  const menuScrollHeight = Math.max(130, menuMaxHeight - 112);
   const progressWidthRef = useRef(1);
   const latestTimeRef = useRef(Math.max(0, Number(request.resumeAt || 0)));
   const latestDurationRef = useRef(0);
@@ -3283,7 +3293,10 @@ function VideoPlayerModal({
 
   const seekBy = (seconds: number) => {
     const maximum = Math.max(0, Number(player.duration || duration || 0));
-    const next = Math.max(0, Math.min(maximum || Number.MAX_SAFE_INTEGER, Number(player.currentTime || 0) + seconds));
+    const next = Math.max(
+      0,
+      Math.min(maximum || Number.MAX_SAFE_INTEGER, Number(player.currentTime || 0) + seconds),
+    );
     player.currentTime = next;
     setCurrentTime(next);
     revealControls();
@@ -3315,14 +3328,43 @@ function VideoPlayerModal({
 
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
 
+  const menuCardStyle = landscape
+    ? [
+        styles.playerMenuCard,
+        styles.playerMenuCardLandscape,
+        { maxHeight: menuMaxHeight },
+      ]
+    : [
+        styles.playerMenuCard,
+        styles.playerMenuBottomSheet,
+        {
+          bottom: safeBottom + 10,
+          maxHeight: menuMaxHeight,
+        },
+      ];
+
   return (
-    <Modal visible animationType="fade" onRequestClose={handleBack} supportedOrientations={['portrait', 'landscape']}>
-      <SafeAreaView style={styles.mediaModal} edges={['top', 'right', 'bottom', 'left']}>
-        <StatusBar style="light" hidden={landscape} />
+    <Modal
+      visible
+      animationType="fade"
+      presentationStyle="fullScreen"
+      onRequestClose={handleBack}
+      supportedOrientations={['portrait', 'landscape']}
+      statusBarTranslucent={false}
+      navigationBarTranslucent={false}
+    >
+      <View style={styles.mediaModal}>
+        <StatusBar style="light" hidden={landscape} backgroundColor="#000000" />
         <View style={styles.videoStage}>
           {request.artwork && !firstFrameReady ? (
-            <Image source={{ uri: request.artwork }} style={StyleSheet.absoluteFill} contentFit="contain" cachePolicy="memory-disk" />
+            <Image
+              source={{ uri: request.artwork }}
+              style={StyleSheet.absoluteFill}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+            />
           ) : null}
+
           <VideoView
             key={`${activeSource.id}-${videoContentFit}`}
             player={player}
@@ -3361,85 +3403,116 @@ function VideoPlayerModal({
 
           {controlsVisible && !locked ? (
             <View style={styles.playerControlsLayer} pointerEvents="box-none">
-              <View style={[styles.playerOverlayHeader, landscape && styles.playerOverlayHeaderLandscape]}>
+              <View
+                style={[
+                  styles.playerOverlayHeader,
+                  landscape && styles.playerOverlayHeaderLandscape,
+                  { top: safeTop },
+                ]}
+                pointerEvents="box-none"
+              >
                 <Pressable onPress={handleBack} style={styles.mediaCloseButton}>
                   <Ionicons name="close" color="#fff" size={23} />
                 </Pressable>
                 <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
               </View>
 
-              <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
-                <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton}>
-                  <Ionicons name="play-back" color="#fff" size={25} />
-                  <Text style={styles.playerSkipText}>۱۰</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    if (isPlaying) player.pause(); else player.play();
-                    revealControls();
-                  }}
-                  style={styles.playerPrimaryButton}
-                >
-                  <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={31} />
-                </Pressable>
-                <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton}>
-                  <Ionicons name="play-forward" color="#fff" size={25} />
-                  <Text style={styles.playerSkipText}>۱۰</Text>
-                </Pressable>
-              </View>
+              <View style={styles.playerCenterZone} pointerEvents="box-none">
+                <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
+                  <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton}>
+                    <Ionicons name="play-back" color="#fff" size={27} />
+                    <Text style={styles.playerSkipText}>۱۰</Text>
+                  </Pressable>
 
-              <View style={[styles.playerTimelineWrap, landscape && styles.playerTimelineWrapLandscape]}>
-                <Pressable
-                  style={styles.playerTimelineTrack}
-                  onLayout={(event) => { progressWidthRef.current = event.nativeEvent.layout.width || 1; }}
-                  onPress={(event) => seekFromProgress(event.nativeEvent.locationX)}
-                >
-                  <View style={[styles.playerTimelineFill, { width: `${progress * 100}%` }]} />
-                  <View style={[styles.playerTimelineThumb, { left: `${progress * 100}%` }]} />
-                </Pressable>
-                <View style={styles.playerTimeRow}>
-                  <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
-                  <Text style={styles.playerVersionText} numberOfLines={1}>
-                    {request.language ? languageTitle(request.language) : 'پخش آنلاین'} • {activeSource.quality}
-                  </Text>
-                  <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
+                  <Pressable
+                    onPress={() => {
+                      if (isPlaying) player.pause(); else player.play();
+                      revealControls();
+                    }}
+                    style={styles.playerPrimaryButton}
+                  >
+                    <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={32} />
+                  </Pressable>
+
+                  <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton}>
+                    <Ionicons name="play-forward" color="#fff" size={27} />
+                    <Text style={styles.playerSkipText}>۱۰</Text>
+                  </Pressable>
                 </View>
               </View>
 
-              <View style={[styles.playerBottomTools, landscape && styles.playerBottomToolsLandscape]}>
-                <Pressable onPress={toggleOrientation} style={styles.playerToolButton}>
-                  <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={21} />
-                </Pressable>
-                {landscape ? (
+              <View
+                style={[
+                  styles.playerBottomPanel,
+                  landscape && styles.playerBottomPanelLandscape,
+                  { bottom: bottomPanelBottom },
+                ]}
+                pointerEvents="box-none"
+              >
+                <View style={styles.playerTimelineWrap}>
+                  <Pressable
+                    style={styles.playerTimelineTrack}
+                    onLayout={(event) => {
+                      progressWidthRef.current = event.nativeEvent.layout.width || 1;
+                    }}
+                    onPress={(event) => seekFromProgress(event.nativeEvent.locationX)}
+                  >
+                    <View style={styles.playerTimelineRail} />
+                    <View style={[styles.playerTimelineFill, { width: `${progress * 100}%` }]} />
+                    <View style={[styles.playerTimelineThumb, { left: `${progress * 100}%` }]} />
+                  </Pressable>
+                  <View style={styles.playerTimeRow}>
+                    <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
+                    <Text style={styles.playerVersionText} numberOfLines={1}>
+                      {request.language ? languageTitle(request.language) : 'پخش آنلاین'} • {activeSource.quality}
+                    </Text>
+                    <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.playerBottomTools}>
+                  <Pressable onPress={toggleOrientation} style={styles.playerToolButton}>
+                    <Ionicons
+                      name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'}
+                      color="#fff"
+                      size={21}
+                    />
+                    <Text style={styles.playerToolText}>{landscape ? 'حالت عمودی' : 'تمام‌صفحه'}</Text>
+                  </Pressable>
+
                   <Pressable
                     onPress={() => {
-                      setQualityMenuOpen(false);
-                      setDisplayMenuOpen(true);
+                      setDisplayMenuOpen(false);
+                      setQualityMenuOpen(true);
                       revealControls();
                     }}
                     style={styles.playerToolButton}
                   >
-                    <Ionicons name="scan-outline" color="#fff" size={20} />
-                    <Text style={styles.playerToolText}>{displayModeLabel}</Text>
+                    <Ionicons name="settings-outline" color="#fff" size={20} />
+                    <Text style={styles.playerToolText}>{activeSource.quality}</Text>
                   </Pressable>
-                ) : null}
-                <Pressable
-                  onPress={() => {
-                    setDisplayMenuOpen(false);
-                    setQualityMenuOpen(true);
-                    revealControls();
-                  }}
-                  style={styles.playerToolButton}
-                >
-                  <Ionicons name="settings-outline" color="#fff" size={20} />
-                  <Text style={styles.playerToolText}>{activeSource.quality}</Text>
-                </Pressable>
-                {landscape ? (
-                  <Pressable onPress={lockPlayer} style={styles.playerToolButton}>
-                    <Ionicons name="lock-closed-outline" color="#fff" size={20} />
-                    <Text style={styles.playerToolText}>قفل</Text>
-                  </Pressable>
-                ) : null}
+
+                  {landscape ? (
+                    <Pressable
+                      onPress={() => {
+                        setQualityMenuOpen(false);
+                        setDisplayMenuOpen(true);
+                        revealControls();
+                      }}
+                      style={styles.playerToolButton}
+                    >
+                      <Ionicons name="scan-outline" color="#fff" size={20} />
+                      <Text style={styles.playerToolText}>{displayModeLabel}</Text>
+                    </Pressable>
+                  ) : null}
+
+                  {landscape ? (
+                    <Pressable onPress={lockPlayer} style={styles.playerToolButton}>
+                      <Ionicons name="lock-closed-outline" color="#fff" size={20} />
+                      <Text style={styles.playerToolText}>قفل</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               </View>
             </View>
           ) : null}
@@ -3453,15 +3526,26 @@ function VideoPlayerModal({
 
           {qualityMenuOpen && !locked ? (
             <View style={styles.playerQualityOverlay}>
-              <Pressable style={StyleSheet.absoluteFill} onPress={() => { setQualityMenuOpen(false); revealControls(); }} />
-              <View style={[styles.playerQualityCard, landscape && styles.playerMenuCardLandscape]}>
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => {
+                  setQualityMenuOpen(false);
+                  revealControls();
+                }}
+              />
+              <View style={menuCardStyle}>
                 <View style={styles.playerQualityHeader}>
+                  {!landscape ? <View style={styles.playerMenuGrabber} /> : null}
                   <Text style={styles.playerQualityTitle}>تنظیمات پخش</Text>
                   <Text style={styles.playerQualityDescription}>
                     {request.language ? languageTitle(request.language) : 'پخش آنلاین'} • کیفیت فعلی {activeSource.quality}
                   </Text>
                 </View>
-                <ScrollView style={styles.playerMenuScroll} contentContainerStyle={styles.playerMenuScrollContent} showsVerticalScrollIndicator={false}>
+                <ScrollView
+                  style={[styles.playerMenuScroll, { maxHeight: menuScrollHeight }]}
+                  contentContainerStyle={styles.playerMenuScrollContent}
+                  showsVerticalScrollIndicator
+                >
                   {orderedSources.map((source) => {
                     const selected = source.id === activeSource.id;
                     return (
@@ -3488,11 +3572,19 @@ function VideoPlayerModal({
 
           {displayMenuOpen && landscape && !locked ? (
             <View style={styles.playerQualityOverlay}>
-              <Pressable style={StyleSheet.absoluteFill} onPress={() => { setDisplayMenuOpen(false); revealControls(); }} />
-              <View style={[styles.playerDisplayCard, styles.playerMenuCardLandscape]}>
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => {
+                  setDisplayMenuOpen(false);
+                  revealControls();
+                }}
+              />
+              <View style={menuCardStyle}>
                 <View style={styles.playerQualityHeader}>
                   <Text style={styles.playerQualityTitle}>اندازه تصویر</Text>
-                  <Text style={styles.playerQualityDescription}>این گزینه فقط در حالت افقی فعال است.</Text>
+                  <Text style={styles.playerQualityDescription}>
+                    حالت پیش‌فرض، نمایش کامل تصویر بدون برش است.
+                  </Text>
                 </View>
                 {([
                   { id: 'fit', title: 'نمایش کامل', icon: 'contract-outline' },
@@ -3520,10 +3612,11 @@ function VideoPlayerModal({
             </View>
           ) : null}
         </View>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
+
 
 function OperatorGateModal({
   request,
@@ -4978,9 +5071,10 @@ const styles = StyleSheet.create({
   playerQualityButtonText: { color: COLORS.text, fontSize: 9.5, fontWeight: '900' },
   qualitySwitchLoading: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.72)' },
   qualitySwitchLoadingText: { ...rtlText, color: COLORS.text, fontSize: 11, fontWeight: '800', marginTop: 12 },
-  playerQualityOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.56)', paddingHorizontal: 24 },
-  playerQualityCard: { width: '100%', maxWidth: 330, borderRadius: 18, padding: 14, backgroundColor: '#101319', borderWidth: 1, borderColor: COLORS.border },
-  playerDisplayCard: { width: '100%', maxWidth: 370, borderRadius: 18, padding: 14, backgroundColor: '#101319', borderWidth: 1, borderColor: COLORS.border },
+  playerQualityOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.64)', paddingHorizontal: 12 },
+  playerMenuCard: { width: '100%', maxWidth: 430, borderRadius: 20, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 14, backgroundColor: '#101319', borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
+  playerMenuBottomSheet: { position: 'absolute', left: 12, right: 12, maxWidth: undefined, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
+  playerMenuGrabber: { width: 42, height: 4, borderRadius: 3, alignSelf: 'center', marginBottom: 10, backgroundColor: 'rgba(255,255,255,0.22)' },
   playerDisplayOption: { minHeight: 76, paddingHorizontal: 12, paddingVertical: 10, marginTop: 7, borderRadius: 12, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 12, backgroundColor: '#0B0E13', borderWidth: 1, borderColor: COLORS.border },
   playerDisplayOptionText: { flex: 1, alignItems: 'flex-end' },
   playerDisplayOptionTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900' },
@@ -5139,31 +5233,33 @@ const styles = StyleSheet.create({
   storageTotals: { marginTop: 13, padding: 11, borderRadius: 11, alignItems: 'flex-end', gap: 5, backgroundColor: 'rgba(216,180,90,0.06)' },
   storageTotalText: { ...rtlText, color: COLORS.text, fontSize: 8.7, fontWeight: '800' },
   downloadLibraryBytes: { ...rtlText, color: COLORS.text, fontSize: 8.3, marginTop: 7, width: '100%' },
-  playerControlsLayer: { ...StyleSheet.absoluteFillObject, zIndex: 12, backgroundColor: 'rgba(0,0,0,0.18)' },
-  playerOverlayHeader: { position: 'absolute', top: 0, right: 0, left: 0, minHeight: 64, paddingHorizontal: 12, paddingTop: 8, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(5,7,10,0.82)', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.10)' },
-  playerOverlayHeaderLandscape: { minHeight: 54, paddingTop: 5, paddingHorizontal: 16 },
-  playerCenterControls: { position: 'absolute', left: 0, right: 0, top: '42%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 28 },
-  playerCenterControlsLandscape: { top: '38%' },
-  playerRoundButton: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
-  playerPrimaryButton: { width: 66, height: 66, borderRadius: 33, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
-  playerSkipText: { position: 'absolute', color: '#fff', fontSize: 7, fontWeight: '900' },
-  playerTimelineWrap: { position: 'absolute', left: 15, right: 15, bottom: 126 },
-  playerTimelineWrapLandscape: { left: 24, right: 24, bottom: 72 },
-  playerTimelineTrack: { width: '100%', height: 22, justifyContent: 'center' },
+  playerControlsLayer: { ...StyleSheet.absoluteFillObject, zIndex: 12, backgroundColor: 'rgba(0,0,0,0.14)' },
+  playerOverlayHeader: { position: 'absolute', right: 12, left: 12, minHeight: 52, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 9, borderRadius: 16, backgroundColor: 'rgba(5,7,10,0.80)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.11)' },
+  playerOverlayHeaderLandscape: { right: 16, left: 16, minHeight: 48 },
+  playerCenterZone: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  playerCenterControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 26 },
+  playerCenterControlsLandscape: { gap: 34 },
+  playerRoundButton: { width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.76)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
+  playerPrimaryButton: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  playerSkipText: { position: 'absolute', color: '#fff', fontSize: 8, fontWeight: '900' },
+  playerBottomPanel: { position: 'absolute', left: 12, right: 12, zIndex: 14, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10, borderRadius: 17, backgroundColor: 'rgba(5,7,10,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  playerBottomPanelLandscape: { left: 18, right: 18, paddingHorizontal: 14, paddingTop: 8, paddingBottom: 8 },
+  playerTimelineWrap: { width: '100%' },
+  playerTimelineTrack: { width: '100%', height: 24, justifyContent: 'center' },
+  playerTimelineRail: { position: 'absolute', left: 0, right: 0, height: 4, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.24)' },
   playerTimelineFill: { position: 'absolute', left: 0, height: 4, borderRadius: 3, backgroundColor: '#fff' },
-  playerTimelineThumb: { position: 'absolute', width: 13, height: 13, marginLeft: -6.5, borderRadius: 7, backgroundColor: '#fff' },
-  playerTimeRow: { marginTop: 3, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 9 },
+  playerTimelineThumb: { position: 'absolute', width: 14, height: 14, marginLeft: -7, borderRadius: 7, backgroundColor: '#fff' },
+  playerTimeRow: { marginTop: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 9 },
   playerTimeText: { color: '#fff', fontSize: 9.5, fontWeight: '800' },
   playerVersionText: { ...rtlText, minWidth: 0, flex: 1, color: 'rgba(255,255,255,0.88)', fontSize: 8.5, textAlign: 'center' },
-  playerBottomTools: { position: 'absolute', right: 14, left: 14, bottom: 62, zIndex: 12, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'flex-start', gap: 8 },
-  playerBottomToolsLandscape: { right: 24, left: 24, bottom: 18 },
-  playerToolButton: { minWidth: 45, minHeight: 42, paddingHorizontal: 10, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(8,10,14,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
+  playerBottomTools: { marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  playerToolButton: { minWidth: 72, minHeight: 42, paddingHorizontal: 10, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(8,10,14,0.92)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   playerToolText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
-  playerLockedButton: { position: 'absolute', left: 24, top: '45%', minHeight: 50, paddingHorizontal: 15, borderRadius: 16, zIndex: 30, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(5,7,10,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)' },
+  playerLockedButton: { position: 'absolute', left: 24, top: '45%', minHeight: 50, paddingHorizontal: 15, borderRadius: 16, zIndex: 40, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(5,7,10,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)' },
   playerLockedText: { ...rtlText, color: '#fff', fontSize: 9.5, fontWeight: '900' },
-  playerMenuCardLandscape: { maxWidth: 420, maxHeight: '82%', paddingVertical: 12 },
-  playerMenuScroll: { maxHeight: 320 },
-  playerMenuScrollContent: { paddingBottom: 4 },
+  playerMenuCardLandscape: { maxWidth: 460, paddingVertical: 12 },
+  playerMenuScroll: { width: '100%' },
+  playerMenuScrollContent: { paddingBottom: 6 },
   vpnOverlay: { flex: 1, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(3,5,8,0.97)' },
   vpnCard: { width: '100%', maxWidth: 420, padding: 24, borderRadius: 22, alignItems: 'center', backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
   vpnIconWrap: { width: 68, height: 68, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.28)' },
