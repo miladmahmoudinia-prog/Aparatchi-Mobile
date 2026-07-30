@@ -12,10 +12,14 @@ export async function checkVpnActive(retries = 0): Promise<boolean> {
   if (Platform.OS !== 'android') return false;
 
   const attempts = Math.max(1, retries + 1);
+  let latestState = false;
+
+  // Android can report the old VPN transport for a short moment after it is
+  // switched off. Sample more than once and trust the newest reading so the
+  // blocking screen can clear without restarting the app.
   for (let index = 0; index < attempts; index += 1) {
-    const active = await isNativeVpnActive();
-    if (active) return true;
-    if (index < attempts - 1) await delay(120);
+    latestState = await isNativeVpnActive();
+    if (index < attempts - 1) await delay(350);
   }
-  return false;
+  return latestState;
 }

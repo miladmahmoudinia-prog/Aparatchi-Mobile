@@ -3850,13 +3850,19 @@ function AppContent() {
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
   const vpnCheckSequenceRef = useRef(0);
+  const vpnActiveRef = useRef(false);
+
+  useEffect(() => {
+    vpnActiveRef.current = vpnActive;
+  }, [vpnActive]);
 
   const refreshVpnState = async (showProgress = false) => {
     const sequence = ++vpnCheckSequenceRef.current;
     if (showProgress) setVpnChecking(true);
     try {
-      // Action checks use one fast native lookup. Startup/retry gets two short retries.
-      const active = await checkVpnActive(showProgress ? 2 : 0);
+      // Playback actions use one fast lookup. Startup/manual retry samples long
+      // enough for Android to remove a VPN transport that was just switched off.
+      const active = await checkVpnActive(showProgress ? 4 : 0);
       if (sequence === vpnCheckSequenceRef.current) setVpnActive(active);
       return active;
     } finally {
@@ -3909,7 +3915,7 @@ function AppContent() {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void reloadContent(false);
-        void refreshVpnState();
+        void refreshVpnState(vpnActiveRef.current);
       }
     });
 
