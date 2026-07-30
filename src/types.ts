@@ -92,6 +92,7 @@ export type CatalogItem = {
   seasonCount?: number;
   latestEpisode?: LatestEpisode | null;
   updateLabel?: string;
+  meaningfulUpdatedAt?: string;
   categoryKeys?: string[];
   categoryLabels?: string[];
   contentKind?: string;

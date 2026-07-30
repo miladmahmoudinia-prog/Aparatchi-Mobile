@@ -131,11 +131,19 @@ const normalizePersonRole = (value: unknown, fallback: CatalogPerson['role'] | n
   return fallback;
 };
 
-const normalizePersonImage = (value: unknown) => {
-  const raw = asString(value);
-  if (!raw) return '';
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (raw.startsWith('/')) return `https://image.tmdb.org/t/p/w342${raw}`;
+const normalizePersonImage = (value: unknown, source: 'tmdb' | 'upera' = 'upera') => {
+  const raw = asString(value).trim();
+  if (!raw || /default|placeholder|no[-_ ]?image/i.test(raw)) return '';
+  if (/^https?:\/\//i.test(raw)) return raw.replace(/^http:\/\//i, 'https://');
+  if (/^\/\//.test(raw)) return `https:${raw}`;
+  if (raw.startsWith('/')) {
+    if (source === 'tmdb') return `https://image.tmdb.org/t/p/w342${raw}`;
+    if (/^\/(?:s3|uploads?|images?|storage|media)\//i.test(raw)) return `https://thumb.upera.tv${raw}`;
+    return `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
+  }
+  if (/\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(raw)) {
+    return `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
+  }
   return '';
 };
 
@@ -155,7 +163,12 @@ const personSourceEntries = (
     ...personSourceEntries(record.cast, 'actor'),
     ...personSourceEntries(record.actors, 'actor'),
     ...personSourceEntries(record.directors, 'director'),
+    ...personSourceEntries(record.director, 'director'),
+    ...personSourceEntries(record.casts, 'actor'),
+    ...personSourceEntries(record.persons, fallbackRole),
+    ...personSourceEntries(record.artists, fallbackRole),
     ...personSourceEntries(record.crew, fallbackRole),
+    ...personSourceEntries(record.credits, fallbackRole),
     ...personSourceEntries(record.data, fallbackRole),
     ...personSourceEntries(record.items, fallbackRole),
   ];
@@ -203,10 +216,13 @@ const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
     if (!id || seen.has(id)) return [];
     seen.add(id);
 
-    const image = normalizePersonImage(
-      person.image ?? person.profile ?? person.profile_path ?? person.photo ??
-      person.avatar ?? person.poster,
-    );
+    const image = person.profile_path
+      ? normalizePersonImage(person.profile_path, 'tmdb')
+      : normalizePersonImage(
+          person.image ?? person.image_url ?? person.imageUrl ?? person.profile ?? person.profile_image ??
+          person.profileImage ?? person.photo ?? person.photo_url ?? person.photoUrl ??
+          person.avatar ?? person.thumb ?? person.thumbnail ?? person.poster,
+        );
     const character = asString(
       person.character ?? person.characterName ?? person.character_name ??
       person.roleName ?? person.role_name ?? person.as,
@@ -277,19 +293,8 @@ const operatorAccessFromFiles = (files: DownloadFile[]): OperatorAccessKind | nu
 const detectMediaLanguage = (...values: unknown[]): MediaLanguage | null => {
   const text = values.map((value) => asString(value)).filter(Boolean).join(' ');
   if (!text) return null;
-
-  if (
-    /زیر\s*نویس|subtitle|subbed|soft\s*sub|hard\s*sub|\bsub\b|\.vtt\b|\.srt\b/i.test(text)
-  ) {
-    return 'subtitled';
-  }
-
-  if (
-    /دوبله|dubbed|\bdub\b|persian\s*audio|farsi\s*audio|دو\s*زبانه|dual\s*audio|فارسی|persian|farsi/i.test(text)
-  ) {
-    return 'dubbed';
-  }
-
+  if (/زیر\s*نویس|subtitle|subbed|soft\s*sub|hard\s*sub|\bsub\b|\.vtt\b|\.srt\b/i.test(text)) return 'subtitled';
+  if (/دوبله|dubbed|\bdub\b|persian\s*audio|farsi\s*audio|دو\s*زبانه|dual\s*audio/i.test(text)) return 'dubbed';
   return null;
 };
 
@@ -369,7 +374,13 @@ const normalizeDownloadFile = (
       : asString(file.label, 'کیفیت اصلی'),
   );
   const label = asString(file.label);
-  const language = detectMediaLanguage(sectionContext, quality, label, url);
+  const explicitLanguage = asString(file.language).toLowerCase();
+  const detectedLanguage = detectMediaLanguage(quality, label, url);
+  const language: MediaLanguage | null = detectedLanguage || (
+    explicitLanguage === 'dubbed' || explicitLanguage === 'subtitled'
+      ? explicitLanguage
+      : null
+  );
   const supportedOperators = stringArray(file.supportedOperators);
 
   return {
@@ -403,7 +414,13 @@ const normalizeDownloadSection = (value: unknown, index: number): DownloadSectio
 
   const seasonNumber = asNumber(section.seasonNumber ?? section.season_number, 0);
   const episodeNumber = asNumber(section.episodeNumber ?? section.episode_number, 0);
-  const language = detectMediaLanguage(sectionContext);
+  const explicitLanguage = asString(section.language).toLowerCase();
+  const detectedLanguage = detectMediaLanguage(sectionContext);
+  const language: MediaLanguage | null = detectedLanguage || (
+    explicitLanguage === 'dubbed' || explicitLanguage === 'subtitled'
+      ? explicitLanguage
+      : null
+  );
 
   return {
     id: asString(section.id, `section-${index}`),
@@ -428,100 +445,60 @@ const normalizeDownloadSection = (value: unknown, index: number): DownloadSectio
 
 const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[] => {
   const rawSections = Array.isArray(value)
-    ? value
-        .map((section, index) => normalizeDownloadSection(section, index))
-        .filter((section): section is DownloadSection => Boolean(section))
+    ? value.map((section, index) => normalizeDownloadSection(section, index)).filter((section): section is DownloadSection => Boolean(section))
     : [];
-
   if (!rawSections.length) return [];
 
-  const knownLanguages = new Set<MediaLanguage>();
-  for (const section of rawSections) {
-    if (section.language) knownLanguages.add(section.language);
-    for (const file of section.files) {
-      if (!isOperatorMode(file.mode) && file.language) knownLanguages.add(file.language);
-    }
-  }
+  const inferPairedLanguages = (files: DownloadFile[]) => {
+    const result = uniqueFiles(files).map((file) => ({ ...file }));
+    const groups = new Map<string, DownloadFile[]>();
+    result.filter((file) => !isOperatorMode(file.mode)).forEach((file) => {
+      const qualityKey = `${file.mode || 'download'}:${String(file.quality || '').toLowerCase().replace(/[^0-9a-z]+/g, '')}`;
+      groups.set(qualityKey, [...(groups.get(qualityKey) || []), file]);
+    });
+    groups.forEach((group) => {
+      if (group.length !== 2) return;
+      const known = group.find((file) => file.language);
+      const unknown = group.find((file) => !file.language);
+      if (known?.language && unknown) unknown.language = known.language === 'dubbed' ? 'subtitled' : 'dubbed';
+    });
+    return sortFiles(result);
+  };
 
-  const onlyKnownLanguage = knownLanguages.size === 1
-    ? [...knownLanguages][0]
-    : null;
-
-  const inferredSections = rawSections.map((section) => {
-    const languagesInsideSection = new Set(
-      section.files
-        .filter((file) => !isOperatorMode(file.mode))
-        .map((file) => file.language)
-        .filter((language): language is MediaLanguage => Boolean(language)),
-    );
-    const singleLanguageInsideSection = languagesInsideSection.size === 1
-      ? [...languagesInsideSection][0]
-      : null;
-
-    const fallbackLanguage =
-      section.language ||
-      singleLanguageInsideSection ||
-      onlyKnownLanguage ||
-      (iranian ? 'dubbed' : 'subtitled');
-
-    return {
-      ...section,
-      files: sortFiles(
-        uniqueFiles(
-          section.files.map((file) => isOperatorMode(file.mode)
-            ? file
-            : {
-                ...file,
-                language: file.language || fallbackLanguage,
-              }),
-        ),
-      ),
-    };
+  const normalizedSections = rawSections.map((section) => {
+    const direct = section.files.filter((file) => !isOperatorMode(file.mode));
+    const hasFileLanguage = direct.some((file) => Boolean(file.language));
+    const files = section.files.map((file) => {
+      let nextFile = file;
+      if (!isOperatorMode(file.mode) && !file.language && section.language && !hasFileLanguage) {
+        nextFile = { ...file, language: section.language };
+      }
+      if (iranian && nextFile.language === 'dubbed') {
+        const { language: _language, ...withoutLanguage } = nextFile;
+        return withoutLanguage;
+      }
+      return nextFile;
+    });
+    return { ...section, files: inferPairedLanguages(files) };
   });
 
-  const episodeSections = inferredSections
+  const episodeSections = normalizedSections
     .filter((section) => (section.episodeNumber || 0) > 0)
-    .map((section) => ({
-      ...section,
-      title: `فصل ${section.seasonNumber || 1} • قسمت ${section.episodeNumber || 0}`,
-    }));
+    .map((section) => ({ ...section, title: `فصل ${section.seasonNumber || 1} • قسمت ${section.episodeNumber || 0}` }));
 
-  const standaloneFiles = inferredSections
-    .filter((section) => (section.episodeNumber || 0) === 0)
-    .flatMap((section) => section.files);
-
-  const directStandaloneFiles = standaloneFiles.filter((file) => !isOperatorMode(file.mode));
-  const operatorStandaloneFiles = uniqueFiles(
-    standaloneFiles.filter((file) => isOperatorMode(file.mode)),
-  );
+  const standaloneFiles = normalizedSections.filter((section) => (section.episodeNumber || 0) === 0).flatMap((section) => section.files);
+  const directStandaloneFiles = inferPairedLanguages(standaloneFiles.filter((file) => !isOperatorMode(file.mode)));
+  const operatorStandaloneFiles = uniqueFiles(standaloneFiles.filter((file) => isOperatorMode(file.mode)));
 
   const languageSections = LANGUAGE_ORDER.flatMap((language) => {
-    const files = sortFiles(
-      uniqueFiles(directStandaloneFiles.filter((file) => file.language === language)),
-    );
+    const files = sortFiles(uniqueFiles(directStandaloneFiles.filter((file) => file.language === language)));
     if (!files.length) return [];
-
-    return [{
-      id: `language-${language}`,
-      title: languageTitle(language),
-      subtitle: `${files.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`,
-      badge: language === 'dubbed' ? 'دوبله' : 'زیرنویس',
-      language,
-      files,
-    } satisfies DownloadSection];
+    return [{ id: `language-${language}`, title: languageTitle(language), subtitle: `${files.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`, badge: language === 'dubbed' ? 'دوبله' : 'زیرنویس', language, files } satisfies DownloadSection];
   });
-
-  const operatorSections = operatorStandaloneFiles.length
-    ? [{
-        id: 'operator-mobile-access',
-        title: 'ویژه اینترنت همراه',
-        subtitle: 'تماشا یا دریافت با اینترنت سیم‌کارت',
-        badge: 'همراه',
-        files: operatorStandaloneFiles,
-      } satisfies DownloadSection]
-    : [];
-
-  return [...episodeSections, ...languageSections, ...operatorSections];
+  const plainFiles = sortFiles(uniqueFiles(directStandaloneFiles.filter((file) => !file.language)));
+  const plainSections = plainFiles.length ? [{ id: 'language-plain', title: iranian ? 'نسخه فارسی' : 'نسخه اصلی', subtitle: `${plainFiles.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`, files: plainFiles } satisfies DownloadSection] : [];
+  const operatorSections = operatorStandaloneFiles.length ? [{ id: 'operator-mobile-access', title: 'ویژه اینترنت همراه', subtitle: 'تماشا یا دریافت با اینترنت سیم‌کارت', badge: 'همراه', files: operatorStandaloneFiles } satisfies DownloadSection] : [];
+  return [...episodeSections, ...languageSections, ...plainSections, ...operatorSections];
 };
 
 const compareEpisodeSections = (a: DownloadSection, b: DownloadSection) => {
@@ -573,8 +550,8 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const name = asString(item.name ?? item.nameFa ?? item.name_fa, nameFa);
   const poster = asString(item.poster);
   const backdrop = asString(item.backdrop, poster);
-  const iranian = asBoolean(item.ir);
   const countryMetadata = normalizeCountryMetadata(item);
+  const iranian = asBoolean(item.ir) || countryMetadata.countryCodes.includes('IR');
   if (iranian && !countryMetadata.countryCodes.includes('IR')) {
     countryMetadata.countryCodes.unshift('IR');
   }
@@ -686,6 +663,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
         }
       : {}),
     ...(asString(item.updateLabel) ? { updateLabel: asString(item.updateLabel) } : {}),
+    ...(asString(item.meaningfulUpdatedAt) ? { meaningfulUpdatedAt: asString(item.meaningfulUpdatedAt) } : {}),
     categoryKeys,
     categoryLabels: stringArray(item.categoryLabels),
     ...(asString(item.contentKind) ? { contentKind: asString(item.contentKind) } : {}),
