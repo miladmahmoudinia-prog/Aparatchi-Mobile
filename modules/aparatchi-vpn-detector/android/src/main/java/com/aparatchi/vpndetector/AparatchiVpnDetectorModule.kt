@@ -15,17 +15,13 @@ class AparatchiVpnDetectorModule : Module() {
       val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         ?: return@AsyncFunction false
 
-      val activeCapabilities = connectivityManager.activeNetwork?.let {
-        connectivityManager.getNetworkCapabilities(it)
-      }
-      if (activeCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true) {
-        return@AsyncFunction true
-      }
+      // Only the current default network is authoritative. allNetworks can keep a
+      // disconnected VPN around briefly and would leave the blocking screen stuck.
+      val activeNetwork = connectivityManager.activeNetwork ?: return@AsyncFunction false
+      val activeCapabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+        ?: return@AsyncFunction false
 
-      return@AsyncFunction connectivityManager.allNetworks.any { network ->
-        connectivityManager.getNetworkCapabilities(network)
-          ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-      }
+      return@AsyncFunction activeCapabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
     }
   }
 }
