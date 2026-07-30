@@ -496,7 +496,7 @@ const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[]
     return [{ id: `language-${language}`, title: languageTitle(language), subtitle: `${files.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`, badge: language === 'dubbed' ? 'دوبله' : 'زیرنویس', language, files } satisfies DownloadSection];
   });
   const plainFiles = sortFiles(uniqueFiles(directStandaloneFiles.filter((file) => !file.language)));
-  const plainSections = plainFiles.length ? [{ id: 'language-plain', title: iranian ? 'نسخه فارسی' : 'نسخه اصلی', subtitle: `${plainFiles.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`, files: plainFiles } satisfies DownloadSection] : [];
+  const plainSections = iranian && plainFiles.length ? [{ id: 'language-plain', title: 'لینک‌های دریافت', subtitle: `${plainFiles.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`, files: plainFiles } satisfies DownloadSection] : [];
   const operatorSections = operatorStandaloneFiles.length ? [{ id: 'operator-mobile-access', title: 'ویژه اینترنت همراه', subtitle: 'تماشا یا دریافت با اینترنت سیم‌کارت', badge: 'همراه', files: operatorStandaloneFiles } satisfies DownloadSection] : [];
   return [...episodeSections, ...languageSections, ...plainSections, ...operatorSections];
 };
