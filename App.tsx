@@ -62,7 +62,7 @@ import {
 } from './src/notificationManager';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
-type PlayerDisplayMode = 'auto' | 'fit' | 'fill';
+type PlayerDisplayMode = 'fit' | 'fill';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
 type PersonRoleFilter = 'all' | 'actor' | 'director';
 type CountrySearchFilter = `country:${string}`;
@@ -210,11 +210,10 @@ const shareCatalogItem = async (item: CatalogItem) => {
 
 const itemLanguages = (item: CatalogItem): MediaLanguage[] =>
   LANGUAGE_ORDER.filter((language) =>
+    item.availableLanguages?.includes(language) ||
     (item.downloads || []).some((section) =>
       section.files.some((file) =>
-        !isOperatorFile(file) &&
-        file.mode !== 'play' &&
-        file.language === language
+        !isOperatorFile(file) && file.language === language
       ),
     ),
   );
@@ -467,7 +466,7 @@ const playableVersionsFor = (
   const unlabeledSources = playbackSourcesForFiles(files.filter((file) => !file.language));
   if (item.ir && unlabeledSources.length) {
     versions.push({
-      label: 'پخش فارسی',
+      label: 'پخش آنلاین',
       sources: unlabeledSources,
       defaultSource: defaultPlaybackSource(unlabeledSources),
     });
@@ -492,7 +491,7 @@ const playableVersionsFor = (
     if (!language && !item.ir) return [];
     return [{
       language,
-      label: language ? languageTitle(language) : 'پخش فارسی',
+      label: language ? languageTitle(language) : 'پخش آنلاین',
       sources: [source],
       defaultSource: source,
     }];
@@ -580,12 +579,42 @@ const isIranianItem = (item: CatalogItem) =>
     (item.countryNames || []).some((value) => normalizeComparableText(value) === 'iran'),
   );
 
-const isAnimationItem = (item: CatalogItem) => {
-  const exactAnimationGenre = (item.genres || []).some((genre) => {
-    const normalized = normalizeComparableText(genre);
-    return normalized === 'انیمیشن' || normalized === 'animation' || normalized === 'anime' || normalized === 'انیمه';
-  });
-  return exactAnimationGenre;
+const isAnimationItem = (item: CatalogItem) => Boolean(
+  item.isAnimation ||
+  item.contentKind === 'animation-movie' ||
+  item.contentKind === 'animation-series' ||
+  hasCategory(item, 'animation-movies') ||
+  hasCategory(item, 'animation-series')
+);
+
+const mediaKindLabel = (item: CatalogItem) => {
+  if (isAnimationItem(item)) {
+    return item.type === 'movie' ? 'انیمیشن سینمایی' : 'انیمیشن سریالی';
+  }
+  return item.type === 'movie' ? 'فیلم سینمایی' : 'سریال';
+};
+
+const itemHasUsableContent = (item: CatalogItem) => {
+  const files = (item.downloads || []).flatMap((section) => section.files || []);
+  const hasOperator = files.some((file) =>
+    isOperatorFile(file) && isSafeHttpUrl(file.url) && isOperatorPortalUrl(file.url),
+  );
+  if (hasOperator) return true;
+
+  const directFiles = files.filter((file) =>
+    !isOperatorFile(file) &&
+    isSafeHttpUrl(file.url) &&
+    !isPlaceholderUrl(file.url) &&
+    isDirectMediaUrl(file.url),
+  );
+  const hasStream = isSafeHttpUrl(item.streamUrl) && isDirectMediaUrl(item.streamUrl || '');
+
+  if (isIranianItem(item)) return Boolean(hasStream || directFiles.length);
+  const languages = itemLanguages(item);
+  return Boolean(
+    (hasStream && languages.length) ||
+    directFiles.some((file) => Boolean(file.language)),
+  );
 };
 
 const isProgramItem = (item: CatalogItem) =>
@@ -620,7 +649,7 @@ const filterTitle = (filter: SearchFilter) => {
 
   const titles: Record<string, string> = {
     all: 'همه محتوا', movie: 'همه فیلم‌ها', series: 'همه سریال‌ها',
-    dubbed: 'فیلم‌های دوبله فارسی', subtitled: 'فیلم‌های زیرنویس فارسی',
+    dubbed: 'دوبله فارسی', subtitled: 'زیرنویس فارسی',
     latest: 'جدیدترین‌ها', updated: 'به‌روزشده‌ها',
     'iranian-movies': 'فیلم‌های ایرانی', 'foreign-movies': 'فیلم‌های خارجی',
     'iranian-series': 'سریال‌های ایرانی', 'foreign-series': 'سریال‌های خارجی',
@@ -644,9 +673,9 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'all': case 'latest': return true;
     case 'movie': case 'series': return item.type === filter;
     case 'dubbed':
-      return item.type === 'movie' && !isIranianItem(item) && itemLanguages(item).includes('dubbed');
+      return !isIranianItem(item) && itemLanguages(item).includes('dubbed');
     case 'subtitled':
-      return item.type === 'movie' && !isIranianItem(item) && itemLanguages(item).includes('subtitled');
+      return !isIranianItem(item) && itemLanguages(item).includes('subtitled');
     case 'updated': return Boolean(meaningfulUpdateLabel(item));
     case 'iranian-movies': return item.type === 'movie' && isIranianItem(item) && !isAnimationItem(item);
     case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isAnimationItem(item);
@@ -673,6 +702,26 @@ const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
     });
   }
   return [...items].sort((a, b) => catalogItemTimestamp(b) - catalogItemTimestamp(a));
+};
+
+
+const catalogFilterCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem[]>>();
+
+const catalogItemsForFilter = (catalog: CatalogItem[], filter: SearchFilter) => {
+  let cache = catalogFilterCache.get(catalog);
+  if (!cache) {
+    cache = new Map<SearchFilter, CatalogItem[]>();
+    catalogFilterCache.set(catalog, cache);
+  }
+  const cached = cache.get(filter);
+  if (cached) return cached;
+
+  const result = sortForCatalogFilter(
+    catalog.filter((item) => itemHasUsableContent(item) && matchesCatalogFilter(item, filter)),
+    filter,
+  );
+  cache.set(filter, result);
+  return result;
 };
 
 const collectionMembersFor = (item: CatalogItem, catalog: CatalogItem[]) => {
@@ -725,7 +774,7 @@ function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) 
     />
   ) : (
     <View style={[style, styles.personImageFallback]}>
-      <Text style={styles.personImageFallbackText}>{personInitials(person) || '؟'}</Text>
+      <Ionicons name="person-outline" color={COLORS.gold} size={Math.max(22, Number(style?.width || 52) * 0.42)} />
     </View>
   );
 }
@@ -828,7 +877,7 @@ function HeroSlide({
       <View style={styles.heroContent}>
         <View style={styles.heroBadgeRow}>
           <View style={styles.redBadge}>
-            <Text style={styles.redBadgeText}>{item.type === 'movie' ? 'فیلم سینمایی' : 'سریال'}</Text>
+            <Text style={styles.redBadgeText}>{mediaKindLabel(item)}</Text>
           </View>
           <View style={styles.yearBadge}>
             <Text style={styles.yearBadgeText}>{toPersianDigits(item.year)}</Text>
@@ -1154,7 +1203,7 @@ function PosterCard({
   return (
     <Pressable onPress={onOpen} style={[styles.posterCard, { width }]}>
       <View style={[styles.posterImageWrap, { width, height: Math.round(width * 1.42) }]}>
-        <Image source={{ uri: item.poster }} style={styles.posterImage} contentFit="cover" transition={220} />
+        <Image source={{ uri: item.poster }} recyclingKey={`${item.type}:${item.id}`} style={styles.posterImage} contentFit="cover" cachePolicy="memory-disk" transition={80} />
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
         {languageBadge ? (
           <View style={styles.posterAccess}>
@@ -1330,6 +1379,10 @@ function HorizontalCatalog({
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
+      initialNumToRender={5}
+      maxToRenderPerBatch={5}
+      windowSize={5}
+      removeClippedSubviews
     />
   );
 }
@@ -1441,28 +1494,28 @@ function HomeScreen({
   onScrollOffset: (offset: number) => void;
 }) {
   const scrollRef = useRef<ScrollView>(null);
-  const newest = useMemo(() => sortForCatalogFilter(catalog, 'latest'), [catalog]);
-  const updated = useMemo(() => sortForCatalogFilter(catalog.filter((item) => matchesCatalogFilter(item, 'updated')), 'updated'), [catalog]);
+  const newest = useMemo(() => catalogItemsForFilter(catalog, 'latest'), [catalog]);
+  const updated = useMemo(() => catalogItemsForFilter(catalog, 'updated'), [catalog]);
 
   useEffect(() => {
     if (initialScrollOffset > 0) requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: initialScrollOffset, animated: false }));
   }, []);
 
-  const rows: { filter: SearchFilter; title: string; items: CatalogItem[] }[] = [
+  const rows = useMemo<{ filter: SearchFilter; title: string; items: CatalogItem[] }[]>(() => [
     { filter: 'latest', title: 'جدیدترین‌ها', items: newest },
     { filter: 'updated', title: 'به‌روزشده‌ها', items: updated },
-    { filter: 'mobile-operator', title: 'ویژه اینترنت همراه', items: newest.filter((item) => matchesCatalogFilter(item, 'mobile-operator')) },
-    { filter: 'iranian-movies', title: 'فیلم‌های ایرانی', items: newest.filter((item) => matchesCatalogFilter(item, 'iranian-movies')) },
-    { filter: 'foreign-movies', title: 'فیلم‌های خارجی', items: newest.filter((item) => matchesCatalogFilter(item, 'foreign-movies')) },
-    { filter: 'iranian-series', title: 'سریال‌های ایرانی', items: newest.filter((item) => matchesCatalogFilter(item, 'iranian-series')) },
-    { filter: 'foreign-series', title: 'سریال‌های خارجی', items: newest.filter((item) => matchesCatalogFilter(item, 'foreign-series')) },
-    { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', items: newest.filter((item) => matchesCatalogFilter(item, 'korean-movies')) },
-    { filter: 'indian-movies', title: 'فیلم‌های هندی', items: newest.filter((item) => matchesCatalogFilter(item, 'indian-movies')) },
-    { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی', items: newest.filter((item) => matchesCatalogFilter(item, 'animation-movies')) },
-    { filter: 'animation-series', title: 'انیمیشن‌های سریالی', items: newest.filter((item) => matchesCatalogFilter(item, 'animation-series')) },
-    { filter: 'programs', title: 'تاک‌شوها و برنامه‌ها', items: newest.filter((item) => matchesCatalogFilter(item, 'programs')) },
-    { filter: 'documentaries', title: 'مستندها', items: newest.filter((item) => matchesCatalogFilter(item, 'documentaries')) },
-  ];
+    { filter: 'mobile-operator', title: 'ویژه اینترنت همراه', items: catalogItemsForFilter(catalog, 'mobile-operator') },
+    { filter: 'iranian-movies', title: 'فیلم‌های ایرانی', items: catalogItemsForFilter(catalog, 'iranian-movies') },
+    { filter: 'foreign-movies', title: 'فیلم‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-movies') },
+    { filter: 'iranian-series', title: 'سریال‌های ایرانی', items: catalogItemsForFilter(catalog, 'iranian-series') },
+    { filter: 'foreign-series', title: 'سریال‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-series') },
+    { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-movies') },
+    { filter: 'indian-movies', title: 'فیلم‌های هندی', items: catalogItemsForFilter(catalog, 'indian-movies') },
+    { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی', items: catalogItemsForFilter(catalog, 'animation-movies') },
+    { filter: 'animation-series', title: 'انیمیشن‌های سریالی', items: catalogItemsForFilter(catalog, 'animation-series') },
+    { filter: 'programs', title: 'تاک‌شوها و برنامه‌ها', items: catalogItemsForFilter(catalog, 'programs') },
+    { filter: 'documentaries', title: 'مستندها', items: catalogItemsForFilter(catalog, 'documentaries') },
+  ], [catalog, newest, updated]);
 
   if (!newest.length) return (
     <View style={[styles.screen, styles.contentUnavailable]}>
@@ -1497,6 +1550,37 @@ function HomeScreen({
 
 type CategoryCardConfig = { filter: SearchFilter; title: string; subtitle: string; icon: keyof typeof Ionicons.glyphMap };
 
+const CATEGORY_ART_PALETTES: [string, string, string][] = [
+  ['#34233F', '#171725', '#080A0E'],
+  ['#12384A', '#14202B', '#080A0E'],
+  ['#4A2E18', '#21170F', '#080A0E'],
+  ['#213A30', '#13211D', '#080A0E'],
+  ['#4B2028', '#241319', '#080A0E'],
+  ['#24345A', '#151C2B', '#080A0E'],
+  ['#40351B', '#211D12', '#080A0E'],
+  ['#263D3A', '#142120', '#080A0E'],
+];
+
+const CATEGORY_FALLBACK_ART: Record<string, number> = {
+  movie: require('./assets/category-art/movies.jpg'),
+  series: require('./assets/category-art/series.jpg'),
+  'animation-movies': require('./assets/category-art/animation-movies.jpg'),
+  'animation-series': require('./assets/category-art/animation-series.jpg'),
+  'iranian-movies': require('./assets/category-art/iranian-movies.jpg'),
+  'foreign-movies': require('./assets/category-art/foreign-movies.jpg'),
+  'iranian-series': require('./assets/category-art/iranian-series.jpg'),
+  'foreign-series': require('./assets/category-art/foreign-series.jpg'),
+  dubbed: require('./assets/category-art/dubbed.jpg'),
+  subtitled: require('./assets/category-art/subtitled.jpg'),
+  updated: require('./assets/category-art/updated.jpg'),
+  'mobile-operator': require('./assets/category-art/operator.jpg'),
+  'korean-movies': require('./assets/category-art/korean.jpg'),
+  'indian-movies': require('./assets/category-art/indian.jpg'),
+  collections: require('./assets/category-art/collections.jpg'),
+  documentaries: require('./assets/category-art/documentaries.jpg'),
+  programs: require('./assets/category-art/programs.jpg'),
+};
+
 function CategoriesScreen({
   catalog,
   onBrowse,
@@ -1518,8 +1602,8 @@ function CategoriesScreen({
     { filter: 'foreign-movies', title: 'فیلم‌های خارجی', subtitle: 'سینمای جهان', icon: 'earth-outline' },
     { filter: 'iranian-series', title: 'سریال‌های ایرانی', subtitle: 'مجموعه‌های داخلی', icon: 'videocam-outline' },
     { filter: 'foreign-series', title: 'سریال‌های خارجی', subtitle: 'مجموعه‌های جهان', icon: 'globe-outline' },
-    { filter: 'dubbed', title: 'دوبله فارسی', subtitle: 'فیلم‌های خارجی دوبله', icon: 'volume-high-outline' },
-    { filter: 'subtitled', title: 'زیرنویس فارسی', subtitle: 'فیلم‌های خارجی زیرنویس', icon: 'chatbox-ellipses-outline' },
+    { filter: 'dubbed', title: 'دوبله فارسی', subtitle: 'فیلم و سریال خارجی دوبله', icon: 'volume-high-outline' },
+    { filter: 'subtitled', title: 'زیرنویس فارسی', subtitle: 'فیلم و سریال خارجی زیرنویس', icon: 'chatbox-ellipses-outline' },
     { filter: 'updated', title: 'به‌روزشده‌ها', subtitle: 'قسمت یا نسخه تازه', icon: 'refresh-outline' },
     { filter: 'mobile-operator', title: 'ویژه اینترنت همراه', subtitle: 'محتوای اپراتوری', icon: 'phone-portrait-outline' },
     { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', subtitle: 'سینمای کره جنوبی', icon: 'location-outline' },
@@ -1532,7 +1616,7 @@ function CategoriesScreen({
   const searchResults = useMemo(() => {
     if (!deferredQuery) return [];
     return sortForCatalogFilter(
-      catalog.filter((item) => normalizeComparableText([
+      catalog.filter((item) => itemHasUsableContent(item) && normalizeComparableText([
         item.nameFa,
         item.name,
         ...(item.genres || []),
@@ -1546,12 +1630,15 @@ function CategoriesScreen({
 
   const categoryPreviews = useMemo(() => {
     const map = new Map<SearchFilter, CatalogItem>();
+    const used = new Set<string>();
     for (const card of cards) {
-      const preview = sortForCatalogFilter(
-        catalog.filter((item) => matchesCatalogFilter(item, card.filter)),
-        card.filter,
-      ).find((item) => Boolean(item.backdrop || item.poster));
-      if (preview) map.set(card.filter, preview);
+      const candidates = catalogItemsForFilter(catalog, card.filter)
+        .filter((item) => Boolean(item.backdrop || item.poster));
+      const preview = candidates.find((item) => !used.has(item.id));
+      if (preview) {
+        map.set(card.filter, preview);
+        used.add(preview.id);
+      }
     }
     return map;
   }, [catalog]);
@@ -1591,7 +1678,7 @@ function CategoriesScreen({
       ) : (
         <>
           <View style={[styles.categoryGrid, { gap: gridGap }]}>
-            {cards.map((card) => {
+            {cards.map((card, cardIndex) => {
               const preview = categoryPreviews.get(card.filter);
               return (
                 <Pressable
@@ -1607,7 +1694,25 @@ function CategoriesScreen({
                       cachePolicy="memory-disk"
                       transition={120}
                     />
-                  ) : null}
+                  ) : CATEGORY_FALLBACK_ART[card.filter] ? (
+                    <Image
+                      source={CATEGORY_FALLBACK_ART[card.filter]}
+                      style={StyleSheet.absoluteFill}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                    />
+                  ) : (
+                    <LinearGradient
+                      colors={CATEGORY_ART_PALETTES[cardIndex % CATEGORY_ART_PALETTES.length]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={StyleSheet.absoluteFill}
+                    >
+                      <View style={styles.categoryFallbackArt}>
+                        <Ionicons name={card.icon} color="rgba(216,180,90,0.34)" size={72} />
+                      </View>
+                    </LinearGradient>
+                  )}
                   <LinearGradient
                     colors={['rgba(6,8,11,0.12)', 'rgba(6,8,11,0.72)', 'rgba(6,8,11,0.98)']}
                     locations={[0, 0.55, 1]}
@@ -1644,7 +1749,7 @@ function CatalogListScreen({
   const deferredQuery = useDeferredValue(normalizeComparableText(query));
   const { width: screenWidth } = useWindowDimensions();
   const baseItems = useMemo(
-    () => sortForCatalogFilter(catalog.filter((item) => matchesCatalogFilter(item, initialFilter)), initialFilter),
+    () => catalogItemsForFilter(catalog, initialFilter),
     [catalog, initialFilter],
   );
   const results = useMemo(() => {
@@ -1662,8 +1767,8 @@ function CatalogListScreen({
   const gridGap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
 
-  return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent} keyboardShouldPersistTaps="handled">
+  const header = (
+    <View>
       <View style={styles.simpleHeader}>
         <Logo />
         <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{filterTitle(initialFilter)}</Text>
@@ -1681,18 +1786,39 @@ function CatalogListScreen({
         {query ? <Pressable onPress={() => setQuery('')} hitSlop={8}><Ionicons name="close-circle" color={COLORS.muted} size={18} /></Pressable> : null}
       </View>
       <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text>
-      {results.length ? (
-        <View style={[styles.searchGrid, { columnGap: gridGap }]}>
-          {results.map((item) => <PosterCard key={item.id} item={item} width={cardWidth} onOpen={() => onOpen(item)} />)}
-        </View>
-      ) : (
+    </View>
+  );
+
+  return (
+    <FlatList
+      key={`${initialFilter}-${columnCount}`}
+      style={styles.screen}
+      contentContainerStyle={styles.catalogListContent}
+      keyboardShouldPersistTaps="handled"
+      data={results}
+      numColumns={columnCount}
+      keyExtractor={(item) => item.id}
+      columnWrapperStyle={columnCount > 1 ? { gap: gridGap, flexDirection: 'row-reverse' } : undefined}
+      ListHeaderComponent={header}
+      ListEmptyComponent={(
         <View style={styles.searchEmptyState}>
           <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
           <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
           <Text style={styles.largeEmptyText}>عبارت جست‌وجو را تغییر دهید.</Text>
         </View>
       )}
-    </ScrollView>
+      renderItem={({ item }) => (
+        <View style={{ width: cardWidth, marginBottom: 16 }}>
+          <PosterCard item={item} width={cardWidth} onOpen={() => onOpen(item)} />
+        </View>
+      )}
+      initialNumToRender={10}
+      maxToRenderPerBatch={8}
+      windowSize={7}
+      updateCellsBatchingPeriod={35}
+      removeClippedSubviews
+      showsVerticalScrollIndicator={false}
+    />
   );
 }
 
@@ -1730,6 +1856,7 @@ function AdvancedSearchScreen({
   const [personRole, setPersonRole] = useState<PersonRoleFilter>('all');
   const searchReady = true;
   const { width: screenWidth } = useWindowDimensions();
+  const searchableCatalog = useMemo(() => catalog.filter(itemHasUsableContent), [catalog]);
 
   useEffect(() => {
     const nextCountry = countryCodeFromFilter(initialFilter);
@@ -1750,7 +1877,7 @@ function AdvancedSearchScreen({
   const normalizedPersonQuery = personQuery.trim().toLowerCase();
 
   const availableCountryCodes = useMemo(() => advancedOpen ? [...new Set(
-    catalog.flatMap((item) => item.countryCodes || []),
+    searchableCatalog.flatMap((item) => item.countryCodes || []),
   )].sort((a, b) => {
     const aIndex = COUNTRY_FILTER_PRIORITY.indexOf(a);
     const bIndex = COUNTRY_FILTER_PRIORITY.indexOf(b);
@@ -1765,7 +1892,7 @@ function AdvancedSearchScreen({
   const availableGenres = useMemo(() => {
     if (!advancedOpen) return [];
     const counts = new Map<string, number>();
-    for (const item of catalog) {
+    for (const item of searchableCatalog) {
       for (const genre of item.genres || []) {
         const cleaned = genre.trim();
         if (!cleaned) continue;
@@ -1775,10 +1902,10 @@ function AdvancedSearchScreen({
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'fa'))
       .map(([genre]) => genre);
-  }, [advancedOpen, catalog]);
+  }, [advancedOpen, catalog, searchableCatalog]);
 
   const availableYears = useMemo(() => advancedOpen ? [...new Set(
-    catalog
+    searchableCatalog
       .map((item) => Number(item.year))
       .filter((year) => Number.isFinite(year) && year > 1800),
   )].sort((a, b) => b - a) : [], [advancedOpen, catalog]);
@@ -1786,7 +1913,7 @@ function AdvancedSearchScreen({
   const availablePeople = useMemo(() => {
     if (!advancedOpen) return [];
     const people = new Map<string, { person: CatalogPerson; count: number }>();
-    for (const item of catalog) {
+    for (const item of searchableCatalog) {
       for (const person of item.people || []) {
         const current = people.get(person.id);
         people.set(person.id, {
@@ -1798,7 +1925,7 @@ function AdvancedSearchScreen({
     return [...people.values()].sort((a, b) =>
       b.count - a.count || personName(a.person).localeCompare(personName(b.person), 'fa'),
     );
-  }, [advancedOpen, catalog]);
+  }, [advancedOpen, searchableCatalog]);
 
   const personSuggestions = useMemo(() => {
     if (!normalizedPersonQuery) return [];
@@ -1815,7 +1942,7 @@ function AdvancedSearchScreen({
   const results = useMemo(() => {
     if (!searchReady) return [];
     return sortForCatalogFilter(
-    catalog.filter((item) => {
+    searchableCatalog.filter((item) => {
       const matchesQuery =
         !normalizedQuery ||
         item.nameFa.toLowerCase().includes(normalizedQuery) ||
@@ -1860,6 +1987,7 @@ function AdvancedSearchScreen({
   );
   }, [
     catalog,
+    searchableCatalog,
     searchReady,
     filter,
     normalizedPersonQuery,
@@ -2479,7 +2607,7 @@ function DownloadGroup({
         </View>
         <View style={styles.downloadGroupBadge}>
           <Text style={styles.downloadGroupBadgeText}>
-            {group.badge || (group.language === 'dubbed' ? 'دوبله' : group.language === 'subtitled' ? 'زیرنویس' : 'نسخه')}
+            {group.badge || (group.language === 'dubbed' ? 'دوبله' : group.language === 'subtitled' ? 'زیرنویس' : 'دریافت')}
           </Text>
         </View>
         <Ionicons name={open ? 'chevron-up' : 'chevron-down'} color={COLORS.gold} size={19} />
@@ -2489,7 +2617,7 @@ function DownloadGroup({
           {onPlay ? (
             <Pressable onPress={onPlay} style={styles.languagePlayButton}>
               <Ionicons name="play" color="#fff" size={17} />
-              <Text style={styles.languagePlayButtonText}>پخش آنلاین این نسخه</Text>
+              <Text style={styles.languagePlayButtonText}>پخش آنلاین</Text>
             </Pressable>
           ) : null}
           {files.map((file) => {
@@ -2840,7 +2968,7 @@ function DetailModal({
             <View style={styles.detailIdentity}>
               <Image source={{ uri: item.poster }} style={styles.detailPoster} contentFit="cover" />
               <View style={styles.detailTitleBlock}>
-                <Text style={styles.detailType}>{item.type === 'movie' ? 'فیلم سینمایی' : 'سریال'}</Text>
+                <Text style={styles.detailType}>{mediaKindLabel(item)}</Text>
                 {itemHasOperatorAccess(item) ? <View style={styles.detailOperatorBadge}><Ionicons name="phone-portrait-outline" color={COLORS.gold} size={12} /><Text style={styles.detailOperatorBadgeText}>ویژه اینترنت همراه</Text></View> : null}
                 <Text numberOfLines={2} style={styles.detailTitle}>{item.nameFa}</Text>
                 <Text style={styles.detailEnglish}>{item.name}</Text>
@@ -2868,9 +2996,9 @@ function DetailModal({
             <PeopleSection item={item} onOpen={onOpenPerson} />
             <MovieCollectionSection item={item} catalog={catalog} onOpen={onOpenRelated} />
 
-            <View style={styles.downloadHeader}><View><Text style={styles.detailSectionTitle}>{item.type === 'series' ? 'فصل‌ها و قسمت‌ها' : 'لینک‌های دریافت'}</Text><Text style={styles.downloadHeaderText}>{item.type === 'series' ? 'قسمت را باز کنید؛ گزینه‌های همان قسمت جدا نمایش داده می‌شوند.' : 'نسخه‌های دوبله، زیرنویس و اصلی جدا نمایش داده می‌شوند.'}</Text></View><Ionicons name={item.type === 'series' ? 'albums-outline' : 'cloud-download-outline'} color={COLORS.gold} size={24} /></View>
+            <View style={styles.downloadHeader}><View><Text style={styles.detailSectionTitle}>{item.type === 'series' ? 'فصل‌ها و قسمت‌ها' : 'لینک‌های دریافت'}</Text><Text style={styles.downloadHeaderText}>{item.type === 'series' ? 'قسمت را باز کنید؛ گزینه‌های همان قسمت جدا نمایش داده می‌شوند.' : 'نسخه‌های دوبله و زیرنویس به‌صورت جدا نمایش داده می‌شوند.'}</Text></View><Ionicons name={item.type === 'series' ? 'albums-outline' : 'cloud-download-outline'} color={COLORS.gold} size={24} /></View>
 
-            {!hasDownloads ? <View style={styles.emptyDownloads}><Text style={styles.emptyDownloadsTitle}>لینک قابل استفاده‌ای موجود نیست</Text><Text style={styles.emptyDownloadsText}>پس از اضافه‌شدن نسخه جدید، این بخش خودکار به‌روز می‌شود.</Text></View> : item.type === 'series' ? (
+            {!hasDownloads ? <View style={styles.emptyDownloads}><Text style={styles.emptyDownloadsTitle}>لینک قابل استفاده‌ای موجود نیست</Text><Text style={styles.emptyDownloadsText}>در حال حاضر لینک پخش یا دریافت معتبری برای این عنوان ثبت نشده است.</Text></View> : item.type === 'series' ? (
               <SeriesEpisodeList
                 item={item}
                 openGroup={openGroup}
@@ -2990,36 +3118,73 @@ function VideoPlayerModal({
   const [activeSource, setActiveSource] = useState(initialSource);
   const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
   const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
-  const [displayMode, setDisplayMode] = useState<PlayerDisplayMode>('auto');
+  const [displayMode, setDisplayMode] = useState<PlayerDisplayMode>('fit');
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const [firstFrameReady, setFirstFrameReady] = useState(false);
-  const [landscape, setLandscape] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [locked, setLocked] = useState(false);
+  const [lockIndicatorVisible, setLockIndicatorVisible] = useState(false);
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const landscape = viewportWidth > viewportHeight;
   const progressWidthRef = useRef(1);
   const latestTimeRef = useRef(Math.max(0, Number(request.resumeAt || 0)));
   const latestDurationRef = useRef(0);
   const resumeAppliedRef = useRef(false);
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const player = useVideoPlayer(initialSource.url, (instance) => {
     instance.timeUpdateEventInterval = 0.5;
     instance.play();
   });
-  const { videoTrack } = useEvent(player, 'videoTrackChange', { videoTrack: player.videoTrack });
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
+
+  const clearControlsTimer = () => {
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    controlsTimerRef.current = null;
+  };
+
+  const scheduleControlsHide = () => {
+    clearControlsTimer();
+    if (!isPlaying || qualityMenuOpen || displayMenuOpen || locked) return;
+    controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 3000);
+  };
+
+  const revealControls = () => {
+    if (locked) return;
+    setControlsVisible(true);
+    requestAnimationFrame(scheduleControlsHide);
+  };
+
+  const showLockIndicator = () => {
+    setLockIndicatorVisible(true);
+    if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
+    lockTimerRef.current = setTimeout(() => setLockIndicatorVisible(false), 2200);
+  };
+
+  useEffect(() => {
+    if (controlsVisible) scheduleControlsHide();
+    return clearControlsTimer;
+  }, [controlsVisible, displayMenuOpen, isPlaying, locked, qualityMenuOpen]);
+
+  useEffect(() => {
+    if (!landscape) {
+      setDisplayMode('fit');
+      setDisplayMenuOpen(false);
+      setLocked(false);
+      setLockIndicatorVisible(false);
+    }
+  }, [landscape]);
 
   useEffect(
     () => () => {
+      clearControlsTimer();
+      if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
       void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
     },
     [],
   );
-
-  useEffect(() => {
-    if (!controlsVisible || !isPlaying || qualityMenuOpen || displayMenuOpen) return undefined;
-    const timer = setTimeout(() => setControlsVisible(false), 3500);
-    return () => clearTimeout(timer);
-  }, [controlsVisible, displayMenuOpen, isPlaying, qualityMenuOpen]);
 
   useEventListener(player, 'sourceLoad', ({ duration: loadedDuration }) => {
     const safeDuration = Math.max(0, Number(loadedDuration || player.duration || 0));
@@ -3051,7 +3216,6 @@ function VideoPlayerModal({
     onProgress(request, safeDuration, safeDuration, true);
   });
 
-  const showControls = () => setControlsVisible(true);
   const closePlayer = () => {
     const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
     const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
@@ -3061,32 +3225,35 @@ function VideoPlayerModal({
     onClose();
   };
 
-  const automaticContentFit: 'contain' | 'cover' = useMemo(() => {
-    const width = Number(videoTrack?.size?.width || 0);
-    const height = Number(videoTrack?.size?.height || 0);
-    if (!width || !height) return 'contain';
-    const relativeDifference = Math.abs(width / height - 16 / 9) / (16 / 9);
-    return relativeDifference <= 0.12 ? 'cover' : 'contain';
-  }, [videoTrack?.size?.height, videoTrack?.size?.width]);
-  const videoContentFit: 'contain' | 'cover' = displayMode === 'fit'
-    ? 'contain'
-    : displayMode === 'fill'
-      ? 'cover'
-      : automaticContentFit;
-  const displayModeLabel = displayMode === 'fit'
-    ? 'نمایش کامل'
-    : displayMode === 'fill'
-      ? 'پر کردن صفحه'
-      : 'خودکار';
+  const handleBack = () => {
+    if (locked) {
+      showLockIndicator();
+      return;
+    }
+    if (qualityMenuOpen || displayMenuOpen) {
+      setQualityMenuOpen(false);
+      setDisplayMenuOpen(false);
+      revealControls();
+      return;
+    }
+    if (landscape) {
+      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
+      return;
+    }
+    closePlayer();
+  };
+
+  const videoContentFit: 'contain' | 'cover' = landscape && displayMode === 'fill' ? 'cover' : 'contain';
+  const displayModeLabel = displayMode === 'fill' ? 'پر کردن صفحه' : 'نمایش کامل';
 
   const toggleOrientation = async () => {
-    const next = !landscape;
-    setLandscape(next);
-    showControls();
+    setQualityMenuOpen(false);
+    setDisplayMenuOpen(false);
+    revealControls();
     await ScreenOrientation.lockAsync(
-      next
-        ? ScreenOrientation.OrientationLock.LANDSCAPE
-        : ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      landscape
+        ? ScreenOrientation.OrientationLock.PORTRAIT_UP
+        : ScreenOrientation.OrientationLock.LANDSCAPE,
     ).catch(() => undefined);
   };
 
@@ -3099,7 +3266,7 @@ function VideoPlayerModal({
     setSwitchingQuality(true);
     setFirstFrameReady(false);
     setQualityMenuOpen(false);
-    showControls();
+    revealControls();
     try {
       player.pause();
       await player.replaceAsync(nextSource.url);
@@ -3119,7 +3286,7 @@ function VideoPlayerModal({
     const next = Math.max(0, Math.min(maximum || Number.MAX_SAFE_INTEGER, Number(player.currentTime || 0) + seconds));
     player.currentTime = next;
     setCurrentTime(next);
-    showControls();
+    revealControls();
   };
 
   const seekFromProgress = (locationX: number) => {
@@ -3129,23 +3296,33 @@ function VideoPlayerModal({
     const next = ratio * safeDuration;
     player.currentTime = next;
     setCurrentTime(next);
-    showControls();
+    revealControls();
+  };
+
+  const lockPlayer = () => {
+    setQualityMenuOpen(false);
+    setDisplayMenuOpen(false);
+    setControlsVisible(false);
+    setLocked(true);
+    showLockIndicator();
+  };
+
+  const unlockPlayer = () => {
+    setLocked(false);
+    setLockIndicatorVisible(false);
+    setControlsVisible(true);
   };
 
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
 
   return (
-    <Modal visible animationType="fade" onRequestClose={closePlayer} supportedOrientations={['portrait', 'landscape']}>
+    <Modal visible animationType="fade" onRequestClose={handleBack} supportedOrientations={['portrait', 'landscape']}>
       <SafeAreaView style={styles.mediaModal} edges={['top', 'right', 'bottom', 'left']}>
         <StatusBar style="light" hidden={landscape} />
-        <View style={styles.mediaModalHeader}>
-          <Pressable onPress={closePlayer} style={styles.mediaCloseButton}>
-            <Ionicons name="close" color="#fff" size={23} />
-          </Pressable>
-          <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
-        </View>
-
         <View style={styles.videoStage}>
+          {request.artwork && !firstFrameReady ? (
+            <Image source={{ uri: request.artwork }} style={StyleSheet.absoluteFill} contentFit="contain" cachePolicy="memory-disk" />
+          ) : null}
           <VideoView
             key={`${activeSource.id}-${videoContentFit}`}
             player={player}
@@ -3158,7 +3335,20 @@ function VideoPlayerModal({
             onFirstFrameRender={() => setFirstFrameReady(true)}
           />
 
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setControlsVisible((visible) => !visible)} />
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              if (locked) {
+                showLockIndicator();
+                return;
+              }
+              setControlsVisible((visible) => {
+                const next = !visible;
+                if (next) requestAnimationFrame(scheduleControlsHide);
+                return next;
+              });
+            }}
+          />
 
           {!firstFrameReady || switchingQuality ? (
             <View style={styles.qualitySwitchLoading} pointerEvents="none">
@@ -3169,9 +3359,16 @@ function VideoPlayerModal({
             </View>
           ) : null}
 
-          {controlsVisible ? (
+          {controlsVisible && !locked ? (
             <View style={styles.playerControlsLayer} pointerEvents="box-none">
-              <View style={styles.playerCenterControls}>
+              <View style={[styles.playerOverlayHeader, landscape && styles.playerOverlayHeaderLandscape]}>
+                <Pressable onPress={handleBack} style={styles.mediaCloseButton}>
+                  <Ionicons name="close" color="#fff" size={23} />
+                </Pressable>
+                <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
+              </View>
+
+              <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
                 <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton}>
                   <Ionicons name="play-back" color="#fff" size={25} />
                   <Text style={styles.playerSkipText}>۱۰</Text>
@@ -3179,19 +3376,19 @@ function VideoPlayerModal({
                 <Pressable
                   onPress={() => {
                     if (isPlaying) player.pause(); else player.play();
-                    showControls();
+                    revealControls();
                   }}
                   style={styles.playerPrimaryButton}
                 >
                   <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={31} />
                 </Pressable>
-                <Pressable onPress={() => seekBy(15)} style={styles.playerRoundButton}>
+                <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton}>
                   <Ionicons name="play-forward" color="#fff" size={25} />
-                  <Text style={styles.playerSkipText}>۱۵</Text>
+                  <Text style={styles.playerSkipText}>۱۰</Text>
                 </Pressable>
               </View>
 
-              <View style={styles.playerTimelineWrap}>
+              <View style={[styles.playerTimelineWrap, landscape && styles.playerTimelineWrapLandscape]}>
                 <Pressable
                   style={styles.playerTimelineTrack}
                   onLayout={(event) => { progressWidthRef.current = event.nativeEvent.layout.width || 1; }}
@@ -3203,85 +3400,101 @@ function VideoPlayerModal({
                 <View style={styles.playerTimeRow}>
                   <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
                   <Text style={styles.playerVersionText} numberOfLines={1}>
-                    {request.language ? languageTitle(request.language) : 'پخش فارسی'} • {activeSource.quality}
+                    {request.language ? languageTitle(request.language) : 'پخش آنلاین'} • {activeSource.quality}
                   </Text>
                   <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
                 </View>
               </View>
 
-              <View style={styles.playerBottomTools}>
+              <View style={[styles.playerBottomTools, landscape && styles.playerBottomToolsLandscape]}>
                 <Pressable onPress={toggleOrientation} style={styles.playerToolButton}>
                   <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={21} />
                 </Pressable>
-                <Pressable
-                  onPress={() => {
-                    setQualityMenuOpen(false);
-                    setDisplayMenuOpen(true);
-                    showControls();
-                  }}
-                  style={styles.playerToolButton}
-                >
-                  <Ionicons name="scan-outline" color="#fff" size={20} />
-                  <Text style={styles.playerToolText}>{displayModeLabel}</Text>
-                </Pressable>
+                {landscape ? (
+                  <Pressable
+                    onPress={() => {
+                      setQualityMenuOpen(false);
+                      setDisplayMenuOpen(true);
+                      revealControls();
+                    }}
+                    style={styles.playerToolButton}
+                  >
+                    <Ionicons name="scan-outline" color="#fff" size={20} />
+                    <Text style={styles.playerToolText}>{displayModeLabel}</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
                   onPress={() => {
                     setDisplayMenuOpen(false);
                     setQualityMenuOpen(true);
-                    showControls();
+                    revealControls();
                   }}
                   style={styles.playerToolButton}
                 >
                   <Ionicons name="settings-outline" color="#fff" size={20} />
                   <Text style={styles.playerToolText}>{activeSource.quality}</Text>
                 </Pressable>
+                {landscape ? (
+                  <Pressable onPress={lockPlayer} style={styles.playerToolButton}>
+                    <Ionicons name="lock-closed-outline" color="#fff" size={20} />
+                    <Text style={styles.playerToolText}>قفل</Text>
+                  </Pressable>
+                ) : null}
               </View>
             </View>
           ) : null}
 
-          {qualityMenuOpen ? (
+          {locked && lockIndicatorVisible ? (
+            <Pressable onPress={unlockPlayer} style={styles.playerLockedButton}>
+              <Ionicons name="lock-closed" color="#fff" size={25} />
+              <Text style={styles.playerLockedText}>برای بازکردن قفل بزنید</Text>
+            </Pressable>
+          ) : null}
+
+          {qualityMenuOpen && !locked ? (
             <View style={styles.playerQualityOverlay}>
-              <Pressable style={StyleSheet.absoluteFill} onPress={() => setQualityMenuOpen(false)} />
-              <View style={styles.playerQualityCard}>
+              <Pressable style={StyleSheet.absoluteFill} onPress={() => { setQualityMenuOpen(false); revealControls(); }} />
+              <View style={[styles.playerQualityCard, landscape && styles.playerMenuCardLandscape]}>
                 <View style={styles.playerQualityHeader}>
                   <Text style={styles.playerQualityTitle}>تنظیمات پخش</Text>
                   <Text style={styles.playerQualityDescription}>
-                    {request.language ? languageTitle(request.language) : 'پخش فارسی'} • کیفیت پیش‌فرض ۴۸۰p
+                    {request.language ? languageTitle(request.language) : 'پخش آنلاین'} • کیفیت فعلی {activeSource.quality}
                   </Text>
                 </View>
-                {orderedSources.map((source) => {
-                  const selected = source.id === activeSource.id;
-                  return (
-                    <Pressable
-                      key={source.id}
-                      onPress={() => switchQuality(source)}
-                      style={[styles.playerQualityOption, selected && styles.playerQualityOptionSelected]}
-                    >
-                      <Text style={[styles.playerQualityOptionText, selected && styles.playerQualityOptionTextSelected]}>
-                        {source.quality}
-                      </Text>
-                      <Ionicons
-                        name={selected ? 'radio-button-on' : 'radio-button-off'}
-                        color={selected ? COLORS.gold : COLORS.muted}
-                        size={20}
-                      />
-                    </Pressable>
-                  );
-                })}
+                <ScrollView style={styles.playerMenuScroll} contentContainerStyle={styles.playerMenuScrollContent} showsVerticalScrollIndicator={false}>
+                  {orderedSources.map((source) => {
+                    const selected = source.id === activeSource.id;
+                    return (
+                      <Pressable
+                        key={source.id}
+                        onPress={() => switchQuality(source)}
+                        style={[styles.playerQualityOption, selected && styles.playerQualityOptionSelected]}
+                      >
+                        <Text style={[styles.playerQualityOptionText, selected && styles.playerQualityOptionTextSelected]}>
+                          {source.quality}
+                        </Text>
+                        <Ionicons
+                          name={selected ? 'radio-button-on' : 'radio-button-off'}
+                          color={selected ? COLORS.gold : COLORS.muted}
+                          size={20}
+                        />
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
               </View>
             </View>
           ) : null}
 
-          {displayMenuOpen ? (
+          {displayMenuOpen && landscape && !locked ? (
             <View style={styles.playerQualityOverlay}>
-              <Pressable style={StyleSheet.absoluteFill} onPress={() => setDisplayMenuOpen(false)} />
-              <View style={styles.playerDisplayCard}>
+              <Pressable style={StyleSheet.absoluteFill} onPress={() => { setDisplayMenuOpen(false); revealControls(); }} />
+              <View style={[styles.playerDisplayCard, styles.playerMenuCardLandscape]}>
                 <View style={styles.playerQualityHeader}>
                   <Text style={styles.playerQualityTitle}>اندازه تصویر</Text>
-                  <Text style={styles.playerQualityDescription}>حالت دلخواه را انتخاب کنید.</Text>
+                  <Text style={styles.playerQualityDescription}>این گزینه فقط در حالت افقی فعال است.</Text>
                 </View>
                 {([
-                  { id: 'auto', title: 'خودکار', icon: 'scan-outline' },
                   { id: 'fit', title: 'نمایش کامل', icon: 'contract-outline' },
                   { id: 'fill', title: 'پر کردن صفحه', icon: 'expand-outline' },
                 ] as const).map((option) => {
@@ -3292,7 +3505,7 @@ function VideoPlayerModal({
                       onPress={() => {
                         setDisplayMode(option.id);
                         setDisplayMenuOpen(false);
-                        showControls();
+                        revealControls();
                       }}
                       style={[styles.playerDisplayOption, selected && styles.playerQualityOptionSelected]}
                     >
@@ -3311,6 +3524,7 @@ function VideoPlayerModal({
     </Modal>
   );
 }
+
 function OperatorGateModal({
   request,
   onClose,
@@ -3542,26 +3756,41 @@ function AppContent() {
   const [homeScrollOffset, setHomeScrollOffset] = useState(0);
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
+  const vpnCheckSequenceRef = useRef(0);
 
   const refreshVpnState = async (showProgress = false) => {
+    const sequence = ++vpnCheckSequenceRef.current;
     if (showProgress) setVpnChecking(true);
     try {
-      const active = await checkVpnActive(3);
-      setVpnActive(active);
+      // Action checks use one fast native lookup. Startup/retry gets two short retries.
+      const active = await checkVpnActive(showProgress ? 2 : 0);
+      if (sequence === vpnCheckSequenceRef.current) setVpnActive(active);
       return active;
     } finally {
-      if (showProgress) setVpnChecking(false);
+      if (showProgress && sequence === vpnCheckSequenceRef.current) setVpnChecking(false);
     }
   };
 
   const reloadContent = async (force = true) => {
     if (!force && Date.now() - lastContentLoadRef.current < 5 * 60 * 1000) return;
+    const initialLoad = lastContentLoadRef.current === 0;
     setContentLoading(true);
     try {
-      const nextContent = await loadContent();
+      // After the first successful launch, show the persisted catalog immediately
+      // and refresh it from GitHub in the background without blocking the home page.
+      const nextContent = await loadContent(initialLoad);
       setContent(nextContent);
       lastContentLoadRef.current = Date.now();
       if (nextContent.source === 'remote') void syncEpisodeAlerts(nextContent.items, true);
+
+      if (initialLoad && nextContent.source === 'cache') {
+        void loadContent(false).then((freshContent) => {
+          if (freshContent.source !== 'remote') return;
+          setContent(freshContent);
+          lastContentLoadRef.current = Date.now();
+          void syncEpisodeAlerts(freshContent.items, true);
+        }).catch(() => undefined);
+      }
     } finally {
       setContentLoading(false);
     }
@@ -3581,8 +3810,8 @@ function AppContent() {
       .then((state) => setEpisodeAlertSeriesIds(state.subscribedSeriesIds))
       .catch(() => undefined);
 
-    const vpnTimer = setTimeout(() => { void refreshVpnState(); }, 500);
-    const vpnRetryTimer = setTimeout(() => { void refreshVpnState(); }, 1800);
+    void refreshVpnState(true);
+    const vpnRetryTimer = setTimeout(() => { void refreshVpnState(); }, 750);
 
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
@@ -3591,7 +3820,7 @@ function AppContent() {
       }
     });
 
-    return () => { clearTimeout(vpnTimer); clearTimeout(vpnRetryTimer); subscription.remove(); };
+    return () => { clearTimeout(vpnRetryTimer); subscription.remove(); };
   }, []);
 
   useEffect(() => {
@@ -3831,7 +4060,7 @@ function AppContent() {
     );
   };
 
-  const resumeWatchRecord = (record: WatchProgressRecord) => {
+  const resumeWatchRecord = async (record: WatchProgressRecord) => {
     if (record.downloadId) {
       const download = downloadsRef.current.find((candidate) => candidate.id === record.downloadId);
       if (!download?.localUri || download.status !== 'completed') {
@@ -3858,6 +4087,10 @@ function AppContent() {
       });
       return;
     }
+
+    // Continuing a remote stream is also a playback action, so verify the
+    // Android VPN transport again immediately before opening the player.
+    if (await refreshVpnState()) return;
 
     const item = content?.items.find((candidate) => candidate.id === record.itemId);
     if (!item) {
@@ -3899,7 +4132,7 @@ function AppContent() {
         return;
       }
     }
-    resumeWatchRecord(record);
+    void resumeWatchRecord(record);
   };
 
   const openCatalogFilter = (filter: SearchFilter) => {
@@ -4886,8 +5119,10 @@ const styles = StyleSheet.create({
   storageActionDangerText: { color: COLORS.red },
 
   headerBrandRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 9 },
+  catalogListContent: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 112 },
   categoryGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', marginTop: 16, marginBottom: 24 },
   categoryCard: { minHeight: 176, padding: 13, borderRadius: 18, overflow: 'hidden', alignItems: 'flex-end', justifyContent: 'space-between', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.25)' },
+  categoryFallbackArt: { flex: 1, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-8deg' }] },
   categoryCardIcon: { width: 39, height: 39, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(8,10,14,0.78)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
   categoryCardTextWrap: { width: '100%', alignItems: 'flex-end' },
   categoryCardTitle: { ...rtlText, color: COLORS.text, fontSize: 12.5, fontWeight: '900', width: '100%', textShadowColor: 'rgba(0,0,0,0.72)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
@@ -4904,12 +5139,16 @@ const styles = StyleSheet.create({
   storageTotals: { marginTop: 13, padding: 11, borderRadius: 11, alignItems: 'flex-end', gap: 5, backgroundColor: 'rgba(216,180,90,0.06)' },
   storageTotalText: { ...rtlText, color: COLORS.text, fontSize: 8.7, fontWeight: '800' },
   downloadLibraryBytes: { ...rtlText, color: COLORS.text, fontSize: 8.3, marginTop: 7, width: '100%' },
-  playerControlsLayer: { ...StyleSheet.absoluteFillObject, zIndex: 12, backgroundColor: 'rgba(0,0,0,0.14)' },
+  playerControlsLayer: { ...StyleSheet.absoluteFillObject, zIndex: 12, backgroundColor: 'rgba(0,0,0,0.18)' },
+  playerOverlayHeader: { position: 'absolute', top: 0, right: 0, left: 0, minHeight: 64, paddingHorizontal: 12, paddingTop: 8, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(5,7,10,0.82)', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.10)' },
+  playerOverlayHeaderLandscape: { minHeight: 54, paddingTop: 5, paddingHorizontal: 16 },
   playerCenterControls: { position: 'absolute', left: 0, right: 0, top: '42%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 28 },
+  playerCenterControlsLandscape: { top: '38%' },
   playerRoundButton: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   playerPrimaryButton: { width: 66, height: 66, borderRadius: 33, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   playerSkipText: { position: 'absolute', color: '#fff', fontSize: 7, fontWeight: '900' },
   playerTimelineWrap: { position: 'absolute', left: 15, right: 15, bottom: 126 },
+  playerTimelineWrapLandscape: { left: 24, right: 24, bottom: 72 },
   playerTimelineTrack: { width: '100%', height: 22, justifyContent: 'center' },
   playerTimelineFill: { position: 'absolute', left: 0, height: 4, borderRadius: 3, backgroundColor: '#fff' },
   playerTimelineThumb: { position: 'absolute', width: 13, height: 13, marginLeft: -6.5, borderRadius: 7, backgroundColor: '#fff' },
@@ -4917,8 +5156,14 @@ const styles = StyleSheet.create({
   playerTimeText: { color: '#fff', fontSize: 9.5, fontWeight: '800' },
   playerVersionText: { ...rtlText, minWidth: 0, flex: 1, color: 'rgba(255,255,255,0.88)', fontSize: 8.5, textAlign: 'center' },
   playerBottomTools: { position: 'absolute', right: 14, left: 14, bottom: 62, zIndex: 12, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'flex-start', gap: 8 },
+  playerBottomToolsLandscape: { right: 24, left: 24, bottom: 18 },
   playerToolButton: { minWidth: 45, minHeight: 42, paddingHorizontal: 10, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(8,10,14,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   playerToolText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
+  playerLockedButton: { position: 'absolute', left: 24, top: '45%', minHeight: 50, paddingHorizontal: 15, borderRadius: 16, zIndex: 30, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(5,7,10,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)' },
+  playerLockedText: { ...rtlText, color: '#fff', fontSize: 9.5, fontWeight: '900' },
+  playerMenuCardLandscape: { maxWidth: 420, maxHeight: '82%', paddingVertical: 12 },
+  playerMenuScroll: { maxHeight: 320 },
+  playerMenuScrollContent: { paddingBottom: 4 },
   vpnOverlay: { flex: 1, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(3,5,8,0.97)' },
   vpnCard: { width: '100%', maxWidth: 420, padding: 24, borderRadius: 22, alignItems: 'center', backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
   vpnIconWrap: { width: 68, height: 68, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.28)' },
@@ -4926,6 +5171,7 @@ const styles = StyleSheet.create({
   vpnText: { ...rtlText, color: COLORS.muted, fontSize: 10.5, lineHeight: 21, textAlign: 'center', marginTop: 10 },
   vpnRetryButton: { minWidth: 190, minHeight: 50, marginTop: 20, paddingHorizontal: 20, borderRadius: 15, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red },
   vpnRetryText: { color: '#fff', fontSize: 11, fontWeight: '900' },
+  disabledButton: { opacity: 0.55 },
   sideMenuOverlay: { flex: 1, flexDirection: 'row-reverse', backgroundColor: 'rgba(0,0,0,0.62)' },
   sideMenuPanel: { width: '82%', maxWidth: 360, height: '100%', backgroundColor: '#0B0E13', borderLeftWidth: 1, borderLeftColor: COLORS.border },
   sideMenuHeader: { minHeight: 75, paddingHorizontal: 16, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: COLORS.border },

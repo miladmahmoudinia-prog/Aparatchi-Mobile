@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system/legacy';
 import { CATALOG, VERIFIED_IRANIAN_SCHEDULE } from './data';
 import { REMOTE_CONTENT_URL } from './config';
 import {
@@ -14,7 +15,7 @@ import {
 } from './types';
 
 export type LoadedContent = CatalogPayload & {
-  source: 'remote' | 'local';
+  source: 'remote' | 'cache' | 'local';
 };
 
 const LOCAL_PAYLOAD: CatalogPayload = {
@@ -24,6 +25,10 @@ const LOCAL_PAYLOAD: CatalogPayload = {
   iranianSchedule: VERIFIED_IRANIAN_SCHEDULE,
   weeklySchedule: [],
 };
+
+const REMOTE_CACHE_URI = FileSystem.documentDirectory
+  ? `${FileSystem.documentDirectory}aparatchi-catalog-cache.json`
+  : '';
 
 const DAY_IDS: DayId[] = [
   'saturday',
@@ -294,7 +299,7 @@ const detectMediaLanguage = (...values: unknown[]): MediaLanguage | null => {
   const text = values.map((value) => asString(value)).filter(Boolean).join(' ');
   if (!text) return null;
   if (/زیر\s*نویس|subtitle|subbed|soft\s*sub|hard\s*sub|\bsub\b|\.vtt\b|\.srt\b/i.test(text)) return 'subtitled';
-  if (/دوبله|dubbed|\bdub\b|persian\s*audio|farsi\s*audio|دو\s*زبانه|dual\s*audio/i.test(text)) return 'dubbed';
+  if (/دوبله|dubbed|\bdub\b|persian(?:\s*audio)?|farsi(?:\s*audio)?|فارسی|دو\s*زبانه|dual\s*audio/i.test(text)) return 'dubbed';
   return null;
 };
 
@@ -371,7 +376,7 @@ const normalizeDownloadFile = (
     file.quality,
     isOperatorMode(mode)
       ? mode === 'operator-play' ? 'پخش آنلاین' : 'دریافت'
-      : asString(file.label, 'کیفیت اصلی'),
+      : asString(file.label, 'کیفیت فایل'),
   );
   const label = asString(file.label);
   const explicitLanguage = asString(file.language).toLowerCase();
@@ -604,9 +609,12 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     : rawAccess === 'operator' || operatorOnly
       ? 'operator'
       : 'free';
+  const declaredLanguages = stringArray(item.availableLanguages)
+    .filter((language): language is MediaLanguage => language === 'dubbed' || language === 'subtitled');
   const availableLanguages = LANGUAGE_ORDER.filter((language) =>
+    declaredLanguages.includes(language) ||
     downloads.some((section) =>
-      section.files.some((file) => !isOperatorMode(file.mode) && file.mode !== 'play' && file.language === language),
+      section.files.some((file) => !isOperatorMode(file.mode) && file.language === language),
     ),
   );
   const supportedOperators = [
@@ -738,7 +746,28 @@ const normalizedLocalPayload = (): CatalogPayload => {
   };
 };
 
-export async function loadContent(): Promise<LoadedContent> {
+const readCachedContent = async (): Promise<CatalogPayload | null> => {
+  if (!REMOTE_CACHE_URI) return null;
+  try {
+    const info = await FileSystem.getInfoAsync(REMOTE_CACHE_URI);
+    if (!info.exists) return null;
+    const raw = await FileSystem.readAsStringAsync(REMOTE_CACHE_URI);
+    return parsePayload(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedContent = async (payload: unknown) => {
+  if (!REMOTE_CACHE_URI) return;
+  try {
+    await FileSystem.writeAsStringAsync(REMOTE_CACHE_URI, JSON.stringify(payload));
+  } catch {
+    // A cache write failure must never prevent the freshly fetched catalog from opening.
+  }
+};
+
+export async function loadContent(preferCache = false): Promise<LoadedContent> {
   const remoteUrl = REMOTE_CONTENT_URL.trim();
   if (!remoteUrl) {
     return {
@@ -747,18 +776,26 @@ export async function loadContent(): Promise<LoadedContent> {
     };
   }
 
+  if (preferCache) {
+    const cached = await readCachedContent();
+    if (cached) return { ...cached, source: 'cache' };
+  }
+
   try {
-    const separator = remoteUrl.includes('?') ? '&' : '?';
-    const response = await fetch(`${remoteUrl}${separator}v=${Date.now()}`, {
-      headers: { Accept: 'application/json' },
+    const response = await fetch(remoteUrl, {
+      headers: { Accept: 'application/json', 'Cache-Control': 'max-age=300' },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const parsed = parsePayload(await response.json());
+    const rawPayload = await response.json();
+    const parsed = parsePayload(rawPayload);
     if (!parsed) throw new Error('Invalid catalog payload');
 
+    void writeCachedContent(rawPayload);
     return { ...parsed, source: 'remote' };
   } catch {
+    const cached = await readCachedContent();
+    if (cached) return { ...cached, source: 'cache' };
     return {
       ...normalizedLocalPayload(),
       source: 'local',
