@@ -40,28 +40,6 @@ const DAY_IDS: DayId[] = [
   'friday',
 ];
 
-const DAY_ALIASES: Record<string, DayId> = {
-  saturday: 'saturday', sat: 'saturday', 'شنبه': 'saturday', '0': 'saturday',
-  sunday: 'sunday', sun: 'sunday', 'یکشنبه': 'sunday', '۱': 'sunday', '1': 'sunday',
-  monday: 'monday', mon: 'monday', 'دوشنبه': 'monday', '۲': 'monday', '2': 'monday',
-  tuesday: 'tuesday', tue: 'tuesday', tues: 'tuesday', 'سه‌شنبه': 'tuesday', 'سه شنبه': 'tuesday', '۳': 'tuesday', '3': 'tuesday',
-  wednesday: 'wednesday', wed: 'wednesday', 'چهارشنبه': 'wednesday', '۴': 'wednesday', '4': 'wednesday',
-  thursday: 'thursday', thu: 'thursday', thur: 'thursday', 'پنجشنبه': 'thursday', 'پنج‌شنبه': 'thursday', '۵': 'thursday', '5': 'thursday',
-  friday: 'friday', fri: 'friday', 'جمعه': 'friday', '۶': 'friday', '6': 'friday',
-};
-
-const normalizeDayId = (value: unknown): DayId | null => {
-  const raw = asString(value).toLowerCase().replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/\s+/g, ' ').trim();
-  return DAY_ALIASES[raw] || null;
-};
-
-const normalizeComparableName = (value: unknown) => asString(value)
-  .toLowerCase()
-  .replace(/[يى]/g, 'ی')
-  .replace(/ك/g, 'ک')
-  .replace(/[^a-z0-9\u0600-\u06ff]+/g, ' ')
-  .trim();
-
 const LANGUAGE_ORDER: MediaLanguage[] = ['dubbed', 'subtitled'];
 
 const asString = (value: unknown, fallback = '') =>
@@ -668,6 +646,9 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     ...(countryMetadata.countryNames.length
       ? { countryNames: countryMetadata.countryNames }
       : {}),
+    ...(asString(item.originalLanguage ?? item.original_language)
+      ? { originalLanguage: asString(item.originalLanguage ?? item.original_language).toLowerCase() }
+      : {}),
     ...(collectionId ? { collectionId } : {}),
     ...(collectionNameFa ? { collectionNameFa } : {}),
     ...(collectionName ? { collectionName } : {}),
@@ -698,6 +679,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     categoryLabels: stringArray(item.categoryLabels),
     ...(asString(item.contentKind) ? { contentKind: asString(item.contentKind) } : {}),
     isAnimation: asBoolean(item.isAnimation),
+    isAnime: asBoolean(item.isAnime),
     isTalkShow: asBoolean(item.isTalkShow),
     isDocumentary: asBoolean(item.isDocumentary),
     ...(asString(item.createdAt) ? { createdAt: asString(item.createdAt) } : {}),
@@ -710,105 +692,33 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
 const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | null => {
   if (!value || typeof value !== 'object') return null;
   const entry = value as Record<string, unknown>;
-  const day = normalizeDayId(
-    entry.day ?? entry.weekday ?? entry.week_day ?? entry.releaseDay ?? entry.release_day ??
-    entry.broadcastDay ?? entry.broadcast_day ?? entry.airDay ?? entry.air_day,
-  );
-  const nameFa = asString(
-    entry.nameFa ?? entry.name_fa ?? entry.titleFa ?? entry.title_fa ?? entry.title ?? entry.name,
-  );
-  const explicitItemId = asString(
-    entry.itemId ?? entry.item_id ?? entry.contentId ?? entry.content_id ??
-    entry.seriesId ?? entry.series_id ?? entry.slug ?? entry.contentSlug ?? entry.content_slug,
-  );
-  if ((!explicitItemId && !nameFa) || !day) return null;
+  const day = asString(entry.day) as DayId;
+  const itemId = asString(entry.itemId ?? entry.item_id);
+  if (!itemId || !DAY_IDS.includes(day)) return null;
 
-  const itemId = explicitItemId || `name:${normalizeComparableName(nameFa)}`;
-  const rawRegion = asString(entry.region ?? entry.origin ?? entry.countryType ?? entry.country_type).toLowerCase();
-  const region = /foreign|خارج|international/.test(rawRegion) ? 'foreign' : 'iranian';
-  const episode = asNumber(entry.episode ?? entry.episodeNumber ?? entry.episode_number, 0);
+  const region = entry.region === 'foreign' ? 'foreign' : 'iranian';
+  const episode = asNumber(entry.episode, 0);
 
   return {
-    id: asString(entry.scheduleId ?? entry.schedule_id ?? entry.id, `schedule-${itemId}-${day}-${index}`),
+    id: asString(entry.id, `schedule-${itemId}-${day}-${index}`),
     itemId,
-    nameFa,
-    poster: asString(entry.poster ?? entry.image ?? entry.thumbnail),
+    nameFa: asString(entry.nameFa ?? entry.name_fa),
+    poster: asString(entry.poster),
     day,
-    time: asString(
-      entry.time ?? entry.airtime ?? entry.airTime ?? entry.releaseTime ?? entry.release_time ??
-      entry.broadcastTime ?? entry.broadcast_time,
-      '—',
-    ),
+    time: asString(entry.time, '—'),
     ...(episode > 0 ? { episode } : {}),
     region,
-    ...(asString(entry.sourceLabel ?? entry.source_label) ? { sourceLabel: asString(entry.sourceLabel ?? entry.source_label) } : {}),
-    ...(asString(entry.verifiedAt ?? entry.verified_at) ? { verifiedAt: asString(entry.verifiedAt ?? entry.verified_at) } : {}),
+    ...(asString(entry.sourceLabel) ? { sourceLabel: asString(entry.sourceLabel) } : {}),
+    ...(asString(entry.verifiedAt) ? { verifiedAt: asString(entry.verifiedAt) } : {}),
   };
 };
 
-const normalizeSchedule = (value: unknown): ScheduleEntry[] => {
-  if (Array.isArray(value)) {
-    return value
-      .map((entry, index) => normalizeScheduleEntry(entry, index))
-      .filter((entry): entry is ScheduleEntry => Boolean(entry));
-  }
-  if (!value || typeof value !== 'object') return [];
-
-  const direct = value as Record<string, unknown>;
-  if (direct.day || direct.weekday || direct.releaseDay || direct.release_day || direct.broadcastDay || direct.broadcast_day) {
-    const normalized = normalizeScheduleEntry(direct, 0);
-    return normalized ? [normalized] : [];
-  }
-
-  return Object.entries(direct).flatMap(([day, entries], dayIndex) =>
-    (Array.isArray(entries) ? entries : [entries])
-      .map((entry, index) => {
-        const record = entry && typeof entry === 'object'
-          ? entry as Record<string, unknown>
-          : { nameFa: asString(entry) };
-        return normalizeScheduleEntry({ ...record, day }, dayIndex * 100 + index);
-      })
-      .filter((entry): entry is ScheduleEntry => Boolean(entry)),
-  );
-};
-
-const itemLevelSchedule = (itemsValue: unknown) => {
-  if (!Array.isArray(itemsValue)) return [] as ScheduleEntry[];
-  return itemsValue.flatMap((rawItem, itemIndex) => {
-    if (!rawItem || typeof rawItem !== 'object') return [];
-    const item = rawItem as Record<string, unknown>;
-    if (item.type !== 'series') return [];
-    const common = {
-      itemId: asString(item.id ?? item.t_id ?? item.slug),
-      nameFa: asString(item.nameFa ?? item.name_fa ?? item.name),
-      poster: asString(item.poster),
-      region: asBoolean(item.ir) ? 'iranian' : 'foreign',
-    };
-    const scheduleValue = item.schedule ?? item.schedules ?? item.broadcastSchedule ?? item.broadcast_schedule ?? item.releaseSchedule ?? item.release_schedule;
-    const entries = Array.isArray(scheduleValue) ? scheduleValue : scheduleValue ? [scheduleValue] : [];
-    if (!entries.length && (item.broadcastDay || item.broadcast_day || item.releaseDay || item.release_day || item.weekday)) entries.push(item);
-    return entries.map((entry, index) => normalizeScheduleEntry({ ...common, ...(entry as Record<string, unknown>) }, itemIndex * 100 + index)).filter((entry): entry is ScheduleEntry => Boolean(entry));
-  });
-};
-
-const mergeScheduleWithCatalog = (entries: ScheduleEntry[], items: CatalogItem[]) => {
-  const byId = new Map(items.map((item) => [String(item.id), item]));
-  const byName = new Map(items.filter((item) => item.type === 'series').flatMap((item) => [item.nameFa, item.name].filter(Boolean).map((name) => [normalizeComparableName(name), item] as const)));
-  const merged = new Map<string, ScheduleEntry>();
-  for (const entry of entries) {
-    const item = byId.get(String(entry.itemId)) || byName.get(normalizeComparableName(entry.nameFa));
-    if (!item || item.type !== 'series') continue;
-    const normalized: ScheduleEntry = {
-      ...entry,
-      itemId: String(item.id),
-      nameFa: item.nameFa || entry.nameFa,
-      poster: item.poster || entry.poster,
-      region: item.ir ? 'iranian' : 'foreign',
-    };
-    merged.set(`${normalized.itemId}:${normalized.day}:${normalized.region}`, normalized);
-  }
-  return [...merged.values()];
-};
+const normalizeSchedule = (value: unknown) =>
+  Array.isArray(value)
+    ? value
+        .map((entry, index) => normalizeScheduleEntry(entry, index))
+        .filter((entry): entry is ScheduleEntry => Boolean(entry))
+    : [];
 
 const parsePayload = (value: unknown): CatalogPayload | null => {
   if (!value || typeof value !== 'object') return null;
@@ -820,20 +730,12 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
     .filter((item): item is CatalogItem => Boolean(item));
   if (!items.length) return null;
 
-  const rawSchedule = [
-    ...normalizeSchedule(payload.iranianSchedule ?? payload.iranian_schedule),
-    ...normalizeSchedule(payload.weeklySchedule ?? payload.weekly_schedule ?? payload.schedule ?? payload.schedules),
-    ...itemLevelSchedule(payload.items),
-    ...VERIFIED_IRANIAN_SCHEDULE,
-  ];
-  const mergedSchedule = mergeScheduleWithCatalog(rawSchedule, items);
-
   return {
     version: asString(payload.version, 'remote'),
     updatedAt: asString(payload.updatedAt, new Date().toISOString()),
     items: newestFirst(items),
-    iranianSchedule: mergedSchedule.filter((entry) => entry.region === 'iranian'),
-    weeklySchedule: mergedSchedule.filter((entry) => entry.region === 'foreign'),
+    iranianSchedule: normalizeSchedule(payload.iranianSchedule),
+    weeklySchedule: normalizeSchedule(payload.weeklySchedule),
   };
 };
 

@@ -1,6 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
-import * as Network from 'expo-network';
 import { useEvent, useEventListener } from 'expo';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -31,7 +30,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
 import { loadContent, LoadedContent } from './src/contentService';
@@ -70,7 +69,6 @@ type PersonRoleFilter = 'all' | 'actor' | 'director';
 type CountrySearchFilter = `country:${string}`;
 type GenreSearchFilter = `genre:${string}`;
 type YearSearchFilter = `year:${number}`;
-type CategorySearchFilter = `category:${string}`;
 type SearchFilter =
   | 'all'
   | 'movie'
@@ -84,26 +82,18 @@ type SearchFilter =
   | 'foreign-series'
   | 'korean-movies'
   | 'indian-movies'
+  | 'japanese-movies'
+  | 'anime-movies'
+  | 'anime-series'
   | 'animation-movies'
   | 'animation-series'
   | 'programs'
   | 'documentaries'
   | 'collections'
   | 'mobile-operator'
-  | 'foreign-movies-dubbed'
-  | 'foreign-movies-subtitled'
-  | 'foreign-series-dubbed'
-  | 'foreign-series-subtitled'
-  | 'korean-series'
-  | 'indian-series'
-  | 'turkish-movies'
-  | 'turkish-series'
-  | 'iranian-movies-operator'
-  | 'iranian-series-operator'
   | CountrySearchFilter
   | GenreSearchFilter
-  | YearSearchFilter
-  | CategorySearchFilter;
+  | YearSearchFilter;
 
 type CatalogDeepLink = {
   id: string;
@@ -159,6 +149,31 @@ const normalizeComparableText = (value?: string) =>
     .replace(/ك/g, 'ک')
     .replace(/[^a-z0-9؀-ۿ]+/g, ' ')
     .trim();
+
+const titleVisualScore = (value?: string) => {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const words = text ? text.split(' ').length : 0;
+  const latinCharacters = (text.match(/[A-Za-z0-9]/g) || []).length;
+  const wideCharacters = (text.match(/[آأإابتثجچحخدذرزژسشصضطظعغفقکگلمنوهی]/g) || []).length;
+  return text.length + Math.max(0, words - 3) * 2 + latinCharacters * 0.15 + wideCharacters * 0.08;
+};
+
+const adaptiveTitleStyle = (value: string, context: 'hero' | 'detail') => {
+  const score = titleVisualScore(value);
+  if (context === 'hero') {
+    if (score <= 20) return { fontSize: 32, lineHeight: 41, letterSpacing: -1.1 };
+    if (score <= 34) return { fontSize: 28, lineHeight: 36, letterSpacing: -0.95 };
+    if (score <= 50) return { fontSize: 24, lineHeight: 31, letterSpacing: -0.75 };
+    if (score <= 68) return { fontSize: 21, lineHeight: 28, letterSpacing: -0.55 };
+    return { fontSize: 19, lineHeight: 25, letterSpacing: -0.4 };
+  }
+  if (score <= 22) return { fontSize: 26, lineHeight: 34, letterSpacing: -0.8 };
+  if (score <= 38) return { fontSize: 23, lineHeight: 30, letterSpacing: -0.65 };
+  if (score <= 56) return { fontSize: 20, lineHeight: 27, letterSpacing: -0.5 };
+  return { fontSize: 18, lineHeight: 24, letterSpacing: -0.35 };
+};
+
+const adaptiveTitleLines = (value: string) => titleVisualScore(value) > 46 ? 3 : 2;
 
 const downloadModeFor = (file: DownloadFile): NonNullable<DownloadFile['mode']> =>
   file.mode || 'download';
@@ -281,22 +296,6 @@ const genreFilter = (genre: string): GenreSearchFilter =>
   `genre:${encodeURIComponent(genre)}`;
 
 const yearFilter = (year: number): YearSearchFilter => `year:${year}`;
-
-const categoryFilter = (key: string, label = ''): CategorySearchFilter =>
-  `category:${encodeURIComponent(key)}|${encodeURIComponent(label || key)}`;
-
-const categoryFromFilter = (filter: SearchFilter) => {
-  if (!filter.startsWith('category:')) return { key: '', label: '' };
-  const [encodedKey, encodedLabel = ''] = filter.slice('category:'.length).split('|');
-  try {
-    return {
-      key: decodeURIComponent(encodedKey || ''),
-      label: decodeURIComponent(encodedLabel || encodedKey || ''),
-    };
-  } catch {
-    return { key: encodedKey || '', label: encodedLabel || encodedKey || '' };
-  }
-};
 
 const countryLabel = (code: string, catalog: CatalogItem[] = []) => {
   const normalizedCode = code.toUpperCase();
@@ -609,15 +608,31 @@ const isIranianItem = (item: CatalogItem) =>
     (item.countryNames || []).some((value) => normalizeComparableText(value) === 'iran'),
   );
 
-const isAnimationItem = (item: CatalogItem) => Boolean(
+const isAnimeItem = (item: CatalogItem) => Boolean(
+  item.isAnime ||
+  item.contentKind === 'anime-movie' ||
+  item.contentKind === 'anime-series' ||
+  hasCategory(item, 'anime-movies') ||
+  hasCategory(item, 'anime-series') ||
+  ((item.isAnimation || item.genres.some((genre) => /انیمیشن|animation/i.test(genre))) &&
+    (item.countryCodes?.includes('JP') || item.originalLanguage === 'ja'))
+);
+
+const isAnimatedItem = (item: CatalogItem) => Boolean(
   item.isAnimation ||
+  isAnimeItem(item) ||
   item.contentKind === 'animation-movie' ||
   item.contentKind === 'animation-series' ||
   hasCategory(item, 'animation-movies') ||
   hasCategory(item, 'animation-series')
 );
 
+const isAnimationItem = (item: CatalogItem) => isAnimatedItem(item) && !isAnimeItem(item);
+
 const mediaKindLabel = (item: CatalogItem) => {
+  if (isAnimeItem(item)) {
+    return item.type === 'movie' ? 'انیمه سینمایی' : 'انیمه سریالی';
+  }
   if (isAnimationItem(item)) {
     return item.type === 'movie' ? 'انیمیشن سینمایی' : 'انیمیشن سریالی';
   }
@@ -676,8 +691,6 @@ const filterTitle = (filter: SearchFilter) => {
   if (genre) return `آثار ${genre}`;
   const year = yearFromFilter(filter);
   if (year) return `آثار سال ${toPersianDigits(year)}`;
-  const category = categoryFromFilter(filter);
-  if (category.key) return category.label || 'دسته‌بندی';
 
   const titles: Record<string, string> = {
     all: 'همه محتوا', movie: 'همه فیلم‌ها', series: 'همه سریال‌ها',
@@ -685,18 +698,11 @@ const filterTitle = (filter: SearchFilter) => {
     latest: 'جدیدترین‌ها', updated: 'به‌روزشده‌ها',
     'iranian-movies': 'فیلم‌های ایرانی', 'foreign-movies': 'فیلم‌های خارجی',
     'iranian-series': 'سریال‌های ایرانی', 'foreign-series': 'سریال‌های خارجی',
-    'korean-movies': 'فیلم‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی',
+    'korean-movies': 'فیلم‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی', 'japanese-movies': 'فیلم‌های ژاپنی',
+    'anime-movies': 'انیمه‌های سینمایی', 'anime-series': 'انیمه‌های سریالی',
     'animation-movies': 'انیمیشن‌های سینمایی', 'animation-series': 'انیمیشن‌های سریالی',
     programs: 'تاک‌شوها و برنامه‌ها', documentaries: 'مستندها', collections: 'کالکشن‌ها',
     'mobile-operator': 'ویژه اینترنت همراه',
-    'foreign-movies-dubbed': 'فیلم‌های خارجی دوبله فارسی',
-    'foreign-movies-subtitled': 'فیلم‌های خارجی زیرنویس فارسی',
-    'foreign-series-dubbed': 'سریال‌های خارجی دوبله فارسی',
-    'foreign-series-subtitled': 'سریال‌های خارجی زیرنویس فارسی',
-    'korean-series': 'سریال‌های کره‌ای', 'indian-series': 'سریال‌های هندی',
-    'turkish-movies': 'فیلم‌های ترکی', 'turkish-series': 'سریال‌های ترکی',
-    'iranian-movies-operator': 'فیلم‌های ایرانی ویژه همراه',
-    'iranian-series-operator': 'سریال‌های ایرانی ویژه همراه',
   };
   return titles[filter] || 'همه محتوا';
 };
@@ -708,8 +714,6 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
   if (genre) return item.genres.some((value) => normalizeComparableText(value) === normalizeComparableText(genre));
   const year = yearFromFilter(filter);
   if (year) return Number(item.year) === year;
-  const category = categoryFromFilter(filter);
-  if (category.key) return Boolean(item.categoryKeys?.includes(category.key));
 
   switch (filter) {
     case 'all': case 'latest': return true;
@@ -719,28 +723,21 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'subtitled':
       return !isIranianItem(item) && itemLanguages(item).includes('subtitled');
     case 'updated': return Boolean(meaningfulUpdateLabel(item));
-    case 'iranian-movies': return item.type === 'movie' && isIranianItem(item) && !isAnimationItem(item);
-    case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isAnimationItem(item);
-    case 'iranian-series': return item.type === 'series' && isIranianItem(item) && !isAnimationItem(item) && !isProgramItem(item);
-    case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isAnimationItem(item) && !isProgramItem(item);
-    case 'korean-movies': return item.type === 'movie' && item.countryCodes?.includes('KR') && !isAnimationItem(item);
-    case 'indian-movies': return item.type === 'movie' && item.countryCodes?.includes('IN') && !isAnimationItem(item);
+    case 'iranian-movies': return item.type === 'movie' && isIranianItem(item) && !isAnimatedItem(item);
+    case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isAnimatedItem(item);
+    case 'iranian-series': return item.type === 'series' && isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item);
+    case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item);
+    case 'korean-movies': return item.type === 'movie' && item.countryCodes?.includes('KR') && !isAnimatedItem(item);
+    case 'indian-movies': return item.type === 'movie' && item.countryCodes?.includes('IN') && !isAnimatedItem(item);
+    case 'japanese-movies': return item.type === 'movie' && item.countryCodes?.includes('JP') && !isAnimatedItem(item);
+    case 'anime-movies': return item.type === 'movie' && isAnimeItem(item);
+    case 'anime-series': return item.type === 'series' && isAnimeItem(item);
     case 'animation-movies': return item.type === 'movie' && isAnimationItem(item);
     case 'animation-series': return item.type === 'series' && isAnimationItem(item);
     case 'programs': return isProgramItem(item);
     case 'documentaries': return isDocumentaryItem(item);
     case 'collections': return item.type === 'movie' && Boolean(item.collectionId);
     case 'mobile-operator': return itemHasOperatorAccess(item);
-    case 'foreign-movies-dubbed': return item.type === 'movie' && !isIranianItem(item) && !isAnimationItem(item) && itemLanguages(item).includes('dubbed');
-    case 'foreign-movies-subtitled': return item.type === 'movie' && !isIranianItem(item) && !isAnimationItem(item) && itemLanguages(item).includes('subtitled');
-    case 'foreign-series-dubbed': return item.type === 'series' && !isIranianItem(item) && !isAnimationItem(item) && itemLanguages(item).includes('dubbed');
-    case 'foreign-series-subtitled': return item.type === 'series' && !isIranianItem(item) && !isAnimationItem(item) && itemLanguages(item).includes('subtitled');
-    case 'korean-series': return item.type === 'series' && item.countryCodes?.includes('KR') && !isAnimationItem(item);
-    case 'indian-series': return item.type === 'series' && item.countryCodes?.includes('IN') && !isAnimationItem(item);
-    case 'turkish-movies': return item.type === 'movie' && item.countryCodes?.includes('TR') && !isAnimationItem(item);
-    case 'turkish-series': return item.type === 'series' && item.countryCodes?.includes('TR') && !isAnimationItem(item);
-    case 'iranian-movies-operator': return item.type === 'movie' && isIranianItem(item) && itemHasOperatorAccess(item);
-    case 'iranian-series-operator': return item.type === 'series' && isIranianItem(item) && itemHasOperatorAccess(item);
     default: return true;
   }
 };
@@ -793,18 +790,7 @@ const collectionMembersFor = (item: CatalogItem, catalog: CatalogItem[]) => {
     });
 };
 
-const containsPersianText = (value?: string) => /[\u0600-\u06FF]/.test(String(value || ''));
-
-const personName = (person: CatalogPerson) => {
-  if (containsPersianText(person.nameFa)) return person.nameFa;
-  if (containsPersianText(person.name)) return person.name || person.nameFa || 'بدون نام';
-  return person.name || person.nameFa || 'بدون نام';
-};
-
-const personEnglishName = (person: CatalogPerson) => {
-  const english = [person.name, person.nameFa].find((value) => value && !containsPersianText(value));
-  return english && english !== personName(person) ? english : '';
-};
+const personName = (person: CatalogPerson) => person.nameFa || person.name || 'بدون نام';
 
 const personRoleTitle = (person: CatalogPerson) =>
   person.roleLabel || (person.role === 'director' ? 'کارگردان' : 'بازیگر');
@@ -823,41 +809,21 @@ const personWorksFor = (person: CatalogPerson, catalog: CatalogItem[]) =>
     'latest',
   );
 
-const personImageCandidates = (person: CatalogPerson) => {
-  const raw = String(person.image || '').trim();
-  if (!isSafeHttpUrl(raw)) return [] as string[];
-  const candidates = [raw.replace(/^http:\/\//i, 'https://')];
-  if (/image\.tmdb\.org\/t\/p\//i.test(raw)) {
-    candidates.push(
-      raw.replace(/\/t\/p\/[^/]+\//i, '/t/p/w342/'),
-      raw.replace(/\/t\/p\/[^/]+\//i, '/t/p/w185/'),
-      raw.replace(/\/t\/p\/[^/]+\//i, '/t/p/original/'),
-    );
-  }
-  return [...new Set(candidates.filter(isSafeHttpUrl))];
-};
-
 function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
-  const candidates = useMemo(() => personImageCandidates(person), [person.id, person.image]);
-  const [candidateIndex, setCandidateIndex] = useState(0);
-
-  useEffect(() => setCandidateIndex(0), [person.id, person.image]);
-
-  const image = candidates[candidateIndex] || '';
+  const [failed, setFailed] = useState(false);
+  const image = !failed && isSafeHttpUrl(person.image) ? person.image : '';
   return image ? (
     <Image
-      key={`${person.id}:${image}`}
       source={{ uri: image }}
       style={style}
       contentFit="cover"
       cachePolicy="memory-disk"
-      priority="high"
-      transition={0}
-      onError={() => setCandidateIndex((index) => index + 1)}
+      transition={150}
+      onError={() => setFailed(true)}
     />
   ) : (
     <View style={[style, styles.personImageFallback]}>
-      <Text style={styles.personImageFallbackText}>{personInitials(person) || '؟'}</Text>
+      <Ionicons name="person-outline" color={COLORS.gold} size={Math.max(22, Number(style?.width || 52) * 0.42)} />
     </View>
   );
 }
@@ -896,20 +862,6 @@ function Header({
           <Ionicons name="search-outline" color={COLORS.text} size={21} />
         </Pressable>
       </View>
-    </View>
-  );
-}
-
-function ScreenHeader({ title, onMenu }: { title: string; onMenu: () => void }) {
-  return (
-    <View style={styles.simpleHeader}>
-      <View style={styles.simpleHeaderBrand}>
-        <Pressable onPress={onMenu} style={styles.iconButton} accessibilityLabel="منوی دسته‌بندی">
-          <Ionicons name="menu" color={COLORS.text} size={23} />
-        </Pressable>
-        <Logo />
-      </View>
-      <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{title}</Text>
     </View>
   );
 }
@@ -980,7 +932,13 @@ function HeroSlide({
             <Text style={styles.yearBadgeText}>{toPersianDigits(item.year)}</Text>
           </View>
         </View>
-        <Text numberOfLines={2} style={styles.heroTitle}>{item.nameFa}</Text>
+        <Text
+          numberOfLines={adaptiveTitleLines(item.nameFa)}
+          adjustsFontSizeToFit={false}
+          style={[styles.heroTitle, adaptiveTitleStyle(item.nameFa, 'hero')]}
+        >
+          {item.nameFa}
+        </Text>
         <Text numberOfLines={1} style={styles.heroEnglish}>{item.name}</Text>
         <View style={styles.heroMeta}>
           {typeof item.rate === 'number' ? (
@@ -1031,7 +989,7 @@ function HeroSlider({
     const urls = safeItems
       .map((item) => item.backdrop || item.poster)
       .filter((url): url is string => Boolean(url));
-    if (urls.length) void Image.prefetch(urls, 'memory-disk').catch(() => undefined);
+    if (urls.length) void Image.prefetch(urls).catch(() => undefined);
   }, [safeItems]);
 
   useEffect(() => {
@@ -1289,12 +1247,10 @@ function PosterCard({
   item,
   onOpen,
   width = 137,
-  priority = 'normal',
 }: {
   item: CatalogItem;
   onOpen: () => void;
   width?: number;
-  priority?: 'low' | 'normal' | 'high';
 }) {
   const languageBadge = itemLanguageBadge(item);
   const latestEpisode = item.type === 'series' ? newestEpisodeGroup(item) : null;
@@ -1302,10 +1258,7 @@ function PosterCard({
   return (
     <Pressable onPress={onOpen} style={[styles.posterCard, { width }]}>
       <View style={[styles.posterImageWrap, { width, height: Math.round(width * 1.42) }]}>
-        <LinearGradient colors={['#171B22', '#0E1117']} style={StyleSheet.absoluteFill}>
-          <View style={styles.posterPlaceholder}><Ionicons name="film-outline" color="rgba(216,180,90,0.30)" size={30} /></View>
-        </LinearGradient>
-        <Image source={{ uri: item.poster }} recyclingKey={`${item.type}:${item.id}`} style={styles.posterImage} contentFit="cover" cachePolicy="memory-disk" priority={priority} transition={0} />
+        <Image source={{ uri: item.poster }} recyclingKey={`${item.type}:${item.id}`} style={styles.posterImage} contentFit="cover" cachePolicy="memory-disk" transition={80} />
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
         {languageBadge ? (
           <View style={styles.posterAccess}>
@@ -1440,6 +1393,7 @@ function PeopleSection({
       </View>
       <FlatList
         horizontal
+        inverted
         data={people}
         keyExtractor={(person) => person.id}
         showsHorizontalScrollIndicator={false}
@@ -1450,7 +1404,6 @@ function PeopleSection({
               <PersonAvatar person={person} style={styles.personAvatar} />
             </View>
             <Text numberOfLines={2} style={styles.personCardName}>{personName(person)}</Text>
-            {personEnglishName(person) ? <Text numberOfLines={1} style={styles.personCardEnglish}>{personEnglishName(person)}</Text> : null}
             <Text numberOfLines={1} style={styles.personCardRole}>{personRoleTitle(person)}</Text>
             {person.character ? (
               <Text numberOfLines={1} style={styles.personCardCharacter}>{person.character}</Text>
@@ -1469,19 +1422,14 @@ function HorizontalCatalog({
   items: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
 }) {
-  useEffect(() => {
-    const urls = items.slice(0, 6).map((item) => item.poster).filter(isSafeHttpUrl);
-    if (urls.length) void Image.prefetch(urls, 'memory-disk').catch(() => undefined);
-  }, [items]);
-
   return (
     <FlatList
       horizontal
       inverted
       data={items}
       keyExtractor={(item) => item.id}
-      renderItem={({ item, index }) => (
-        <PosterCard item={item} priority={index < 4 ? 'high' : 'normal'} onOpen={() => onOpen(item)} />
+      renderItem={({ item }) => (
+        <PosterCard item={item} onOpen={() => onOpen(item)} />
       )}
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
@@ -1618,6 +1566,9 @@ function HomeScreen({
     { filter: 'foreign-series', title: 'سریال‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-series') },
     { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-movies') },
     { filter: 'indian-movies', title: 'فیلم‌های هندی', items: catalogItemsForFilter(catalog, 'indian-movies') },
+    { filter: 'japanese-movies', title: 'فیلم‌های ژاپنی', items: catalogItemsForFilter(catalog, 'japanese-movies') },
+    { filter: 'anime-movies', title: 'انیمه‌های سینمایی', items: catalogItemsForFilter(catalog, 'anime-movies') },
+    { filter: 'anime-series', title: 'انیمه‌های سریالی', items: catalogItemsForFilter(catalog, 'anime-series') },
     { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی', items: catalogItemsForFilter(catalog, 'animation-movies') },
     { filter: 'animation-series', title: 'انیمیشن‌های سریالی', items: catalogItemsForFilter(catalog, 'animation-series') },
     { filter: 'programs', title: 'تاک‌شوها و برنامه‌ها', items: catalogItemsForFilter(catalog, 'programs') },
@@ -1671,6 +1622,8 @@ const CATEGORY_ART_PALETTES: [string, string, string][] = [
 const CATEGORY_FALLBACK_ART: Record<string, number> = {
   movie: require('./assets/category-art/movies.jpg'),
   series: require('./assets/category-art/series.jpg'),
+  'anime-movies': require('./assets/category-art/animation-movies.jpg'),
+  'anime-series': require('./assets/category-art/animation-series.jpg'),
   'animation-movies': require('./assets/category-art/animation-movies.jpg'),
   'animation-series': require('./assets/category-art/animation-series.jpg'),
   'iranian-movies': require('./assets/category-art/iranian-movies.jpg'),
@@ -1683,6 +1636,7 @@ const CATEGORY_FALLBACK_ART: Record<string, number> = {
   'mobile-operator': require('./assets/category-art/operator.jpg'),
   'korean-movies': require('./assets/category-art/korean.jpg'),
   'indian-movies': require('./assets/category-art/indian.jpg'),
+  'japanese-movies': require('./assets/category-art/foreign-movies.jpg'),
   collections: require('./assets/category-art/collections.jpg'),
   documentaries: require('./assets/category-art/documentaries.jpg'),
   programs: require('./assets/category-art/programs.jpg'),
@@ -1692,12 +1646,10 @@ function CategoriesScreen({
   catalog,
   onBrowse,
   onOpen,
-  onMenu,
 }: {
   catalog: CatalogItem[];
   onBrowse: (filter: SearchFilter) => void;
   onOpen: (item: CatalogItem) => void;
-  onMenu: () => void;
 }) {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(normalizeComparableText(query));
@@ -1705,8 +1657,10 @@ function CategoriesScreen({
   const cards: CategoryCardConfig[] = [
     { filter: 'movie', title: 'همه فیلم‌ها', subtitle: 'سینمایی ایرانی و خارجی', icon: 'film-outline' },
     { filter: 'series', title: 'همه سریال‌ها', subtitle: 'ایرانی، خارجی و در حال پخش', icon: 'tv-outline' },
-    { filter: 'animation-movies', title: 'انیمیشن سینمایی', subtitle: 'فیلم‌های انیمیشنی', icon: 'color-palette-outline' },
-    { filter: 'animation-series', title: 'انیمیشن سریالی', subtitle: 'مجموعه‌های چندقسمتی', icon: 'albums-outline' },
+    { filter: 'anime-movies', title: 'انیمه سینمایی', subtitle: 'آثار ژاپنی سینمایی', icon: 'sparkles-outline' },
+    { filter: 'anime-series', title: 'انیمه سریالی', subtitle: 'مجموعه‌های ژاپنی', icon: 'sparkles-outline' },
+    { filter: 'animation-movies', title: 'انیمیشن سینمایی', subtitle: 'انیمیشن‌های غیرانیمه', icon: 'color-palette-outline' },
+    { filter: 'animation-series', title: 'انیمیشن سریالی', subtitle: 'مجموعه‌های غیرانیمه', icon: 'albums-outline' },
     { filter: 'iranian-movies', title: 'فیلم‌های ایرانی', subtitle: 'سینمای ایران', icon: 'flag-outline' },
     { filter: 'foreign-movies', title: 'فیلم‌های خارجی', subtitle: 'سینمای جهان', icon: 'earth-outline' },
     { filter: 'iranian-series', title: 'سریال‌های ایرانی', subtitle: 'مجموعه‌های داخلی', icon: 'videocam-outline' },
@@ -1717,6 +1671,7 @@ function CategoriesScreen({
     { filter: 'mobile-operator', title: 'ویژه اینترنت همراه', subtitle: 'محتوای اپراتوری', icon: 'phone-portrait-outline' },
     { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', subtitle: 'سینمای کره جنوبی', icon: 'location-outline' },
     { filter: 'indian-movies', title: 'فیلم‌های هندی', subtitle: 'سینمای هند', icon: 'location-outline' },
+    { filter: 'japanese-movies', title: 'فیلم‌های ژاپنی', subtitle: 'سینمای ژاپن', icon: 'location-outline' },
     { filter: 'collections', title: 'کالکشن‌ها', subtitle: 'قسمت‌های یک مجموعه', icon: 'layers-outline' },
     { filter: 'documentaries', title: 'مستندها', subtitle: 'آثار مستند', icon: 'camera-outline' },
     { filter: 'programs', title: 'برنامه‌ها و تاک‌شوها', subtitle: 'گفت‌وگو و سرگرمی', icon: 'mic-outline' },
@@ -1762,7 +1717,7 @@ function CategoriesScreen({
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent} keyboardShouldPersistTaps="handled">
-      <ScreenHeader title="دسته‌بندی" onMenu={onMenu} />
+      <View style={styles.simpleHeader}><Logo /><Text style={styles.simpleHeaderTitle}>دسته‌بندی</Text></View>
       <View style={styles.searchBox}>
         <Ionicons name="search-outline" size={21} color={COLORS.muted} />
         <TextInput value={query} onChangeText={setQuery} placeholder="جست‌وجوی فیلم، سریال یا بازیگر…" placeholderTextColor={COLORS.muted} style={styles.searchInput} textAlign="right" />
@@ -1849,12 +1804,10 @@ function CatalogListScreen({
   catalog,
   onOpen,
   initialFilter,
-  onMenu,
 }: {
   catalog: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
   initialFilter: SearchFilter;
-  onMenu: () => void;
 }) {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(normalizeComparableText(query));
@@ -1880,7 +1833,10 @@ function CatalogListScreen({
 
   const header = (
     <View>
-      <ScreenHeader title={filterTitle(initialFilter)} onMenu={onMenu} />
+      <View style={styles.simpleHeader}>
+        <Logo />
+        <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{filterTitle(initialFilter)}</Text>
+      </View>
       <View style={styles.searchBox}>
         <Ionicons name="search-outline" color={COLORS.muted} size={21} />
         <TextInput
@@ -1934,7 +1890,6 @@ function SearchScreen(props: {
   catalog: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
   initialFilter: SearchFilter;
-  onMenu: () => void;
 }) {
   return props.initialFilter === 'all'
     ? <AdvancedSearchScreen {...props} />
@@ -1945,12 +1900,10 @@ function AdvancedSearchScreen({
   catalog,
   onOpen,
   initialFilter,
-  onMenu,
 }: {
   catalog: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
   initialFilter: SearchFilter;
-  onMenu: () => void;
 }) {
   const initialCountry = countryCodeFromFilter(initialFilter);
   const initialGenre = genreFromFilter(initialFilter);
@@ -2151,7 +2104,10 @@ function AdvancedSearchScreen({
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
-      <ScreenHeader title={screenTitle} onMenu={onMenu} />
+      <View style={styles.simpleHeader}>
+        <Logo />
+        <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{screenTitle}</Text>
+      </View>
       <View style={styles.searchBox}>
         <Ionicons name="search-outline" color={COLORS.muted} size={21} />
         <TextInput
@@ -2407,7 +2363,6 @@ function FavoritesScreen({
   onOpenHistory,
   onRemoveHistory,
   onClearHistory,
-  onMenu,
 }: {
   catalog: CatalogItem[];
   favorites: string[];
@@ -2416,7 +2371,6 @@ function FavoritesScreen({
   onOpenHistory: (record: WatchHistoryRecord) => void;
   onRemoveHistory: (id: string) => void;
   onClearHistory: () => void;
-  onMenu: () => void;
 }) {
   const [view, setView] = useState<'favorites' | 'history'>('favorites');
   const items = catalog.filter((item) => favorites.includes(item.id));
@@ -2426,7 +2380,10 @@ function FavoritesScreen({
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
-      <ScreenHeader title="کتابخانه من" onMenu={onMenu} />
+      <View style={styles.simpleHeader}>
+        <Logo />
+        <Text style={styles.simpleHeaderTitle}>کتابخانه من</Text>
+      </View>
 
       <View style={styles.libraryTabs}>
         <Pressable
@@ -2554,8 +2511,7 @@ function DownloadsScreen({
   onPlay,
   onPause,
   onResume,
-  onItemMenu,
-  onOpenMenu,
+  onMenu,
   onClearIncomplete,
   onClearCompleted,
 }: {
@@ -2563,8 +2519,7 @@ function DownloadsScreen({
   onPlay: (record: DownloadRecord) => void;
   onPause: (record: DownloadRecord) => void;
   onResume: (record: DownloadRecord) => void;
-  onItemMenu: (record: DownloadRecord) => void;
-  onOpenMenu: () => void;
+  onMenu: (record: DownloadRecord) => void;
   onClearIncomplete: () => void;
   onClearCompleted: () => void;
 }) {
@@ -2576,7 +2531,10 @@ function DownloadsScreen({
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
-      <ScreenHeader title="دریافت‌ها" onMenu={onOpenMenu} />
+      <View style={styles.simpleHeader}>
+        <Logo />
+        <Text style={styles.simpleHeaderTitle}>دریافت‌ها</Text>
+      </View>
       <View style={styles.storageSummary}>
         <View style={styles.storageSummaryMain}>
           <View style={styles.storageSummaryIcon}>
@@ -2673,7 +2631,7 @@ function DownloadsScreen({
                       <Ionicons name="play" color="#fff" size={18} />
                     </Pressable>
                   ) : null}
-                  <Pressable onPress={() => onItemMenu(record)} style={styles.downloadLibraryMenu}>
+                  <Pressable onPress={() => onMenu(record)} style={styles.downloadLibraryMenu}>
                     <Ionicons name="ellipsis-vertical" color={COLORS.muted} size={20} />
                   </Pressable>
                 </View>
@@ -3020,7 +2978,6 @@ function DetailModal({
   onBrowse,
   onMenu,
   vpnActive,
-  vpnChecking,
   onVpnRetry,
 }: {
   item: CatalogItem | null;
@@ -3040,7 +2997,6 @@ function DetailModal({
   onBrowse: (filter: SearchFilter) => void;
   onMenu: () => void;
   vpnActive: boolean;
-  vpnChecking: boolean;
   onVpnRetry: () => void;
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -3065,7 +3021,7 @@ function DetailModal({
   const browseAndClose = (filter: SearchFilter) => { onClose(); requestAnimationFrame(() => onBrowse(filter)); };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="fade" hardwareAccelerated statusBarTranslucent={false} onRequestClose={onClose}>
       <SafeAreaView style={styles.detailScreen} edges={['top','right','bottom','left']}>
         <StatusBar style="light" />
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.detailContent}>
@@ -3085,7 +3041,13 @@ function DetailModal({
               <View style={styles.detailTitleBlock}>
                 <Text style={styles.detailType}>{mediaKindLabel(item)}</Text>
                 {itemHasOperatorAccess(item) ? <View style={styles.detailOperatorBadge}><Ionicons name="phone-portrait-outline" color={COLORS.gold} size={12} /><Text style={styles.detailOperatorBadgeText}>ویژه اینترنت همراه</Text></View> : null}
-                <Text numberOfLines={2} style={styles.detailTitle}>{item.nameFa}</Text>
+                <Text
+                  numberOfLines={adaptiveTitleLines(item.nameFa)}
+                  adjustsFontSizeToFit={false}
+                  style={[styles.detailTitle, adaptiveTitleStyle(item.nameFa, 'detail')]}
+                >
+                  {item.nameFa}
+                </Text>
                 <Text style={styles.detailEnglish}>{item.name}</Text>
                 <View style={styles.detailMeta}>
                   <Pressable onPress={() => browseAndClose(yearFilter(item.year))}><Text style={styles.detailMetaText}>{toPersianDigits(item.year)}</Text></Pressable>
@@ -3114,13 +3076,13 @@ function DetailModal({
             <View style={styles.downloadHeader}><View><Text style={styles.detailSectionTitle}>{item.type === 'series' ? 'فصل‌ها و قسمت‌ها' : 'لینک‌های دریافت'}</Text><Text style={styles.downloadHeaderText}>{item.type === 'series' ? 'قسمت را باز کنید؛ گزینه‌های همان قسمت جدا نمایش داده می‌شوند.' : 'نسخه‌های دوبله و زیرنویس به‌صورت جدا نمایش داده می‌شوند.'}</Text></View><Ionicons name={item.type === 'series' ? 'albums-outline' : 'cloud-download-outline'} color={COLORS.gold} size={24} /></View>
 
             {vpnActive ? (
-              <View style={styles.vpnDownloadNotice}>
-                <View style={styles.vpnDownloadIcon}><Ionicons name="shield-outline" color={COLORS.gold} size={24} /></View>
-                <Text style={styles.vpnDownloadTitle}>لینک‌های دانلود مخفی هستند</Text>
-                <Text style={styles.vpnDownloadText}>فیلترشکن خود را خاموش کنید و دوباره امتحان کنید.</Text>
-                <Pressable disabled={vpnChecking} onPress={onVpnRetry} style={[styles.vpnDownloadRetry, vpnChecking && styles.disabledButton]}>
-                  {vpnChecking ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="refresh-outline" color="#fff" size={18} />}
-                  <Text style={styles.vpnDownloadRetryText}>{vpnChecking ? 'در حال بررسی…' : 'بررسی دوباره'}</Text>
+              <View style={styles.vpnLinksHiddenCard}>
+                <View style={styles.vpnLinksHiddenIcon}><Ionicons name="shield-outline" color={COLORS.gold} size={25} /></View>
+                <Text style={styles.vpnLinksHiddenTitle}>لینک‌های دانلود مخفی هستند</Text>
+                <Text style={styles.vpnLinksHiddenText}>فیلترشکن خود را خاموش کنید و دوباره امتحان کنید.</Text>
+                <Pressable onPress={onVpnRetry} style={styles.vpnLinksHiddenButton}>
+                  <Ionicons name="refresh-outline" color="#fff" size={18} />
+                  <Text style={styles.vpnLinksHiddenButtonText}>بررسی مجدد</Text>
                 </Pressable>
               </View>
             ) : !hasDownloads ? <View style={styles.emptyDownloads}><Text style={styles.emptyDownloadsTitle}>لینک قابل استفاده‌ای موجود نیست</Text><Text style={styles.emptyDownloadsText}>در حال حاضر لینک پخش یا دریافت معتبری برای این عنوان ثبت نشده است.</Text></View> : item.type === 'series' ? (
@@ -3170,7 +3132,7 @@ function PersonProfileModal({
   const cardWidth = Math.floor((screenWidth - 32 - cardGap) / 2);
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="fade" hardwareAccelerated statusBarTranslucent={false} onRequestClose={onClose}>
       <SafeAreaView style={styles.personProfileScreen} edges={['top', 'right', 'bottom', 'left']}>
         <StatusBar style="light" />
         <View style={styles.personProfileTopBar}>
@@ -3244,9 +3206,9 @@ function VideoPlayerModal({
   );
   const initialSource = orderedSources.find((source) => source.id === request.initialSourceId) || orderedSources[0];
   const [activeSource, setActiveSource] = useState(initialSource);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
+  const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
   const [displayMode, setDisplayMode] = useState<PlayerDisplayMode>('fit');
-  const [playbackRate, setPlaybackRate] = useState(1);
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const [firstFrameReady, setFirstFrameReady] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -3257,29 +3219,21 @@ function VideoPlayerModal({
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const landscape = viewportWidth > viewportHeight;
-  const safeTop = landscape ? Math.max(insets.top, 4) : 8;
-  const safeBottom = landscape ? Math.max(insets.bottom, 6) : 8;
-  const bottomPanelBottom = landscape ? safeBottom + 6 : 7;
-  const menuMaxHeight = Math.max(310, Math.min(viewportHeight * 0.82, viewportHeight - insets.top - insets.bottom - 24));
+  const safeTop = landscape ? Math.max(insets.top, 4) : Math.max(insets.top, 8);
+  const safeBottom = landscape ? Math.max(insets.bottom, 6) : Math.max(insets.bottom, 10);
+  const bottomPanelBottom = safeBottom + 8;
+  const menuMaxHeight = landscape
+    ? Math.max(220, viewportHeight - safeTop - safeBottom - 28)
+    : Math.max(280, Math.min(viewportHeight * 0.68, viewportHeight - safeTop - safeBottom - 34));
+  const menuScrollHeight = Math.max(130, menuMaxHeight - 112);
   const progressWidthRef = useRef(1);
   const latestTimeRef = useRef(Math.max(0, Number(request.resumeAt || 0)));
   const latestDurationRef = useRef(0);
   const resumeAppliedRef = useRef(false);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sourceObject = (source: PlaybackSource) => ({
-    uri: source.url,
-    contentType: /\.m3u8(?:$|[?#])/i.test(source.url) ? 'hls' as const : 'progressive' as const,
-    useCaching: !/\.m3u8(?:$|[?#])/i.test(source.url),
-  });
-  const player = useVideoPlayer(sourceObject(initialSource), (instance) => {
+  const player = useVideoPlayer(initialSource.url, (instance) => {
     instance.timeUpdateEventInterval = 0.5;
-    instance.bufferOptions = {
-      minBufferForPlayback: 0.8,
-      preferredForwardBufferDuration: 8,
-      prioritizeTimeOverSizeThreshold: true,
-      waitsToMinimizeStalling: false,
-    };
     instance.play();
   });
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
@@ -3288,16 +3242,19 @@ function VideoPlayerModal({
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     controlsTimerRef.current = null;
   };
+
   const scheduleControlsHide = () => {
     clearControlsTimer();
-    if (!isPlaying || settingsOpen || locked) return;
+    if (!isPlaying || qualityMenuOpen || displayMenuOpen || locked) return;
     controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 3000);
   };
+
   const revealControls = () => {
     if (locked) return;
     setControlsVisible(true);
     requestAnimationFrame(scheduleControlsHide);
   };
+
   const showLockIndicator = () => {
     setLockIndicatorVisible(true);
     if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
@@ -3307,10 +3264,12 @@ function VideoPlayerModal({
   useEffect(() => {
     if (controlsVisible) scheduleControlsHide();
     return clearControlsTimer;
-  }, [controlsVisible, isPlaying, locked, settingsOpen]);
+  }, [controlsVisible, displayMenuOpen, isPlaying, locked, qualityMenuOpen]);
 
   useEffect(() => {
     if (!landscape) {
+      setDisplayMode('fit');
+      setDisplayMenuOpen(false);
       setLocked(false);
       setLockIndicatorVisible(false);
     }
@@ -3365,8 +3324,16 @@ function VideoPlayerModal({
   };
 
   const handleBack = () => {
-    if (locked) { showLockIndicator(); return; }
-    if (settingsOpen) { setSettingsOpen(false); revealControls(); return; }
+    if (locked) {
+      showLockIndicator();
+      return;
+    }
+    if (qualityMenuOpen || displayMenuOpen) {
+      setQualityMenuOpen(false);
+      setDisplayMenuOpen(false);
+      revealControls();
+      return;
+    }
     if (landscape) {
       void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
       return;
@@ -3374,25 +3341,34 @@ function VideoPlayerModal({
     closePlayer();
   };
 
-  const videoContentFit: 'contain' | 'cover' = displayMode === 'fill' ? 'cover' : 'contain';
+  const videoContentFit: 'contain' | 'cover' = landscape && displayMode === 'fill' ? 'cover' : 'contain';
+  const displayModeLabel = displayMode === 'fill' ? 'پر کردن صفحه' : 'نمایش کامل';
+
   const toggleOrientation = async () => {
-    setSettingsOpen(false);
+    setQualityMenuOpen(false);
+    setDisplayMenuOpen(false);
     revealControls();
     await ScreenOrientation.lockAsync(
-      landscape ? ScreenOrientation.OrientationLock.PORTRAIT_UP : ScreenOrientation.OrientationLock.LANDSCAPE,
+      landscape
+        ? ScreenOrientation.OrientationLock.PORTRAIT_UP
+        : ScreenOrientation.OrientationLock.LANDSCAPE,
     ).catch(() => undefined);
   };
 
   const switchQuality = async (nextSource: PlaybackSource) => {
-    if (nextSource.id === activeSource.id || switchingQuality) return;
+    if (nextSource.id === activeSource.id || switchingQuality) {
+      setQualityMenuOpen(false);
+      return;
+    }
     const previousTime = Number(player.currentTime || 0);
     setSwitchingQuality(true);
     setFirstFrameReady(false);
+    setQualityMenuOpen(false);
+    revealControls();
     try {
       player.pause();
-      await player.replaceAsync(sourceObject(nextSource));
+      await player.replaceAsync(nextSource.url);
       if (previousTime > 0) player.currentTime = previousTime;
-      player.playbackRate = playbackRate;
       setActiveSource(nextSource);
       player.play();
     } catch {
@@ -3403,19 +3379,17 @@ function VideoPlayerModal({
     }
   };
 
-  const changePlaybackRate = (rate: number) => {
-    player.playbackRate = rate;
-    setPlaybackRate(rate);
-    revealControls();
-  };
-
   const seekBy = (seconds: number) => {
     const maximum = Math.max(0, Number(player.duration || duration || 0));
-    const next = Math.max(0, Math.min(maximum || Number.MAX_SAFE_INTEGER, Number(player.currentTime || 0) + seconds));
+    const next = Math.max(
+      0,
+      Math.min(maximum || Number.MAX_SAFE_INTEGER, Number(player.currentTime || 0) + seconds),
+    );
     player.currentTime = next;
     setCurrentTime(next);
     revealControls();
   };
+
   const seekFromProgress = (locationX: number) => {
     const safeDuration = Math.max(0, Number(player.duration || duration || 0));
     if (!safeDuration || progressWidthRef.current <= 0) return;
@@ -3425,86 +3399,307 @@ function VideoPlayerModal({
     setCurrentTime(next);
     revealControls();
   };
+
   const lockPlayer = () => {
-    setSettingsOpen(false);
+    setQualityMenuOpen(false);
+    setDisplayMenuOpen(false);
     setControlsVisible(false);
     setLocked(true);
     showLockIndicator();
   };
+
   const unlockPlayer = () => {
     setLocked(false);
     setLockIndicatorVisible(false);
     setControlsVisible(true);
   };
+
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
 
+  const menuCardStyle = landscape
+    ? [
+        styles.playerMenuCard,
+        styles.playerMenuCardLandscape,
+        { maxHeight: menuMaxHeight },
+      ]
+    : [
+        styles.playerMenuCard,
+        styles.playerMenuBottomSheet,
+        {
+          bottom: safeBottom + 10,
+          maxHeight: menuMaxHeight,
+        },
+      ];
+
   return (
-    <Modal visible animationType="fade" presentationStyle="fullScreen" onRequestClose={handleBack} supportedOrientations={['portrait', 'landscape']} statusBarTranslucent navigationBarTranslucent>
+    <Modal
+      visible
+      animationType="fade"
+      presentationStyle="fullScreen"
+      onRequestClose={handleBack}
+      supportedOrientations={['portrait', 'landscape']}
+      statusBarTranslucent={false}
+      navigationBarTranslucent={false}
+    >
       <View style={styles.mediaModal}>
         <StatusBar style="light" hidden={landscape} backgroundColor="#000000" />
-        <View style={[styles.videoStage, landscape ? styles.videoStageLandscape : styles.videoStagePortrait]}>
-          {request.artwork && !firstFrameReady ? <Image source={{ uri: request.artwork }} style={StyleSheet.absoluteFill} contentFit="contain" cachePolicy="memory-disk" /> : null}
-          <VideoView player={player} style={styles.videoView} nativeControls={false} contentFit={videoContentFit} allowsPictureInPicture allowsFullscreen={false} surfaceType="textureView" onFirstFrameRender={() => setFirstFrameReady(true)} />
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => {
-            if (locked) { showLockIndicator(); return; }
-            setControlsVisible((visible) => !visible);
-          }} />
-          {!firstFrameReady || switchingQuality ? <View style={styles.qualitySwitchLoading} pointerEvents="none"><ActivityIndicator color={COLORS.gold} size="large" /><Text style={styles.qualitySwitchLoadingText}>{switchingQuality ? 'در حال تغییر کیفیت…' : 'در حال آماده‌سازی ویدئو…'}</Text></View> : null}
+        <View style={styles.videoStage}>
+          {request.artwork && !firstFrameReady ? (
+            <Image
+              source={{ uri: request.artwork }}
+              style={StyleSheet.absoluteFill}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+            />
+          ) : null}
+
+          <VideoView
+            key={`${activeSource.id}-${videoContentFit}`}
+            player={player}
+            style={styles.videoView}
+            nativeControls={false}
+            contentFit={videoContentFit}
+            allowsPictureInPicture
+            allowsFullscreen={false}
+            surfaceType="textureView"
+            onFirstFrameRender={() => setFirstFrameReady(true)}
+          />
+
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              if (locked) {
+                showLockIndicator();
+                return;
+              }
+              setControlsVisible((visible) => {
+                const next = !visible;
+                if (next) requestAnimationFrame(scheduleControlsHide);
+                return next;
+              });
+            }}
+          />
+
+          {!firstFrameReady || switchingQuality ? (
+            <View style={styles.qualitySwitchLoading} pointerEvents="none">
+              <ActivityIndicator color={COLORS.gold} size="large" />
+              <Text style={styles.qualitySwitchLoadingText}>
+                {switchingQuality ? 'در حال تغییر کیفیت…' : 'در حال آماده‌سازی ویدئو…'}
+              </Text>
+            </View>
+          ) : null}
 
           {controlsVisible && !locked ? (
             <View style={styles.playerControlsLayer} pointerEvents="box-none">
-              <View style={[styles.playerOverlayHeader, landscape && styles.playerOverlayHeaderLandscape, { top: safeTop }]} pointerEvents="box-none">
-                <Pressable onPress={handleBack} style={styles.mediaCloseButton}><Ionicons name="close" color="#fff" size={23} /></Pressable>
+              <View
+                style={[
+                  styles.playerOverlayHeader,
+                  landscape && styles.playerOverlayHeaderLandscape,
+                  { top: safeTop },
+                ]}
+                pointerEvents="box-none"
+              >
+                <Pressable onPress={handleBack} style={styles.mediaCloseButton}>
+                  <Ionicons name="close" color="#fff" size={23} />
+                </Pressable>
                 <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
               </View>
+
               <View style={styles.playerCenterZone} pointerEvents="box-none">
                 <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
-                  <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton}><Ionicons name="play-back" color="#fff" size={25} /><Text style={styles.playerSkipText}>۱۰</Text></Pressable>
-                  <Pressable onPress={() => { if (isPlaying) player.pause(); else player.play(); revealControls(); }} style={styles.playerPrimaryButton}><Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={30} /></Pressable>
-                  <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton}><Ionicons name="play-forward" color="#fff" size={25} /><Text style={styles.playerSkipText}>۱۰</Text></Pressable>
+                  <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton}>
+                    <Ionicons name="play-back" color="#fff" size={27} />
+                    <Text style={styles.playerSkipText}>۱۰</Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                      if (isPlaying) player.pause(); else player.play();
+                      revealControls();
+                    }}
+                    style={styles.playerPrimaryButton}
+                  >
+                    <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={32} />
+                  </Pressable>
+
+                  <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton}>
+                    <Ionicons name="play-forward" color="#fff" size={27} />
+                    <Text style={styles.playerSkipText}>۱۰</Text>
+                  </Pressable>
                 </View>
               </View>
-              <View style={[styles.playerBottomPanel, landscape && styles.playerBottomPanelLandscape, { bottom: bottomPanelBottom }]} pointerEvents="box-none">
+
+              <View
+                style={[
+                  styles.playerBottomPanel,
+                  landscape && styles.playerBottomPanelLandscape,
+                  { bottom: bottomPanelBottom },
+                ]}
+                pointerEvents="box-none"
+              >
                 <View style={styles.playerTimelineWrap}>
-                  <Pressable style={styles.playerTimelineTrack} onLayout={(event) => { progressWidthRef.current = event.nativeEvent.layout.width || 1; }} onPress={(event) => seekFromProgress(event.nativeEvent.locationX)}>
-                    <View style={styles.playerTimelineRail} /><View style={[styles.playerTimelineFill, { width: `${progress * 100}%` }]} /><View style={[styles.playerTimelineThumb, { left: `${progress * 100}%` }]} />
+                  <Pressable
+                    style={styles.playerTimelineTrack}
+                    onLayout={(event) => {
+                      progressWidthRef.current = event.nativeEvent.layout.width || 1;
+                    }}
+                    onPress={(event) => seekFromProgress(event.nativeEvent.locationX)}
+                  >
+                    <View style={styles.playerTimelineRail} />
+                    <View style={[styles.playerTimelineFill, { width: `${progress * 100}%` }]} />
+                    <View style={[styles.playerTimelineThumb, { left: `${progress * 100}%` }]} />
                   </Pressable>
-                  <View style={styles.playerTimeRow}><Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text><Text style={styles.playerVersionText} numberOfLines={1}>{request.language ? languageTitle(request.language) : 'پخش آنلاین'} • {activeSource.quality}</Text><Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text></View>
+                  <View style={styles.playerTimeRow}>
+                    <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
+                    <Text style={styles.playerVersionText} numberOfLines={1}>
+                      {request.language ? languageTitle(request.language) : 'پخش آنلاین'} • {activeSource.quality}
+                    </Text>
+                    <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
+                  </View>
                 </View>
-                <View style={styles.playerCompactTools}>
-                  <Pressable onPress={toggleOrientation} style={styles.playerIconTool}><Ionicons name={landscape ? 'phone-portrait-outline' : 'expand-outline'} color="#fff" size={21} /></Pressable>
-                  <Pressable onPress={() => { setSettingsOpen(true); setControlsVisible(true); }} style={styles.playerIconTool}><Ionicons name="settings-outline" color="#fff" size={21} /></Pressable>
-                  {landscape ? <Pressable onPress={lockPlayer} style={styles.playerIconTool}><Ionicons name="lock-closed-outline" color="#fff" size={20} /></Pressable> : null}
+
+                <View style={styles.playerBottomTools}>
+                  <Pressable onPress={toggleOrientation} style={styles.playerToolButton}>
+                    <Ionicons
+                      name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'}
+                      color="#fff"
+                      size={21}
+                    />
+                    <Text style={styles.playerToolText}>{landscape ? 'حالت عمودی' : 'تمام‌صفحه'}</Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                      setDisplayMenuOpen(false);
+                      setQualityMenuOpen(true);
+                      revealControls();
+                    }}
+                    style={styles.playerToolButton}
+                  >
+                    <Ionicons name="settings-outline" color="#fff" size={20} />
+                    <Text style={styles.playerToolText}>{activeSource.quality}</Text>
+                  </Pressable>
+
+                  {landscape ? (
+                    <Pressable
+                      onPress={() => {
+                        setQualityMenuOpen(false);
+                        setDisplayMenuOpen(true);
+                        revealControls();
+                      }}
+                      style={styles.playerToolButton}
+                    >
+                      <Ionicons name="scan-outline" color="#fff" size={20} />
+                      <Text style={styles.playerToolText}>{displayModeLabel}</Text>
+                    </Pressable>
+                  ) : null}
+
+                  {landscape ? (
+                    <Pressable onPress={lockPlayer} style={styles.playerToolButton}>
+                      <Ionicons name="lock-closed-outline" color="#fff" size={20} />
+                      <Text style={styles.playerToolText}>قفل</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               </View>
             </View>
           ) : null}
 
-          {locked && lockIndicatorVisible ? <Pressable onPress={unlockPlayer} style={styles.playerLockedButton}><Ionicons name="lock-closed" color="#fff" size={25} /><Text style={styles.playerLockedText}>برای بازکردن قفل بزنید</Text></Pressable> : null}
-        </View>
+          {locked && lockIndicatorVisible ? (
+            <Pressable onPress={unlockPlayer} style={styles.playerLockedButton}>
+              <Ionicons name="lock-closed" color="#fff" size={25} />
+              <Text style={styles.playerLockedText}>برای بازکردن قفل بزنید</Text>
+            </Pressable>
+          ) : null}
 
-        {settingsOpen && !locked ? (
-          <View style={styles.playerSettingsOverlay}>
-            <Pressable style={StyleSheet.absoluteFill} onPress={() => { setSettingsOpen(false); revealControls(); }} />
-            <SafeAreaView style={[styles.playerSettingsSheet, { maxHeight: menuMaxHeight }]} edges={['right','bottom','left']}>
-              <View style={styles.playerMenuGrabber} />
-              <View style={styles.playerSettingsHeader}><Text style={styles.playerQualityTitle}>تنظیمات پخش</Text><Pressable onPress={() => setSettingsOpen(false)} style={styles.playerSettingsClose}><Ionicons name="close" color={COLORS.text} size={20} /></Pressable></View>
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.playerSettingsContent}>
-                <Text style={styles.playerSettingsSectionTitle}>کیفیت تصویر</Text>
-                <View style={styles.playerSettingsChips}>{orderedSources.map((source) => { const selected = source.id === activeSource.id; return <Pressable key={source.id} onPress={() => void switchQuality(source)} style={[styles.playerSettingsChip, selected && styles.playerSettingsChipActive]}><Text style={[styles.playerSettingsChipText, selected && styles.playerSettingsChipTextActive]}>{source.quality}</Text></Pressable>; })}</View>
-                <Text style={styles.playerSettingsSectionTitle}>سرعت پخش</Text>
-                <View style={styles.playerSettingsChips}>{[0.75,1,1.25,1.5,2].map((rate) => <Pressable key={rate} onPress={() => changePlaybackRate(rate)} style={[styles.playerSettingsChip, playbackRate === rate && styles.playerSettingsChipActive]}><Text style={[styles.playerSettingsChipText, playbackRate === rate && styles.playerSettingsChipTextActive]}>{rate === 1 ? 'عادی' : `${rate}x`}</Text></Pressable>)}</View>
-                <Text style={styles.playerSettingsSectionTitle}>اندازه تصویر</Text>
-                <View style={styles.playerSettingsRows}>
-                  <Pressable onPress={() => setDisplayMode('fit')} style={[styles.playerSettingsRow, displayMode === 'fit' && styles.playerSettingsRowActive]}><View><Text style={styles.playerSettingsRowTitle}>نمایش کامل</Text><Text style={styles.playerSettingsRowText}>بدون برش تصویر</Text></View><Ionicons name={displayMode === 'fit' ? 'radio-button-on' : 'radio-button-off'} color={displayMode === 'fit' ? COLORS.gold : COLORS.muted} size={20} /></Pressable>
-                  <Pressable onPress={() => setDisplayMode('fill')} style={[styles.playerSettingsRow, displayMode === 'fill' && styles.playerSettingsRowActive]}><View><Text style={styles.playerSettingsRowTitle}>پر کردن صفحه</Text><Text style={styles.playerSettingsRowText}>ممکن است لبه‌ها کمی بریده شوند</Text></View><Ionicons name={displayMode === 'fill' ? 'radio-button-on' : 'radio-button-off'} color={displayMode === 'fill' ? COLORS.gold : COLORS.muted} size={20} /></Pressable>
+          {qualityMenuOpen && !locked ? (
+            <View style={styles.playerQualityOverlay}>
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => {
+                  setQualityMenuOpen(false);
+                  revealControls();
+                }}
+              />
+              <View style={menuCardStyle}>
+                <View style={styles.playerQualityHeader}>
+                  {!landscape ? <View style={styles.playerMenuGrabber} /> : null}
+                  <Text style={styles.playerQualityTitle}>تنظیمات پخش</Text>
+                  <Text style={styles.playerQualityDescription}>
+                    {request.language ? languageTitle(request.language) : 'پخش آنلاین'} • کیفیت فعلی {activeSource.quality}
+                  </Text>
                 </View>
-                <Pressable onPress={toggleOrientation} style={styles.playerSettingsAction}><Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color={COLORS.gold} size={21} /><Text style={styles.playerSettingsActionText}>{landscape ? 'بازگشت به حالت عمودی' : 'نمایش تمام‌صفحه افقی'}</Text></Pressable>
-                <View style={styles.playerSettingsCurrent}><Text style={styles.playerSettingsCurrentLabel}>نسخه فعال</Text><Text style={styles.playerSettingsCurrentValue}>{request.language ? languageTitle(request.language) : 'پخش آنلاین'} • {activeSource.quality}</Text></View>
-              </ScrollView>
-            </SafeAreaView>
-          </View>
-        ) : null}
+                <ScrollView
+                  style={[styles.playerMenuScroll, { maxHeight: menuScrollHeight }]}
+                  contentContainerStyle={styles.playerMenuScrollContent}
+                  showsVerticalScrollIndicator
+                >
+                  {orderedSources.map((source) => {
+                    const selected = source.id === activeSource.id;
+                    return (
+                      <Pressable
+                        key={source.id}
+                        onPress={() => switchQuality(source)}
+                        style={[styles.playerQualityOption, selected && styles.playerQualityOptionSelected]}
+                      >
+                        <Text style={[styles.playerQualityOptionText, selected && styles.playerQualityOptionTextSelected]}>
+                          {source.quality}
+                        </Text>
+                        <Ionicons
+                          name={selected ? 'radio-button-on' : 'radio-button-off'}
+                          color={selected ? COLORS.gold : COLORS.muted}
+                          size={20}
+                        />
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            </View>
+          ) : null}
+
+          {displayMenuOpen && landscape && !locked ? (
+            <View style={styles.playerQualityOverlay}>
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={() => {
+                  setDisplayMenuOpen(false);
+                  revealControls();
+                }}
+              />
+              <View style={menuCardStyle}>
+                <View style={styles.playerQualityHeader}>
+                  <Text style={styles.playerQualityTitle}>اندازه تصویر</Text>
+                  <Text style={styles.playerQualityDescription}>
+                    حالت پیش‌فرض، نمایش کامل تصویر بدون برش است.
+                  </Text>
+                </View>
+                {([
+                  { id: 'fit', title: 'نمایش کامل', icon: 'contract-outline' },
+                  { id: 'fill', title: 'پر کردن صفحه', icon: 'expand-outline' },
+                ] as const).map((option) => {
+                  const selected = option.id === displayMode;
+                  return (
+                    <Pressable
+                      key={option.id}
+                      onPress={() => {
+                        setDisplayMode(option.id);
+                        setDisplayMenuOpen(false);
+                        revealControls();
+                      }}
+                      style={[styles.playerDisplayOption, selected && styles.playerQualityOptionSelected]}
+                    >
+                      <Text style={[styles.playerDisplayOptionTitle, selected && styles.playerQualityOptionTextSelected]}>
+                        {option.title}
+                      </Text>
+                      <Ionicons name={option.icon} color={selected ? COLORS.gold : COLORS.muted} size={21} />
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
+        </View>
       </View>
     </Modal>
   );
@@ -3681,16 +3876,18 @@ function VpnBlockModal({
   onContinue: () => void;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onContinue}>
+    <Modal visible={visible} transparent animationType="fade" hardwareAccelerated onRequestClose={onContinue}>
       <View style={styles.vpnOverlay}>
         <View style={styles.vpnCard}>
           <View style={styles.vpnIconWrap}><Ionicons name="shield-outline" color={COLORS.gold} size={34} /></View>
           <Text style={styles.vpnTitle}>فیلترشکن روشن است</Text>
-          <Text style={styles.vpnText}>می‌توانید وارد برنامه شوید؛ تا زمان خاموش‌کردن فیلترشکن، لینک‌های دانلود و پخش آنلاین مخفی می‌مانند.</Text>
-          <Pressable onPress={onContinue} style={styles.vpnEnterButton}><Ionicons name="arrow-back" color="#fff" size={19} /><Text style={styles.vpnRetryText}>ورود به برنامه</Text></Pressable>
-          <Pressable disabled={checking} onPress={onRetry} style={[styles.vpnSecondaryButton, checking && styles.disabledButton]}>
-            {checking ? <ActivityIndicator color={COLORS.gold} size="small" /> : <Ionicons name="refresh-outline" color={COLORS.gold} size={18} />}
-            <Text style={styles.vpnSecondaryText}>{checking ? 'در حال بررسی…' : 'بررسی دوباره'}</Text>
+          <Text style={styles.vpnText}>می‌توانید وارد برنامه شوید؛ اما تا وقتی فیلترشکن روشن باشد، لینک‌های دانلود و پخش آنلاین مخفی می‌مانند.</Text>
+          <Pressable disabled={checking} onPress={onRetry} style={[styles.vpnRetryButton, checking && styles.disabledButton]}>
+            {checking ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="refresh-outline" color="#fff" size={19} />}
+            <Text style={styles.vpnRetryText}>{checking ? 'در حال بررسی…' : 'بررسی دوباره'}</Text>
+          </Pressable>
+          <Pressable onPress={onContinue} style={styles.vpnContinueButton}>
+            <Text style={styles.vpnContinueText}>ورود به اپ</Text>
           </Pressable>
         </View>
       </View>
@@ -3698,131 +3895,143 @@ function VpnBlockModal({
   );
 }
 
+function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { visible: boolean; onClose: () => void; onBrowse: (filter: SearchFilter) => void; onCategories: () => void; onHome: () => void }) {
+  type MenuEntry = {
+    key: string;
+    title: string;
+    filter?: SearchFilter;
+    action?: 'categories' | 'home';
+    icon?: keyof typeof Ionicons.glyphMap;
+    children?: MenuEntry[];
+  };
 
-type SideMenuLeaf = { title: string; filter: SearchFilter; icon?: keyof typeof Ionicons.glyphMap };
-type SideMenuBranch = { id: string; title: string; icon: keyof typeof Ionicons.glyphMap; leaves: SideMenuLeaf[] };
-type SideMenuRoot = { id: string; title: string; icon: keyof typeof Ionicons.glyphMap; branches?: SideMenuBranch[]; leaves?: SideMenuLeaf[] };
-
-function SideMenuModal({ visible, catalog, onClose, onBrowse, onCategories, onHome }: { visible: boolean; catalog: CatalogItem[]; onClose: () => void; onBrowse: (filter: SearchFilter) => void; onCategories: () => void; onHome: () => void }) {
   const [openRoot, setOpenRoot] = useState<string | null>(null);
-  const [openBranch, setOpenBranch] = useState<string | null>(null);
-  useEffect(() => { if (!visible) { setOpenRoot(null); setOpenBranch(null); } }, [visible]);
-
-  const hasFilter = (filter: SearchFilter) => catalogItemsForFilter(catalog, filter).length > 0;
-
-  const dynamicCategoryLeaves = (baseFilter: SearchFilter): SideMenuLeaf[] => {
-    const genericKeys = /^(?:movie|movies|series|iranian|foreign|mobile-operator|updated|latest|animation|animations|documentaries|programs|talk-shows)$/i;
-    const counts = new Map<string, { label: string; count: number }>();
-    catalogItemsForFilter(catalog, baseFilter).forEach((item) => {
-      (item.categoryKeys || []).forEach((key, index) => {
-        const cleanKey = String(key || '').trim();
-        if (!cleanKey || genericKeys.test(cleanKey)) return;
-        const label = String(item.categoryLabels?.[index] || cleanKey.replace(/[-_]+/g, ' ')).trim();
-        const current = counts.get(cleanKey);
-        counts.set(cleanKey, { label: current?.label || label, count: (current?.count || 0) + 1 });
-      });
-    });
-    return [...counts.entries()]
-      .sort((a, b) => b[1].count - a[1].count || a[1].label.localeCompare(b[1].label, 'fa'))
-      .slice(0, 7)
-      .map(([key, value]) => ({ title: value.label, filter: categoryFilter(key, value.label) }));
-  };
-
-  const dynamicCountryLeaves = (baseFilter: SearchFilter): SideMenuLeaf[] => {
-    const counts = new Map<string, number>();
-    catalogItemsForFilter(catalog, baseFilter).forEach((item) => {
-      (item.countryCodes || []).filter((code) => code && code !== 'IR').forEach((code) =>
-        counts.set(code, (counts.get(code) || 0) + 1),
-      );
-    });
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || COUNTRY_FILTER_PRIORITY.indexOf(a[0]) - COUNTRY_FILTER_PRIORITY.indexOf(b[0]))
-      .slice(0, 9)
-      .map(([code]) => ({ title: `آثار ${countryLabel(code, catalog)}`, filter: countryFilter(code) }));
-  };
-
-  const iranianMovieCategories = dynamicCategoryLeaves('iranian-movies');
-  const iranianSeriesCategories = dynamicCategoryLeaves('iranian-series');
-  const foreignMovieCountries = dynamicCountryLeaves('foreign-movies');
-  const foreignSeriesCountries = dynamicCountryLeaves('foreign-series');
-
-  const roots: SideMenuRoot[] = [
+  const [openChild, setOpenChild] = useState<string | null>(null);
+  const entries: MenuEntry[] = [
     {
-      id: 'movies', title: 'فیلم‌ها', icon: 'film-outline', branches: [
-        { id: 'iranian-movies', title: 'فیلم‌های ایرانی', icon: 'flag-outline', leaves: [
-          { title: 'همه فیلم‌های ایرانی', filter: 'iranian-movies' },
-          { title: 'ویژه اینترنت همراه', filter: 'iranian-movies-operator' },
-          ...iranianMovieCategories,
-        ] },
-        { id: 'foreign-movies', title: 'فیلم‌های خارجی', icon: 'earth-outline', leaves: [
-          { title: 'همه فیلم‌های خارجی', filter: 'foreign-movies' },
-          { title: 'دوبله فارسی', filter: 'foreign-movies-dubbed' },
-          { title: 'زیرنویس فارسی', filter: 'foreign-movies-subtitled' },
-          ...foreignMovieCountries,
-        ] },
+      key: 'movies', title: 'فیلم‌ها', icon: 'film-outline', children: [
+        { key: 'iranian-movies', title: 'فیلم‌های ایرانی', filter: 'iranian-movies', icon: 'flag-outline' },
+        {
+          key: 'foreign-movies-root', title: 'فیلم‌های خارجی', icon: 'earth-outline', children: [
+            { key: 'foreign-movies', title: 'همه فیلم‌های خارجی', filter: 'foreign-movies' },
+            { key: 'dubbed', title: 'دوبله فارسی', filter: 'dubbed' },
+            { key: 'subtitled', title: 'زیرنویس فارسی', filter: 'subtitled' },
+            { key: 'korean-movies', title: 'فیلم‌های کره‌ای', filter: 'korean-movies' },
+            { key: 'indian-movies', title: 'فیلم‌های هندی', filter: 'indian-movies' },
+            { key: 'japanese-movies', title: 'فیلم‌های ژاپنی', filter: 'japanese-movies' },
+          ],
+        },
       ],
     },
     {
-      id: 'series', title: 'سریال‌ها', icon: 'tv-outline', branches: [
-        { id: 'iranian-series', title: 'سریال‌های ایرانی', icon: 'videocam-outline', leaves: [
-          { title: 'همه سریال‌های ایرانی', filter: 'iranian-series' },
-          { title: 'ویژه اینترنت همراه', filter: 'iranian-series-operator' },
-          ...iranianSeriesCategories,
-        ] },
-        { id: 'foreign-series', title: 'سریال‌های خارجی', icon: 'globe-outline', leaves: [
-          { title: 'همه سریال‌های خارجی', filter: 'foreign-series' },
-          { title: 'دوبله فارسی', filter: 'foreign-series-dubbed' },
-          { title: 'زیرنویس فارسی', filter: 'foreign-series-subtitled' },
-          ...foreignSeriesCountries,
-        ] },
+      key: 'series', title: 'سریال‌ها', icon: 'tv-outline', children: [
+        { key: 'iranian-series', title: 'سریال‌های ایرانی', filter: 'iranian-series', icon: 'videocam-outline' },
+        { key: 'foreign-series', title: 'سریال‌های خارجی', filter: 'foreign-series', icon: 'globe-outline' },
       ],
     },
     {
-      id: 'animation', title: 'انیمیشن‌ها', icon: 'color-palette-outline', leaves: [
-        { title: 'انیمیشن سینمایی', filter: 'animation-movies' },
-        { title: 'انیمیشن سریالی', filter: 'animation-series' },
+      key: 'anime', title: 'انیمه', icon: 'sparkles-outline', children: [
+        { key: 'anime-movies', title: 'انیمه سینمایی', filter: 'anime-movies' },
+        { key: 'anime-series', title: 'انیمه سریالی', filter: 'anime-series' },
       ],
     },
+    {
+      key: 'animation', title: 'انیمیشن', icon: 'color-palette-outline', children: [
+        { key: 'animation-movies', title: 'انیمیشن سینمایی', filter: 'animation-movies' },
+        { key: 'animation-series', title: 'انیمیشن سریالی', filter: 'animation-series' },
+      ],
+    },
+    { key: 'updated', title: 'به‌روزشده‌ها', filter: 'updated', icon: 'refresh-outline' },
+    { key: 'operator', title: 'ویژه اینترنت همراه', filter: 'mobile-operator', icon: 'phone-portrait-outline' },
+    { key: 'schedule', title: 'برنامه هفتگی', action: 'home', icon: 'calendar-outline' },
+    { key: 'categories', title: 'همه دسته‌بندی‌ها', action: 'categories', icon: 'grid-outline' },
   ];
 
-  const choose = (filter: SearchFilter) => { onClose(); requestAnimationFrame(() => onBrowse(filter)); };
-  const toggleRoot = (id: string) => { setOpenRoot((current) => current === id ? null : id); setOpenBranch(null); };
-  const toggleBranch = (id: string) => setOpenBranch((current) => current === id ? null : id);
+  useEffect(() => {
+    if (!visible) {
+      setOpenRoot(null);
+      setOpenChild(null);
+    }
+  }, [visible]);
+
+  const choose = (entry: MenuEntry) => {
+    if (entry.children?.length) return;
+    onClose();
+    requestAnimationFrame(() => entry.filter
+      ? onBrowse(entry.filter)
+      : entry.action === 'categories'
+        ? onCategories()
+        : onHome());
+  };
+
+  const renderLeaf = (entry: MenuEntry, depth: 1 | 2) => (
+    <Pressable
+      key={entry.key}
+      onPress={() => choose(entry)}
+      style={[styles.sideMenuLeaf, depth === 2 && styles.sideMenuLeafDeep]}
+    >
+      {entry.icon ? <Ionicons name={entry.icon} color={COLORS.gold} size={17} /> : <View style={styles.sideMenuLeafDot} />}
+      <Text style={styles.sideMenuLeafText}>{entry.title}</Text>
+      <Ionicons name="chevron-back" color={COLORS.muted} size={14} />
+    </Pressable>
+  );
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <View style={styles.sideMenuOverlay}><Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <SafeAreaView style={styles.sideMenuPanel} edges={['top','right','bottom']}>
-          <View style={styles.sideMenuHeader}><Logo /><Pressable onPress={onClose} style={styles.iconButton}><Ionicons name="close" color={COLORS.text} size={22} /></Pressable></View>
+    <Modal visible={visible} transparent animationType="fade" hardwareAccelerated onRequestClose={onClose}>
+      <View style={styles.sideMenuOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <SafeAreaView style={styles.sideMenuPanel} edges={['top', 'right', 'bottom']}>
+          <View style={styles.sideMenuHeader}>
+            <Logo />
+            <Pressable onPress={onClose} style={styles.iconButton}><Ionicons name="close" color={COLORS.text} size={22} /></Pressable>
+          </View>
           <ScrollView contentContainerStyle={styles.sideMenuItems} showsVerticalScrollIndicator={false}>
-            {roots.map((root) => {
-              const rootOpen = openRoot === root.id;
-              const rootLeaves = (root.leaves || []).filter((leaf) => hasFilter(leaf.filter));
-              const branches = (root.branches || []).map((branch) => ({ ...branch, leaves: branch.leaves.filter((leaf) => hasFilter(leaf.filter)) })).filter((branch) => branch.leaves.length);
-              if (!rootLeaves.length && !branches.length) return null;
-              return <View key={root.id} style={styles.sideMenuGroup}>
-                <Pressable onPress={() => toggleRoot(root.id)} style={[styles.sideMenuItem, rootOpen && styles.sideMenuItemOpen]}><Ionicons name={root.icon} color={COLORS.gold} size={20} /><Text style={styles.sideMenuItemText}>{root.title}</Text><Ionicons name={rootOpen ? 'chevron-up' : 'chevron-down'} color={COLORS.muted} size={17} /></Pressable>
-                {rootOpen ? <View style={styles.sideMenuChildren}>
-                  {branches.map((branch) => { const branchOpen = openBranch === branch.id; return <View key={branch.id}>
-                    <Pressable onPress={() => toggleBranch(branch.id)} style={[styles.sideMenuBranch, branchOpen && styles.sideMenuBranchOpen]}><Ionicons name={branch.icon} color={COLORS.gold} size={17} /><Text style={styles.sideMenuBranchText}>{branch.title}</Text><Ionicons name={branchOpen ? 'remove' : 'add'} color={COLORS.muted} size={17} /></Pressable>
-                    {branchOpen ? <View style={styles.sideMenuLeaves}>{branch.leaves.map((leaf) => <Pressable key={`${branch.id}:${leaf.filter}`} onPress={() => choose(leaf.filter)} style={styles.sideMenuLeaf}><View style={styles.sideMenuLeafDot} /><Text style={styles.sideMenuLeafText}>{leaf.title}</Text><Ionicons name="chevron-back" color={COLORS.muted} size={14} /></Pressable>)}</View> : null}
-                  </View>; })}
-                  {rootLeaves.map((leaf) => <Pressable key={`${root.id}:${leaf.filter}`} onPress={() => choose(leaf.filter)} style={styles.sideMenuLeaf}><View style={styles.sideMenuLeafDot} /><Text style={styles.sideMenuLeafText}>{leaf.title}</Text><Ionicons name="chevron-back" color={COLORS.muted} size={14} /></Pressable>)}
-                </View> : null}
-              </View>;
+            {entries.map((entry) => {
+              if (!entry.children?.length) return renderLeaf(entry, 1);
+              const rootOpen = openRoot === entry.key;
+              return (
+                <View key={entry.key} style={styles.sideMenuAccordion}>
+                  <Pressable
+                    onPress={() => {
+                      setOpenRoot((current) => current === entry.key ? null : entry.key);
+                      setOpenChild(null);
+                    }}
+                    style={[styles.sideMenuItem, rootOpen && styles.sideMenuItemOpen]}
+                  >
+                    <Ionicons name={entry.icon || 'folder-outline'} color={COLORS.gold} size={20} />
+                    <Text style={styles.sideMenuItemText}>{entry.title}</Text>
+                    <Ionicons name={rootOpen ? 'chevron-up' : 'chevron-down'} color={COLORS.muted} size={16} />
+                  </Pressable>
+                  {rootOpen ? (
+                    <View style={styles.sideMenuChildren}>
+                      {entry.children.map((child) => {
+                        if (!child.children?.length) return renderLeaf(child, 1);
+                        const childOpen = openChild === child.key;
+                        return (
+                          <View key={child.key} style={styles.sideMenuNestedAccordion}>
+                            <Pressable
+                              onPress={() => setOpenChild((current) => current === child.key ? null : child.key)}
+                              style={[styles.sideMenuLeaf, styles.sideMenuNestedHeader, childOpen && styles.sideMenuItemOpen]}
+                            >
+                              <Ionicons name={child.icon || 'folder-open-outline'} color={COLORS.gold} size={17} />
+                              <Text style={styles.sideMenuLeafText}>{child.title}</Text>
+                              <Ionicons name={childOpen ? 'chevron-up' : 'chevron-down'} color={COLORS.muted} size={14} />
+                            </Pressable>
+                            {childOpen ? <View style={styles.sideMenuGrandchildren}>{child.children.map((leaf) => renderLeaf(leaf, 2))}</View> : null}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </View>
+              );
             })}
-            <View style={styles.sideMenuDivider} />
-            <Pressable onPress={() => choose('updated')} style={styles.sideMenuQuick}><Ionicons name="refresh-outline" color={COLORS.gold} size={19} /><Text style={styles.sideMenuQuickText}>به‌روزشده‌ها</Text></Pressable>
-            {hasFilter('mobile-operator') ? <Pressable onPress={() => choose('mobile-operator')} style={styles.sideMenuQuick}><Ionicons name="phone-portrait-outline" color={COLORS.gold} size={19} /><Text style={styles.sideMenuQuickText}>ویژه اینترنت همراه</Text></Pressable> : null}
-            <Pressable onPress={() => { onClose(); requestAnimationFrame(onHome); }} style={styles.sideMenuQuick}><Ionicons name="calendar-outline" color={COLORS.gold} size={19} /><Text style={styles.sideMenuQuickText}>برنامه هفتگی</Text></Pressable>
-            <Pressable onPress={() => { onClose(); requestAnimationFrame(onCategories); }} style={styles.sideMenuQuick}><Ionicons name="grid-outline" color={COLORS.gold} size={19} /><Text style={styles.sideMenuQuickText}>همه دسته‌بندی‌ها</Text></Pressable>
           </ScrollView>
         </SafeAreaView>
       </View>
     </Modal>
   );
 }
-
 
 function BottomNavigation({ active, onChange }: { active: MainTab; onChange: (tab: MainTab) => void }) {
   const tabs: { id: MainTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
@@ -3853,31 +4062,69 @@ function AppContent() {
   const [pendingDeepLink, setPendingDeepLink] = useState<CatalogDeepLink | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [vpnActive, setVpnActive] = useState(false);
-  const [vpnChecking, setVpnChecking] = useState(false);
   const [vpnWarningVisible, setVpnWarningVisible] = useState(false);
+  const [vpnChecking, setVpnChecking] = useState(false);
   const [searchReturnTab, setSearchReturnTab] = useState<MainTab>('home');
   const [searchReturnItem, setSearchReturnItem] = useState<CatalogItem | null>(null);
   const [homeScrollOffset, setHomeScrollOffset] = useState(0);
+  const [mountedTabs, setMountedTabs] = useState<MainTab[]>(['home']);
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
   const vpnCheckSequenceRef = useRef(0);
-  const vpnActiveRef = useRef(false);
+  const activeTabRef = useRef<MainTab>('home');
+  const tabHistoryRef = useRef<MainTab[]>(['home']);
+  const backNavigationLockedRef = useRef(false);
+  const navigationStateRef = useRef({
+    activeTab,
+    menuOpen,
+    operatorGateRequest,
+    operatorWebRequest,
+    searchReturnItem,
+    searchReturnTab,
+    selectedItem,
+    selectedPerson,
+    videoRequest,
+    vpnActive,
+    vpnWarningVisible,
+  });
 
-  useEffect(() => {
-    vpnActiveRef.current = vpnActive;
-  }, [vpnActive]);
+  activeTabRef.current = activeTab;
+  navigationStateRef.current = {
+    activeTab,
+    menuOpen,
+    operatorGateRequest,
+    operatorWebRequest,
+    searchReturnItem,
+    searchReturnTab,
+    selectedItem,
+    selectedPerson,
+    videoRequest,
+    vpnActive,
+    vpnWarningVisible,
+  };
 
-  const refreshVpnState = async (showProgress = false, showWarning = false) => {
+  const navigateToTab = useCallback((tab: MainTab, recordHistory = true) => {
+    setMountedTabs((current) => current.includes(tab) ? current : [...current, tab]);
+    const currentTab = activeTabRef.current;
+    if (currentTab === tab) return;
+    if (recordHistory) {
+      const history = tabHistoryRef.current;
+      if (history[history.length - 1] !== tab) tabHistoryRef.current = [...history, tab].slice(-12);
+    }
+    activeTabRef.current = tab;
+    setActiveTab(tab);
+  }, []);
+
+  const refreshVpnState = async (showProgress = false) => {
     const sequence = ++vpnCheckSequenceRef.current;
     if (showProgress) setVpnChecking(true);
     try {
-      // Playback actions use one fast lookup. Startup/manual retry samples long
-      // enough for Android to remove a VPN transport that was just switched off.
-      const active = await checkVpnActive(showProgress ? 4 : 0);
+      // Action checks use one fast native lookup. Startup/retry gets two short retries.
+      const active = await checkVpnActive(showProgress ? 2 : 0);
       if (sequence === vpnCheckSequenceRef.current) {
         setVpnActive(active);
+        if (active && showProgress) setVpnWarningVisible(true);
         if (!active) setVpnWarningVisible(false);
-        else if (showWarning) setVpnWarningVisible(true);
       }
       return active;
     } finally {
@@ -3924,13 +4171,13 @@ function AppContent() {
       .then((state) => setEpisodeAlertSeriesIds(state.subscribedSeriesIds))
       .catch(() => undefined);
 
-    void refreshVpnState(true, true);
+    void refreshVpnState(true);
     const vpnRetryTimer = setTimeout(() => { void refreshVpnState(); }, 750);
 
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void reloadContent(false);
-        void refreshVpnState(vpnActiveRef.current);
+        void refreshVpnState();
       }
     });
 
@@ -3939,20 +4186,47 @@ function AppContent() {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (vpnWarningVisible) { setVpnWarningVisible(false); return true; }
-      if (menuOpen) { setMenuOpen(false); return true; }
-      if (operatorWebRequest) { setOperatorWebRequest(null); return true; }
-      if (operatorGateRequest) { setOperatorGateRequest(null); return true; }
-      if (selectedPerson) { setSelectedPerson(null); return true; }
-      if (videoRequest) { setVideoRequest(null); return true; }
-      if (selectedItem) { setSelectedItem(null); return true; }
-      if (activeTab === 'search') {
-        setActiveTab(searchReturnTab);
-        if (searchReturnItem) setSelectedItem(searchReturnItem);
-        setSearchReturnItem(null);
+      const state = navigationStateRef.current;
+      if (backNavigationLockedRef.current) return true;
+
+      const runSmoothBack = (action: () => void) => {
+        backNavigationLockedRef.current = true;
+        requestAnimationFrame(action);
+        setTimeout(() => { backNavigationLockedRef.current = false; }, 220);
+      };
+
+      if (state.vpnWarningVisible) { runSmoothBack(() => setVpnWarningVisible(false)); return true; }
+      if (state.menuOpen) { runSmoothBack(() => setMenuOpen(false)); return true; }
+      if (state.operatorWebRequest) { runSmoothBack(() => setOperatorWebRequest(null)); return true; }
+      if (state.operatorGateRequest) { runSmoothBack(() => setOperatorGateRequest(null)); return true; }
+      if (state.selectedPerson) { runSmoothBack(() => setSelectedPerson(null)); return true; }
+      if (state.videoRequest) { runSmoothBack(() => setVideoRequest(null)); return true; }
+      if (state.selectedItem) { runSmoothBack(() => setSelectedItem(null)); return true; }
+      if (state.activeTab === 'search') {
+        runSmoothBack(() => {
+          if (tabHistoryRef.current[tabHistoryRef.current.length - 1] === 'search') {
+            tabHistoryRef.current = tabHistoryRef.current.slice(0, -1);
+          }
+          navigateToTab(state.searchReturnTab, false);
+          if (state.searchReturnItem) setSelectedItem(state.searchReturnItem);
+          setSearchReturnItem(null);
+        });
         return true;
       }
-      if (activeTab !== 'home') { setActiveTab('home'); return true; }
+
+      if (tabHistoryRef.current.length > 1) {
+        runSmoothBack(() => {
+          const history = tabHistoryRef.current.slice(0, -1);
+          tabHistoryRef.current = history;
+          navigateToTab(history[history.length - 1] || 'home', false);
+        });
+        return true;
+      }
+
+      if (state.activeTab !== 'home') {
+        runSmoothBack(() => navigateToTab('home', false));
+        return true;
+      }
 
       Alert.alert(
         'خروج از آپاراتچی',
@@ -3965,7 +4239,7 @@ function AppContent() {
       return true;
     });
     return () => subscription.remove();
-  }, [activeTab, menuOpen, operatorGateRequest, operatorWebRequest, searchReturnItem, searchReturnTab, selectedItem, selectedPerson, videoRequest, vpnWarningVisible]);
+  }, [navigateToTab]);
 
   useEffect(() => {
     const queueDeepLink = (url?: string | null) => {
@@ -4020,7 +4294,7 @@ function AppContent() {
     if (linkedItem) {
       setSelectedPerson(null);
       setSelectedItem(linkedItem);
-      setActiveTab('home');
+      navigateToTab('home', false);
     } else {
       Alert.alert(
         'لینک آپاراتچی',
@@ -4038,31 +4312,6 @@ function AppContent() {
     }, 500);
     return () => clearTimeout(timer);
   }, [downloads]);
-
-  useEffect(() => {
-    const subscription = Network.addNetworkStateListener((state) => {
-      if (state.isConnected !== false && state.isInternetReachable !== false) return;
-      const activeRecords = downloadsRef.current.filter((record) => record.status === 'downloading');
-      activeRecords.forEach((record) => {
-        void pauseDownload(record.id).then((snapshot) => {
-          setDownloads((current) => current.map((item) => item.id === record.id ? {
-            ...item,
-            status: 'paused' as const,
-            destinationUri: snapshot?.destinationUri || item.destinationUri,
-            resumeData: snapshot?.resumeData || item.resumeData,
-            error: 'اینترنت قطع است؛ پس از اتصال، ادامه دانلود را بزنید.',
-          } : item));
-        }).catch(() => {
-          setDownloads((current) => current.map((item) => item.id === record.id ? {
-            ...item,
-            status: 'paused' as const,
-            error: 'اینترنت قطع است؛ پس از اتصال، ادامه دانلود را بزنید.',
-          } : item));
-        });
-      });
-    });
-    return () => subscription.remove();
-  }, []);
 
   useEffect(() => {
     if (!libraryLoaded) return undefined;
@@ -4229,7 +4478,7 @@ function AppContent() {
 
     // Continuing a remote stream is also a playback action, so verify the
     // Android VPN transport again immediately before opening the player.
-    if (await refreshVpnState()) return;
+    if (await refreshVpnState()) { setVpnWarningVisible(true); return; }
 
     const item = content?.items.find((candidate) => candidate.id === record.itemId);
     if (!item) {
@@ -4280,7 +4529,7 @@ function AppContent() {
     setSelectedItem(null);
     setSelectedPerson(null);
     setSearchFilter(filter);
-    setActiveTab('search');
+    navigateToTab('search');
   };
 
   const openOperatorAccess = async (item: CatalogItem, file: DownloadFile) => {
@@ -4291,7 +4540,7 @@ function AppContent() {
 
     setOperatorGateRequest({ item, file, status: 'checking' });
 
-    if (await refreshVpnState()) { setOperatorGateRequest(null); return; }
+    if (await refreshVpnState()) { setOperatorGateRequest(null); setVpnWarningVisible(true); return; }
 
     const mobileAccess = await checkMobileOperatorAccess();
     if (mobileAccess.status !== 'allowed') {
@@ -4311,7 +4560,7 @@ function AppContent() {
     episodeGroup: DownloadSection | null = null,
     requestedLanguage?: MediaLanguage,
   ) => {
-    if (await refreshVpnState()) return;
+    if (await refreshVpnState()) { setVpnWarningVisible(true); return; }
 
     const versions = playableVersionsFor(item, episodeGroup);
     if (!versions.length) {
@@ -4443,16 +4692,7 @@ function AppContent() {
         },
       });
 
-      if (result.paused || !result.localUri) {
-        setDownloads((current) => current.map((item) => item.id === record.id ? {
-          ...item,
-          status: 'paused' as const,
-          destinationUri: result.destinationUri || item.destinationUri,
-          resumeData: result.resumeData || item.resumeData,
-          error: result.error || 'دانلود متوقف شده است؛ برای ادامه بزنید.',
-        } : item));
-        return;
-      }
+      if (result.paused || !result.localUri) return;
 
       setDownloads((current) => current.map((item) =>
         item.id === record.id
@@ -4470,12 +4710,10 @@ function AppContent() {
     } catch (error) {
       const stillExists = downloadsRef.current.some((item) => item.id === record.id);
       if (!stillExists) return;
-      const network = await Network.getNetworkStateAsync().catch(() => null);
-      const offline = network?.isConnected === false || network?.isInternetReachable === false;
-      const message = offline ? 'اینترنت قطع است؛ پس از اتصال، ادامه دانلود را بزنید.' : 'دریافت فایل انجام نشد. دوباره تلاش کنید.';
+      const message = 'دریافت فایل انجام نشد. دوباره تلاش کنید.';
       setDownloads((current) => current.map((item) =>
         item.id === record.id
-          ? { ...item, status: offline ? 'paused' as const : 'failed' as const, error: message }
+          ? { ...item, status: 'failed' as const, error: message }
           : item,
       ));
     }
@@ -4487,7 +4725,7 @@ function AppContent() {
       return;
     }
 
-    if (await refreshVpnState()) return;
+    if (await refreshVpnState()) { setVpnWarningVisible(true); return; }
 
     if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url)) {
       Alert.alert('دریافت فایل', 'این فایل فعلاً در دسترس نیست.');
@@ -4526,7 +4764,7 @@ function AppContent() {
       return;
     }
     if (existing && (existing.status === 'paused' || existing.status === 'failed')) {
-      setActiveTab('downloads');
+      navigateToTab('downloads');
       setSelectedItem(null);
       void executeDownload(existing);
       return;
@@ -4546,7 +4784,7 @@ function AppContent() {
     };
 
     setDownloads((current) => [pending, ...current.filter((record) => record.id !== recordId)]);
-    setActiveTab('downloads');
+    navigateToTab('downloads');
     setSelectedItem(null);
     void executeDownload(pending);
   };
@@ -4640,10 +4878,7 @@ function AppContent() {
       await saveDownloadedFileToGallery(record.localUri);
       Alert.alert('ذخیره شد', 'ویدئو در گالری گوشی ذخیره شد.');
     } catch (error) {
-      Alert.alert(
-        'ذخیره در گالری',
-        error instanceof Error ? error.message : 'ذخیره فایل انجام نشد. دسترسی گالری را بررسی کنید.',
-      );
+      Alert.alert('ذخیره در گالری', 'ذخیره فایل انجام نشد. دسترسی گالری را بررسی کنید.');
     }
   };
 
@@ -4660,25 +4895,6 @@ function AppContent() {
       ],
     );
   };
-
-  useEffect(() => {
-    if (!content?.items?.length) return undefined;
-
-    const priorityItems = [
-      ...catalogItemsForFilter(content.items, 'latest').slice(0, 14),
-      ...catalogItemsForFilter(content.items, 'updated').slice(0, 10),
-    ];
-    const uniqueItems = [...new Map(priorityItems.map((item) => [`${item.type}:${item.id}`, item])).values()];
-    const posters = uniqueItems.map((item) => item.poster).filter(isSafeHttpUrl).slice(0, 20);
-    const backdrops = uniqueItems.map((item) => item.backdrop).filter(isSafeHttpUrl).slice(0, 5);
-
-    if (posters.length) void Image.prefetch([...new Set(posters)], 'memory-disk').catch(() => undefined);
-    const backdropTimer = setTimeout(() => {
-      if (backdrops.length) void Image.prefetch([...new Set(backdrops)], 'disk').catch(() => undefined);
-    }, 700);
-
-    return () => clearTimeout(backdropTimer);
-  }, [content?.version]);
 
   if (!content) {
     return (
@@ -4701,56 +4917,68 @@ function AppContent() {
         style={styles.safeArea}
         edges={['top', 'right', 'left']}
       >
-        {activeTab === 'home' ? (
-          <HomeScreen
-            catalog={content.items}
-            iranianSchedule={content.iranianSchedule}
-            weeklySchedule={content.weeklySchedule || []}
-            watchProgress={watchProgress}
-            onReloadContent={() => void reloadContent(true)}
-            onOpen={setSelectedItem}
-            onBrowse={openCatalogFilter}
-            onResume={resumeWatchRecord}
-            onRemoveProgress={removeWatchProgress}
-            onMenu={() => setMenuOpen(true)}
-            initialScrollOffset={homeScrollOffset}
-            onScrollOffset={setHomeScrollOffset}
-          />
+        {mountedTabs.includes('home') ? (
+          <View pointerEvents={activeTab === 'home' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'home' && styles.tabSceneHidden]}>
+            <HomeScreen
+              catalog={content.items}
+              iranianSchedule={content.iranianSchedule}
+              weeklySchedule={content.weeklySchedule || []}
+              watchProgress={watchProgress}
+              onReloadContent={() => void reloadContent(true)}
+              onOpen={setSelectedItem}
+              onBrowse={openCatalogFilter}
+              onResume={resumeWatchRecord}
+              onRemoveProgress={removeWatchProgress}
+              onMenu={() => setMenuOpen(true)}
+              initialScrollOffset={homeScrollOffset}
+              onScrollOffset={setHomeScrollOffset}
+            />
+          </View>
         ) : null}
-        {activeTab === 'categories' ? (
-          <CategoriesScreen catalog={content.items} onBrowse={openCatalogFilter} onOpen={setSelectedItem} onMenu={() => setMenuOpen(true)} />
+        {mountedTabs.includes('categories') ? (
+          <View pointerEvents={activeTab === 'categories' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}>
+            <CategoriesScreen catalog={content.items} onBrowse={openCatalogFilter} onOpen={setSelectedItem} />
+          </View>
         ) : null}
-        {activeTab === 'search' ? (
-          <SearchScreen
-            catalog={content.items}
-            onOpen={setSelectedItem}
-            initialFilter={searchFilter}
-            onMenu={() => setMenuOpen(true)}
-          />
+        {mountedTabs.includes('search') ? (
+          <View pointerEvents={activeTab === 'search' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'search' && styles.tabSceneHidden]}>
+            <SearchScreen
+              catalog={content.items}
+              onOpen={setSelectedItem}
+              initialFilter={searchFilter}
+            />
+          </View>
         ) : null}
-        {activeTab === 'favorites' ? (
-          <FavoritesScreen
-            catalog={content.items}
-            favorites={favorites}
-            watchHistory={watchHistory}
-            onOpen={setSelectedItem}
-            onOpenHistory={openWatchHistoryRecord}
-            onRemoveHistory={removeWatchHistory}
-            onClearHistory={confirmClearWatchHistory}
-            onMenu={() => setMenuOpen(true)}
-          />
+        {mountedTabs.includes('favorites') ? (
+          <View pointerEvents={activeTab === 'favorites' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'favorites' && styles.tabSceneHidden]}>
+            <FavoritesScreen
+              catalog={content.items}
+              favorites={favorites}
+              watchHistory={watchHistory}
+              onOpen={setSelectedItem}
+              onOpenHistory={openWatchHistoryRecord}
+              onRemoveHistory={removeWatchHistory}
+              onClearHistory={confirmClearWatchHistory}
+            />
+          </View>
         ) : null}
-        {activeTab === 'downloads' ? (
-          <DownloadsScreen
-            downloads={downloads}
-            onPlay={playDownloadedRecord}
-            onPause={pauseDownloadRecord}
-            onResume={resumeDownloadRecord}
-            onItemMenu={showDownloadMenu}
-            onOpenMenu={() => setMenuOpen(true)}
-            onClearIncomplete={confirmClearIncompleteDownloads}
-            onClearCompleted={confirmClearCompletedDownloads}
-          />
+        {mountedTabs.includes('downloads') ? (
+          <View pointerEvents={activeTab === 'downloads' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'downloads' && styles.tabSceneHidden]}>
+            <DownloadsScreen
+              downloads={downloads}
+              onPlay={playDownloadedRecord}
+              onPause={pauseDownloadRecord}
+              onResume={resumeDownloadRecord}
+              onMenu={showDownloadMenu}
+              onClearIncomplete={confirmClearIncompleteDownloads}
+              onClearCompleted={confirmClearCompletedDownloads}
+            />
+          </View>
+        ) : null}
+        {activeTab !== 'home' && !selectedItem && !selectedPerson && !videoRequest ? (
+          <Pressable onPress={() => setMenuOpen(true)} style={styles.globalMenuButton}>
+            <Ionicons name="menu" color={COLORS.text} size={22} />
+          </Pressable>
         ) : null}
         {contentLoading ? (
           <View pointerEvents="none" style={styles.refreshIndicator}>
@@ -4769,10 +4997,23 @@ function AppContent() {
             setSelectedPerson(null);
             setMenuOpen(false);
             setSearchReturnItem(null);
-            setActiveTab(tab);
+            navigateToTab(tab);
           }}
         />
       </SafeAreaView>
+      <VpnBlockModal
+        visible={vpnWarningVisible}
+        checking={vpnChecking}
+        onRetry={() => { void refreshVpnState(true); }}
+        onContinue={() => setVpnWarningVisible(false)}
+      />
+      <SideMenuModal
+        visible={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        onBrowse={openCatalogFilter}
+        onCategories={() => navigateToTab('categories')}
+        onHome={() => navigateToTab('home')}
+      />
       <DetailModal
         item={selectedItem}
         catalog={content.items}
@@ -4793,10 +5034,9 @@ function AppContent() {
         onOpenRelated={setSelectedItem}
         onOpenPerson={setSelectedPerson}
         onBrowse={openCatalogFilter}
-        onMenu={() => setMenuOpen(true)}
+        onMenu={() => { setSelectedItem(null); requestAnimationFrame(() => setMenuOpen(true)); }}
         vpnActive={vpnActive}
-        vpnChecking={vpnChecking}
-        onVpnRetry={() => { void refreshVpnState(true); }}
+        onVpnRetry={() => { void refreshVpnState(false); }}
       />
       <PersonProfileModal
         person={selectedPerson}
@@ -4807,7 +5047,7 @@ function AppContent() {
           setSelectedPerson(null);
           setSelectedItem(nextItem);
         }}
-        onMenu={() => setMenuOpen(true)}
+        onMenu={() => { setSelectedPerson(null); requestAnimationFrame(() => setMenuOpen(true)); }}
       />
       {videoRequest ? (
         <VideoPlayerModal
@@ -4829,20 +5069,6 @@ function AppContent() {
           onClose={() => setOperatorWebRequest(null)}
         />
       ) : null}
-      <VpnBlockModal
-        visible={vpnActive && vpnWarningVisible}
-        checking={vpnChecking}
-        onRetry={() => { void refreshVpnState(true, true); }}
-        onContinue={() => setVpnWarningVisible(false)}
-      />
-      <SideMenuModal
-        visible={menuOpen}
-        catalog={content.items}
-        onClose={() => setMenuOpen(false)}
-        onBrowse={openCatalogFilter}
-        onCategories={() => setActiveTab('categories')}
-        onHome={() => setActiveTab('home')}
-      />
     </View>
   );
 }
@@ -4864,6 +5090,9 @@ const rtlText = {
 const styles = StyleSheet.create({
   app: { flex: 1, backgroundColor: COLORS.background },
   safeArea: { flex: 1, backgroundColor: COLORS.background },
+  tabScene: { flex: 1 },
+  tabSceneHidden: { display: 'none' },
+  globalMenuButton: { position: 'absolute', top: 10, right: 14, zIndex: 30, width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,21,28,0.96)', borderWidth: 1, borderColor: COLORS.border },
   bottomNavigationSafeArea: { backgroundColor: COLORS.background, paddingHorizontal: 10, paddingTop: 6 },
   screen: { flex: 1, backgroundColor: COLORS.background },
   initialLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30, backgroundColor: COLORS.background },
@@ -5002,7 +5231,6 @@ const styles = StyleSheet.create({
   posterCard: { width: 137, alignItems: 'flex-end' },
   posterImageWrap: { width: 137, height: 194, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', backgroundColor: COLORS.surface },
   posterImage: { width: '100%', height: '100%' },
-  posterPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   posterGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 65 },
   posterAccess: { position: 'absolute', top: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.9)' },
   posterAccessText: { color: '#fff', fontSize: 8, fontWeight: '900' },
@@ -5012,8 +5240,7 @@ const styles = StyleSheet.create({
   posterRatingText: { color: COLORS.text, fontSize: 9, fontWeight: '800' },
   posterName: { ...rtlText, color: COLORS.text, fontSize: 11, lineHeight: 18, fontWeight: '700', letterSpacing: -0.15, marginTop: 8, width: '100%' },
   posterEnglish: { color: '#777D87', fontSize: 8.5, lineHeight: 14, marginTop: 1, width: '100%', textAlign: 'right' },
-  simpleHeader: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 28 },
-  simpleHeaderBrand: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
+  simpleHeader: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 },
   simpleHeaderTitle: { ...rtlText, color: COLORS.text, fontSize: 18, lineHeight: 27, fontWeight: '900', letterSpacing: -0.35 },
   searchBox: { height: 52, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, paddingHorizontal: 15, borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   searchInput: { flex: 1, color: COLORS.text, fontSize: 13, writingDirection: 'rtl' },
@@ -5223,19 +5450,12 @@ const styles = StyleSheet.create({
   peopleSectionTitle: { ...rtlText, color: COLORS.text, fontSize: 15, fontWeight: '900' },
   peopleSectionSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8.5, marginTop: 4 },
   peopleList: { flexDirection: 'row-reverse', gap: 12, paddingHorizontal: 1, paddingBottom: 2 },
-  vpnDownloadNotice: { marginTop: 12, padding: 20, borderRadius: 18, alignItems: 'center', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.36)' },
-  vpnDownloadIcon: { width: 52, height: 52, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)' },
-  vpnDownloadTitle: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900', textAlign: 'center', marginTop: 12 },
-  vpnDownloadText: { ...rtlText, color: COLORS.muted, fontSize: 10, lineHeight: 19, textAlign: 'center', marginTop: 7 },
-  vpnDownloadRetry: { minWidth: 180, minHeight: 46, marginTop: 15, paddingHorizontal: 18, borderRadius: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red },
-  vpnDownloadRetryText: { color: '#fff', fontSize: 10, fontWeight: '900' },
   personCard: { width: 88, alignItems: 'center' },
   personAvatarWrap: { width: 70, height: 70, borderRadius: 35, overflow: 'hidden', borderWidth: 1.5, borderColor: 'rgba(216,180,90,0.38)', backgroundColor: COLORS.surface },
   personAvatar: { width: '100%', height: '100%' },
   personAvatarFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#181C23' },
   personAvatarInitials: { color: COLORS.gold, fontSize: 18, fontWeight: '900' },
   personCardName: { ...rtlText, width: '100%', minHeight: 31, color: COLORS.text, fontSize: 9.5, lineHeight: 15, fontWeight: '900', textAlign: 'center', marginTop: 8 },
-  personCardEnglish: { width: '100%', color: COLORS.muted, fontSize: 7.2, textAlign: 'center', marginTop: 1 },
   personCardRole: { color: COLORS.gold, fontSize: 7.5, fontWeight: '800', marginTop: 2 },
   personCardCharacter: { ...rtlText, width: '100%', color: COLORS.muted, fontSize: 7, textAlign: 'center', marginTop: 3 },
   personProfileScreen: { flex: 1, backgroundColor: COLORS.background },
@@ -5259,14 +5479,12 @@ const styles = StyleSheet.create({
   personWorksEmpty: { minHeight: 180, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   personWorksEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', textAlign: 'center', marginTop: 10 },
   personWorksEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 18, textAlign: 'center', marginTop: 6 },
-  mediaModal: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+  mediaModal: { flex: 1, backgroundColor: '#000' },
   webModal: { flex: 1, backgroundColor: COLORS.background },
   mediaModalHeader: { height: 62, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
   mediaCloseButton: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong },
   mediaModalTitle: { ...rtlText, minWidth: 0, flex: 1, color: COLORS.text, fontSize: 12.5, fontWeight: '900' },
-  videoStage: { position: 'relative', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: '#000' },
-  videoStagePortrait: { width: '100%', aspectRatio: 16 / 9, alignSelf: 'center' },
-  videoStageLandscape: { width: '100%', height: '100%' },
+  videoStage: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   videoView: { width: '100%', height: '100%', backgroundColor: '#000' },
   webView: { flex: 1, backgroundColor: '#fff' },
   webLoading: { ...StyleSheet.absoluteFillObject, top: 62, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)' },
@@ -5330,6 +5548,12 @@ const styles = StyleSheet.create({
   emptyDownloads: { marginTop: 12, padding: 22, borderRadius: 17, alignItems: 'center', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   emptyDownloadsTitle: { ...rtlText, color: COLORS.text, fontSize: 13, fontWeight: '900' },
   emptyDownloadsText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 18, textAlign: 'center', marginTop: 7 },
+  vpnLinksHiddenCard: { marginTop: 12, padding: 22, borderRadius: 18, alignItems: 'center', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
+  vpnLinksHiddenIcon: { width: 50, height: 50, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.26)' },
+  vpnLinksHiddenTitle: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900', marginTop: 13 },
+  vpnLinksHiddenText: { ...rtlText, color: COLORS.muted, fontSize: 10, lineHeight: 19, textAlign: 'center', marginTop: 7 },
+  vpnLinksHiddenButton: { minHeight: 46, marginTop: 17, paddingHorizontal: 24, borderRadius: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red },
+  vpnLinksHiddenButtonText: { color: '#fff', fontSize: 10.5, fontWeight: '900' },
   storageTotals: { marginTop: 13, padding: 11, borderRadius: 11, alignItems: 'flex-end', gap: 5, backgroundColor: 'rgba(216,180,90,0.06)' },
   storageTotalText: { ...rtlText, color: COLORS.text, fontSize: 8.7, fontWeight: '800' },
   downloadLibraryBytes: { ...rtlText, color: COLORS.text, fontSize: 8.3, marginTop: 7, width: '100%' },
@@ -5339,10 +5563,10 @@ const styles = StyleSheet.create({
   playerCenterZone: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   playerCenterControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 26 },
   playerCenterControlsLandscape: { gap: 34 },
-  playerRoundButton: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.76)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
-  playerPrimaryButton: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  playerRoundButton: { width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.76)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
+  playerPrimaryButton: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   playerSkipText: { position: 'absolute', color: '#fff', fontSize: 8, fontWeight: '900' },
-  playerBottomPanel: { position: 'absolute', left: 8, right: 8, zIndex: 14, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 7, borderRadius: 17, backgroundColor: 'rgba(5,7,10,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  playerBottomPanel: { position: 'absolute', left: 12, right: 12, zIndex: 14, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10, borderRadius: 17, backgroundColor: 'rgba(5,7,10,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   playerBottomPanelLandscape: { left: 18, right: 18, paddingHorizontal: 14, paddingTop: 8, paddingBottom: 8 },
   playerTimelineWrap: { width: '100%' },
   playerTimelineTrack: { width: '100%', height: 24, justifyContent: 'center' },
@@ -5352,64 +5576,40 @@ const styles = StyleSheet.create({
   playerTimeRow: { marginTop: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 9 },
   playerTimeText: { color: '#fff', fontSize: 9.5, fontWeight: '800' },
   playerVersionText: { ...rtlText, minWidth: 0, flex: 1, color: 'rgba(255,255,255,0.88)', fontSize: 8.5, textAlign: 'center' },
-  playerCompactTools: { marginTop: 4, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
-  playerIconTool: { width: 39, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(8,10,14,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  playerBottomTools: { marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  playerToolButton: { minWidth: 72, minHeight: 42, paddingHorizontal: 10, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(8,10,14,0.92)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
+  playerToolText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
   playerLockedButton: { position: 'absolute', left: 24, top: '45%', minHeight: 50, paddingHorizontal: 15, borderRadius: 16, zIndex: 40, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(5,7,10,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)' },
   playerLockedText: { ...rtlText, color: '#fff', fontSize: 9.5, fontWeight: '900' },
   playerMenuCardLandscape: { maxWidth: 460, paddingVertical: 12 },
   playerMenuScroll: { width: '100%' },
   playerMenuScrollContent: { paddingBottom: 6 },
-  playerSettingsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 80, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.58)' },
-  playerSettingsSheet: { width: '100%', paddingTop: 8, paddingHorizontal: 16, paddingBottom: 10, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#10141B', borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-  playerSettingsHeader: { minHeight: 42, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
-  playerSettingsClose: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong },
-  playerSettingsContent: { paddingBottom: 12 },
-  playerSettingsSectionTitle: { ...rtlText, color: COLORS.text, fontSize: 11, fontWeight: '900', marginTop: 15, marginBottom: 8 },
-  playerSettingsChips: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 7 },
-  playerSettingsChip: { minWidth: 66, minHeight: 38, paddingHorizontal: 11, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  playerSettingsChipActive: { backgroundColor: 'rgba(216,180,90,0.12)', borderColor: COLORS.gold },
-  playerSettingsChipText: { color: COLORS.muted, fontSize: 9, fontWeight: '850' },
-  playerSettingsChipTextActive: { color: COLORS.gold },
-  playerSettingsRows: { gap: 7 },
-  playerSettingsRow: { minHeight: 54, paddingHorizontal: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderRadius: 13, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  playerSettingsRowActive: { borderColor: 'rgba(216,180,90,0.55)' },
-  playerSettingsRowTitle: { ...rtlText, color: COLORS.text, fontSize: 10, fontWeight: '900' },
-  playerSettingsRowText: { ...rtlText, color: COLORS.muted, fontSize: 8, marginTop: 3 },
-  playerSettingsAction: { minHeight: 48, marginTop: 14, paddingHorizontal: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 13, backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
-  playerSettingsActionText: { color: COLORS.gold, fontSize: 9.5, fontWeight: '900' },
-  playerSettingsCurrent: { marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: '#0A0D12' },
-  playerSettingsCurrentLabel: { ...rtlText, color: COLORS.muted, fontSize: 8 },
-  playerSettingsCurrentValue: { ...rtlText, color: COLORS.text, fontSize: 9.5, fontWeight: '900', marginTop: 4 },
   vpnOverlay: { flex: 1, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(3,5,8,0.97)' },
   vpnCard: { width: '100%', maxWidth: 420, padding: 24, borderRadius: 22, alignItems: 'center', backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
   vpnIconWrap: { width: 68, height: 68, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.28)' },
   vpnTitle: { ...rtlText, color: COLORS.text, fontSize: 19, fontWeight: '900', marginTop: 17, textAlign: 'center' },
   vpnText: { ...rtlText, color: COLORS.muted, fontSize: 10.5, lineHeight: 21, textAlign: 'center', marginTop: 10 },
   vpnRetryButton: { minWidth: 190, minHeight: 50, marginTop: 20, paddingHorizontal: 20, borderRadius: 15, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red },
-  vpnEnterButton: { minWidth: 210, minHeight: 50, marginTop: 20, paddingHorizontal: 20, borderRadius: 15, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red },
-  vpnSecondaryButton: { minWidth: 210, minHeight: 45, marginTop: 10, paddingHorizontal: 18, borderRadius: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
-  vpnSecondaryText: { color: COLORS.gold, fontSize: 10, fontWeight: '900' },
   vpnRetryText: { color: '#fff', fontSize: 11, fontWeight: '900' },
+  vpnContinueButton: { minWidth: 190, minHeight: 46, marginTop: 10, paddingHorizontal: 20, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  vpnContinueText: { color: COLORS.text, fontSize: 10.5, fontWeight: '900' },
   disabledButton: { opacity: 0.55 },
   sideMenuOverlay: { flex: 1, flexDirection: 'row-reverse', backgroundColor: 'rgba(0,0,0,0.62)' },
   sideMenuPanel: { width: '82%', maxWidth: 360, height: '100%', backgroundColor: '#0B0E13', borderLeftWidth: 1, borderLeftColor: COLORS.border },
   sideMenuHeader: { minHeight: 75, paddingHorizontal: 16, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  sideMenuItems: { padding: 14, gap: 8, paddingBottom: 30 },
-  sideMenuGroup: { gap: 6 },
+  sideMenuItems: { padding: 14, gap: 8 },
+  sideMenuAccordion: { gap: 6 },
   sideMenuItem: { minHeight: 54, paddingHorizontal: 13, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  sideMenuItemOpen: { borderColor: 'rgba(216,180,90,0.45)', backgroundColor: 'rgba(216,180,90,0.07)' },
-  sideMenuItemText: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 11, fontWeight: '900' },
-  sideMenuChildren: { marginRight: 12, gap: 6, paddingBottom: 4 },
-  sideMenuBranch: { minHeight: 46, paddingHorizontal: 12, borderRadius: 12, flexDirection: 'row-reverse', alignItems: 'center', gap: 9, backgroundColor: '#0E1218', borderWidth: 1, borderColor: COLORS.border },
-  sideMenuBranchOpen: { borderColor: 'rgba(216,180,90,0.34)' },
-  sideMenuBranchText: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 9.8, fontWeight: '850' },
-  sideMenuLeaves: { marginRight: 10, gap: 4, paddingVertical: 4 },
-  sideMenuLeaf: { minHeight: 40, paddingHorizontal: 10, borderRadius: 10, flexDirection: 'row-reverse', alignItems: 'center', gap: 8, backgroundColor: '#090C11' },
-  sideMenuLeafDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: COLORS.gold },
-  sideMenuLeafText: { ...rtlText, flex: 1, color: '#C7CBD2', fontSize: 9 },
-  sideMenuDivider: { height: 1, marginVertical: 5, backgroundColor: COLORS.border },
-  sideMenuQuick: { minHeight: 48, paddingHorizontal: 13, borderRadius: 12, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface },
-  sideMenuQuickText: { ...rtlText, color: COLORS.text, fontSize: 9.8, fontWeight: '850' },
+  sideMenuItemOpen: { borderColor: 'rgba(216,180,90,0.48)', backgroundColor: 'rgba(216,180,90,0.07)' },
+  sideMenuItemText: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 10.5, fontWeight: '850' },
+  sideMenuChildren: { marginTop: 5, marginRight: 12, gap: 6, borderRightWidth: 1, borderRightColor: 'rgba(216,180,90,0.2)', paddingRight: 10 },
+  sideMenuNestedAccordion: { gap: 5 },
+  sideMenuNestedHeader: { backgroundColor: '#0F131A' },
+  sideMenuGrandchildren: { marginRight: 10, gap: 5 },
+  sideMenuLeaf: { minHeight: 46, paddingHorizontal: 12, borderRadius: 12, flexDirection: 'row-reverse', alignItems: 'center', gap: 9, backgroundColor: 'rgba(17,21,28,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
+  sideMenuLeafDeep: { minHeight: 42, backgroundColor: 'rgba(8,10,14,0.72)' },
+  sideMenuLeafDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.gold },
+  sideMenuLeafText: { ...rtlText, flex: 1, color: '#E6E8EC', fontSize: 9.5, fontWeight: '800' },
 
 
 });

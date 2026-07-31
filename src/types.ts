@@ -67,6 +67,8 @@ export type CatalogItem = {
   countryCodes?: string[];
   countryLabels?: string[];
   countryNames?: string[];
+  /** زبان اصلی عنوان، مانند fa، ko، hi یا ja. */
+  originalLanguage?: string;
   /** شناسه پایدار کالکشن؛ هرگز از شباهت نام ساخته نمی‌شود. */
   collectionId?: string;
   collectionNameFa?: string;
@@ -97,6 +99,8 @@ export type CatalogItem = {
   categoryLabels?: string[];
   contentKind?: string;
   isAnimation?: boolean;
+  /** انیمهٔ ژاپنی؛ از انیمیشن عمومی جدا نمایش داده می‌شود. */
+  isAnime?: boolean;
   isTalkShow?: boolean;
   isDocumentary?: boolean;
   createdAt?: string;
