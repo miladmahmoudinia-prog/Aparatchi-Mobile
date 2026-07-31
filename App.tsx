@@ -175,6 +175,53 @@ const adaptiveTitleStyle = (value: string, context: 'hero' | 'detail') => {
 
 const adaptiveTitleLines = (value: string) => titleVisualScore(value) > 46 ? 3 : 2;
 
+
+const DAY_INDEX: DayId[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const SCHEDULE_DAY_OVERRIDES: Array<{ pattern: RegExp; day: DayId }> = [
+  { pattern: /(^|\s)بدنام($|\s)/i, day: 'friday' },
+];
+
+const dayFromDateValue = (value?: string): DayId | null => {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return DAY_INDEX[new Date(timestamp).getDay()] || null;
+};
+
+const inferredScheduleFromCatalog = (catalog: CatalogItem[]): ScheduleEntry[] => {
+  const now = Date.now();
+  return catalog.flatMap((item) => {
+    if (item.type !== 'series') return [];
+
+    const overrideDay = SCHEDULE_DAY_OVERRIDES.find(({ pattern }) =>
+      pattern.test(normalizeComparableText(item.nameFa)),
+    )?.day;
+    const explicitDay = item.airDays?.find((day) => DAY_INDEX.includes(day));
+    const nextEpisodeDay = dayFromDateValue(item.nextEpisodeAirDate);
+    const recentTimestampValue =
+      item.meaningfulUpdatedAt || item.sourceUpdatedAt || item.updatedAt || item.sourceCreatedAt || item.createdAt;
+    const recentTimestamp = Date.parse(String(recentTimestampValue || ''));
+    const recentlyUpdated = Number.isFinite(recentTimestamp) && now - recentTimestamp <= 45 * 24 * 60 * 60 * 1000;
+    const recentDay = recentlyUpdated ? DAY_INDEX[new Date(recentTimestamp).getDay()] : null;
+    const day = overrideDay || explicitDay || nextEpisodeDay || recentDay;
+
+    if (!day || (!item.isAiring && !item.nextEpisodeAirDate && !recentlyUpdated && !overrideDay)) return [];
+
+    return [{
+      id: `catalog-schedule-${item.id}-${day}`,
+      itemId: String(item.id),
+      nameFa: item.nameFa,
+      poster: item.poster,
+      day,
+      time: item.airTime || 'زمان نامشخص',
+      ...(item.nextEpisodeNumber ? { episode: item.nextEpisodeNumber } : {}),
+      region: isIranianItem(item) ? 'iranian' : 'foreign',
+      sourceLabel: item.nextEpisodeAirDate ? 'برنامه رسمی پخش' : 'بر اساس آخرین به‌روزرسانی',
+      verifiedAt: item.nextEpisodeAirDate || String(recentTimestampValue || ''),
+    } satisfies ScheduleEntry];
+  });
+};
+
 const downloadModeFor = (file: DownloadFile): NonNullable<DownloadFile['mode']> =>
   file.mode || 'download';
 
@@ -790,7 +837,7 @@ const collectionMembersFor = (item: CatalogItem, catalog: CatalogItem[]) => {
     });
 };
 
-const personName = (person: CatalogPerson) => person.nameFa || person.name || 'بدون نام';
+const personName = (person: CatalogPerson) => person.name || person.nameFa || 'Unknown';
 
 const personRoleTitle = (person: CatalogPerson) =>
   person.roleLabel || (person.role === 'director' ? 'کارگردان' : 'بازیگر');
@@ -1124,6 +1171,8 @@ function WeeklySchedule({
     return map;
   }, [catalog]);
 
+  const inferredEntries = useMemo(() => inferredScheduleFromCatalog(catalog), [catalog]);
+
   const allEntries = useMemo(() => {
     const merged = new Map<string, ScheduleEntry>();
 
@@ -1148,6 +1197,7 @@ function WeeklySchedule({
 
     // نتیجهٔ آنلاین خارجی نقش پشتیبان دارد؛ برنامهٔ داخل کاتالوگ اولویت بالاتری دارد.
     foreignEntries.forEach(addEntry);
+    inferredEntries.forEach(addEntry);
     iranianSchedule.forEach(addEntry);
     weeklySchedule.forEach(addEntry);
 
@@ -1156,7 +1206,18 @@ function WeeklySchedule({
       if (timeDiff) return timeDiff;
       return String(a.nameFa || '').localeCompare(String(b.nameFa || ''), 'fa');
     });
-  }, [catalogById, catalogByName, foreignEntries, iranianSchedule, weeklySchedule]);
+  }, [catalogById, catalogByName, foreignEntries, inferredEntries, iranianSchedule, weeklySchedule]);
+
+  const autoSelectedDayRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedDayRef.current || !allEntries.length) return;
+    autoSelectedDayRef.current = true;
+    if (allEntries.some((entry) => entry.day === selectedDay)) return;
+    const todayIndex = DAYS.findIndex((day) => day.id === selectedDay);
+    const orderedDays = [...DAYS.slice(Math.max(0, todayIndex)), ...DAYS.slice(0, Math.max(0, todayIndex))];
+    const firstPopulated = orderedDays.find((day) => allEntries.some((entry) => entry.day === day.id));
+    if (firstPopulated) setSelectedDay(firstPopulated.id);
+  }, [allEntries, selectedDay]);
 
   const dayEntries = allEntries.filter(
     (entry) =>
@@ -2976,7 +3037,6 @@ function DetailModal({
   onOpenRelated,
   onOpenPerson,
   onBrowse,
-  onMenu,
   vpnActive,
   onVpnRetry,
 }: {
@@ -2995,7 +3055,6 @@ function DetailModal({
   onOpenRelated: (item: CatalogItem) => void;
   onOpenPerson: (person: CatalogPerson) => void;
   onBrowse: (filter: SearchFilter) => void;
-  onMenu: () => void;
   vpnActive: boolean;
   onVpnRetry: () => void;
 }) {
@@ -3031,7 +3090,6 @@ function DetailModal({
             <View style={styles.detailTopBar}>
               <Pressable onPress={onClose} style={styles.detailCircleButton}><Ionicons name="arrow-forward" color="#fff" size={21} /></Pressable>
               <View style={styles.detailTopActions}>
-                <Pressable onPress={onMenu} style={styles.detailCircleButton}><Ionicons name="menu" color="#fff" size={22} /></Pressable>
                 {item.type === 'series' ? <Pressable disabled={episodeAlertBusy} onPress={onEpisodeAlert} style={[styles.detailCircleButton, episodeAlertBusy && styles.detailCircleButtonDisabled]}>{episodeAlertBusy ? <ActivityIndicator color={COLORS.gold} size="small" /> : <Ionicons name={episodeAlertEnabled ? 'notifications' : 'notifications-outline'} color={episodeAlertEnabled ? COLORS.gold : '#fff'} size={21} />}</Pressable> : null}
                 <Pressable onPress={onFavorite} style={styles.detailCircleButton}><Ionicons name={favorite ? 'bookmark' : 'bookmark-outline'} color={favorite ? COLORS.gold : '#fff'} size={21} /></Pressable>
               </View>
@@ -3148,9 +3206,6 @@ function PersonProfileModal({
               <PersonAvatar person={person} style={styles.personProfileAvatar} />
             </View>
             <Text style={styles.personProfileName}>{personName(person)}</Text>
-            {person.name && person.name !== person.nameFa ? (
-              <Text style={styles.personProfileEnglish}>{person.name}</Text>
-            ) : null}
             <View style={styles.personProfileRoleBadge}>
               <Ionicons
                 name={person.role === 'director' ? 'videocam-outline' : 'person-outline'}
@@ -3206,8 +3261,7 @@ function VideoPlayerModal({
   );
   const initialSource = orderedSources.find((source) => source.id === request.initialSourceId) || orderedSources[0];
   const [activeSource, setActiveSource] = useState(initialSource);
-  const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
-  const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [displayMode, setDisplayMode] = useState<PlayerDisplayMode>('fit');
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const [firstFrameReady, setFirstFrameReady] = useState(false);
@@ -3219,13 +3273,10 @@ function VideoPlayerModal({
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const landscape = viewportWidth > viewportHeight;
-  const safeTop = landscape ? Math.max(insets.top, 4) : Math.max(insets.top, 8);
-  const safeBottom = landscape ? Math.max(insets.bottom, 6) : Math.max(insets.bottom, 10);
-  const bottomPanelBottom = safeBottom + 8;
-  const menuMaxHeight = landscape
-    ? Math.max(220, viewportHeight - safeTop - safeBottom - 28)
-    : Math.max(280, Math.min(viewportHeight * 0.68, viewportHeight - safeTop - safeBottom - 34));
-  const menuScrollHeight = Math.max(130, menuMaxHeight - 112);
+  const portraitFrameHeight = Math.max(
+    210,
+    Math.min(viewportWidth * 9 / 16, viewportHeight - insets.top - insets.bottom - 28),
+  );
   const progressWidthRef = useRef(1);
   const latestTimeRef = useRef(Math.max(0, Number(request.resumeAt || 0)));
   const latestDurationRef = useRef(0);
@@ -3245,8 +3296,8 @@ function VideoPlayerModal({
 
   const scheduleControlsHide = () => {
     clearControlsTimer();
-    if (!isPlaying || qualityMenuOpen || displayMenuOpen || locked) return;
-    controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 3000);
+    if (!isPlaying || settingsOpen || locked) return;
+    controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 3200);
   };
 
   const revealControls = () => {
@@ -3264,16 +3315,7 @@ function VideoPlayerModal({
   useEffect(() => {
     if (controlsVisible) scheduleControlsHide();
     return clearControlsTimer;
-  }, [controlsVisible, displayMenuOpen, isPlaying, locked, qualityMenuOpen]);
-
-  useEffect(() => {
-    if (!landscape) {
-      setDisplayMode('fit');
-      setDisplayMenuOpen(false);
-      setLocked(false);
-      setLockIndicatorVisible(false);
-    }
-  }, [landscape]);
+  }, [controlsVisible, isPlaying, locked, settingsOpen]);
 
   useEffect(
     () => () => {
@@ -3328,9 +3370,8 @@ function VideoPlayerModal({
       showLockIndicator();
       return;
     }
-    if (qualityMenuOpen || displayMenuOpen) {
-      setQualityMenuOpen(false);
-      setDisplayMenuOpen(false);
+    if (settingsOpen) {
+      setSettingsOpen(false);
       revealControls();
       return;
     }
@@ -3341,12 +3382,8 @@ function VideoPlayerModal({
     closePlayer();
   };
 
-  const videoContentFit: 'contain' | 'cover' = landscape && displayMode === 'fill' ? 'cover' : 'contain';
-  const displayModeLabel = displayMode === 'fill' ? 'پر کردن صفحه' : 'نمایش کامل';
-
   const toggleOrientation = async () => {
-    setQualityMenuOpen(false);
-    setDisplayMenuOpen(false);
+    setSettingsOpen(false);
     revealControls();
     await ScreenOrientation.lockAsync(
       landscape
@@ -3356,15 +3393,10 @@ function VideoPlayerModal({
   };
 
   const switchQuality = async (nextSource: PlaybackSource) => {
-    if (nextSource.id === activeSource.id || switchingQuality) {
-      setQualityMenuOpen(false);
-      return;
-    }
+    if (nextSource.id === activeSource.id || switchingQuality) return;
     const previousTime = Number(player.currentTime || 0);
     setSwitchingQuality(true);
     setFirstFrameReady(false);
-    setQualityMenuOpen(false);
-    revealControls();
     try {
       player.pause();
       await player.replaceAsync(nextSource.url);
@@ -3376,15 +3408,14 @@ function VideoPlayerModal({
       player.play();
     } finally {
       setSwitchingQuality(false);
+      setSettingsOpen(false);
+      revealControls();
     }
   };
 
   const seekBy = (seconds: number) => {
     const maximum = Math.max(0, Number(player.duration || duration || 0));
-    const next = Math.max(
-      0,
-      Math.min(maximum || Number.MAX_SAFE_INTEGER, Number(player.currentTime || 0) + seconds),
-    );
+    const next = Math.max(0, Math.min(maximum || Number.MAX_SAFE_INTEGER, Number(player.currentTime || 0) + seconds));
     player.currentTime = next;
     setCurrentTime(next);
     revealControls();
@@ -3401,35 +3432,14 @@ function VideoPlayerModal({
   };
 
   const lockPlayer = () => {
-    setQualityMenuOpen(false);
-    setDisplayMenuOpen(false);
+    setSettingsOpen(false);
     setControlsVisible(false);
     setLocked(true);
     showLockIndicator();
   };
 
-  const unlockPlayer = () => {
-    setLocked(false);
-    setLockIndicatorVisible(false);
-    setControlsVisible(true);
-  };
-
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
-
-  const menuCardStyle = landscape
-    ? [
-        styles.playerMenuCard,
-        styles.playerMenuCardLandscape,
-        { maxHeight: menuMaxHeight },
-      ]
-    : [
-        styles.playerMenuCard,
-        styles.playerMenuBottomSheet,
-        {
-          bottom: safeBottom + 10,
-          maxHeight: menuMaxHeight,
-        },
-      ];
+  const videoContentFit: 'contain' | 'cover' = displayMode === 'fill' ? 'cover' : 'contain';
 
   return (
     <Modal
@@ -3443,101 +3453,97 @@ function VideoPlayerModal({
     >
       <View style={styles.mediaModal}>
         <StatusBar style="light" hidden={landscape} backgroundColor="#000000" />
-        <View style={styles.videoStage}>
-          {request.artwork && !firstFrameReady ? (
-            <Image
-              source={{ uri: request.artwork }}
-              style={StyleSheet.absoluteFill}
-              contentFit="contain"
-              cachePolicy="memory-disk"
+        <View style={styles.playerScreenCenter}>
+          <View
+            style={[
+              styles.videoFrame,
+              landscape
+                ? styles.videoFrameLandscape
+                : { width: viewportWidth, height: portraitFrameHeight },
+            ]}
+          >
+            {request.artwork && !firstFrameReady ? (
+              <Image
+                source={{ uri: request.artwork }}
+                style={StyleSheet.absoluteFill}
+                contentFit="contain"
+                cachePolicy="memory-disk"
+              />
+            ) : null}
+
+            <VideoView
+              player={player}
+              style={styles.videoView}
+              nativeControls={false}
+              contentFit={videoContentFit}
+              allowsPictureInPicture
+              allowsFullscreen={false}
+              surfaceType="textureView"
+              onFirstFrameRender={() => setFirstFrameReady(true)}
             />
-          ) : null}
 
-          <VideoView
-            key={`${activeSource.id}-${videoContentFit}`}
-            player={player}
-            style={styles.videoView}
-            nativeControls={false}
-            contentFit={videoContentFit}
-            allowsPictureInPicture
-            allowsFullscreen={false}
-            surfaceType="textureView"
-            onFirstFrameRender={() => setFirstFrameReady(true)}
-          />
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => {
+                if (locked) {
+                  showLockIndicator();
+                  return;
+                }
+                setControlsVisible((visible) => !visible);
+              }}
+            />
 
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => {
-              if (locked) {
-                showLockIndicator();
-                return;
-              }
-              setControlsVisible((visible) => {
-                const next = !visible;
-                if (next) requestAnimationFrame(scheduleControlsHide);
-                return next;
-              });
-            }}
-          />
-
-          {!firstFrameReady || switchingQuality ? (
-            <View style={styles.qualitySwitchLoading} pointerEvents="none">
-              <ActivityIndicator color={COLORS.gold} size="large" />
-              <Text style={styles.qualitySwitchLoadingText}>
-                {switchingQuality ? 'در حال تغییر کیفیت…' : 'در حال آماده‌سازی ویدئو…'}
-              </Text>
-            </View>
-          ) : null}
-
-          {controlsVisible && !locked ? (
-            <View style={styles.playerControlsLayer} pointerEvents="box-none">
-              <View
-                style={[
-                  styles.playerOverlayHeader,
-                  landscape && styles.playerOverlayHeaderLandscape,
-                  { top: safeTop },
-                ]}
-                pointerEvents="box-none"
-              >
-                <Pressable onPress={handleBack} style={styles.mediaCloseButton}>
-                  <Ionicons name="close" color="#fff" size={23} />
-                </Pressable>
-                <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
+            {!firstFrameReady || switchingQuality ? (
+              <View style={styles.qualitySwitchLoading} pointerEvents="none">
+                <ActivityIndicator color={COLORS.gold} size="large" />
+                <Text style={styles.qualitySwitchLoadingText}>
+                  {switchingQuality ? 'در حال تغییر کیفیت…' : 'در حال آماده‌سازی ویدئو…'}
+                </Text>
               </View>
+            ) : null}
 
-              <View style={styles.playerCenterZone} pointerEvents="box-none">
-                <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
-                  <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton}>
-                    <Ionicons name="play-back" color="#fff" size={27} />
-                    <Text style={styles.playerSkipText}>۱۰</Text>
+            {controlsVisible && !locked ? (
+              <View style={styles.playerControlsLayer} pointerEvents="box-none">
+                <LinearGradient
+                  colors={['rgba(0,0,0,0.78)', 'transparent']}
+                  style={styles.playerTopGradient}
+                  pointerEvents="none"
+                />
+                <View style={styles.playerOverlayHeader} pointerEvents="box-none">
+                  <Pressable onPress={handleBack} style={styles.mediaCloseButton}>
+                    <Ionicons name="close" color="#fff" size={22} />
                   </Pressable>
-
-                  <Pressable
-                    onPress={() => {
-                      if (isPlaying) player.pause(); else player.play();
-                      revealControls();
-                    }}
-                    style={styles.playerPrimaryButton}
-                  >
-                    <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={32} />
-                  </Pressable>
-
-                  <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton}>
-                    <Ionicons name="play-forward" color="#fff" size={27} />
-                    <Text style={styles.playerSkipText}>۱۰</Text>
-                  </Pressable>
+                  <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
                 </View>
-              </View>
 
-              <View
-                style={[
-                  styles.playerBottomPanel,
-                  landscape && styles.playerBottomPanelLandscape,
-                  { bottom: bottomPanelBottom },
-                ]}
-                pointerEvents="box-none"
-              >
-                <View style={styles.playerTimelineWrap}>
+                <View style={styles.playerCenterZone} pointerEvents="box-none">
+                  <View style={styles.playerCenterControls}>
+                    <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton}>
+                      <Ionicons name="play-back" color="#fff" size={25} />
+                      <Text style={styles.playerSkipText}>۱۰</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        if (isPlaying) player.pause(); else player.play();
+                        revealControls();
+                      }}
+                      style={styles.playerPrimaryButton}
+                    >
+                      <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={30} />
+                    </Pressable>
+                    <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton}>
+                      <Ionicons name="play-forward" color="#fff" size={25} />
+                      <Text style={styles.playerSkipText}>۱۰</Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                <LinearGradient
+                  colors={['transparent', 'rgba(0,0,0,0.92)']}
+                  style={styles.playerBottomGradient}
+                  pointerEvents="none"
+                />
+                <View style={styles.playerBottomPanel} pointerEvents="box-none">
                   <Pressable
                     style={styles.playerTimelineTrack}
                     onLayout={(event) => {
@@ -3549,156 +3555,125 @@ function VideoPlayerModal({
                     <View style={[styles.playerTimelineFill, { width: `${progress * 100}%` }]} />
                     <View style={[styles.playerTimelineThumb, { left: `${progress * 100}%` }]} />
                   </Pressable>
-                  <View style={styles.playerTimeRow}>
+
+                  <View style={styles.playerControlRow}>
+                    <Pressable
+                      onPress={() => {
+                        if (isPlaying) player.pause(); else player.play();
+                        revealControls();
+                      }}
+                      style={styles.playerControlIcon}
+                    >
+                      <Ionicons name={isPlaying ? 'pause' : 'play'} color="#fff" size={21} />
+                    </Pressable>
                     <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
-                    <Text style={styles.playerVersionText} numberOfLines={1}>
-                      {request.language ? languageTitle(request.language) : 'پخش آنلاین'} • {activeSource.quality}
-                    </Text>
+                    <Text style={styles.playerTimeSeparator}>/</Text>
                     <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
+                    <View style={styles.playerControlSpacer} />
+                    <Text numberOfLines={1} style={styles.playerVersionText}>
+                      {activeSource.quality}
+                    </Text>
+                    {landscape ? (
+                      <Pressable onPress={lockPlayer} style={styles.playerControlIcon}>
+                        <Ionicons name="lock-closed-outline" color="#fff" size={20} />
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      onPress={() => {
+                        setSettingsOpen(true);
+                        setControlsVisible(true);
+                      }}
+                      style={styles.playerControlIcon}
+                    >
+                      <Ionicons name="settings-outline" color="#fff" size={21} />
+                    </Pressable>
+                    <Pressable onPress={toggleOrientation} style={styles.playerControlIcon}>
+                      <Ionicons
+                        name={landscape ? 'contract-outline' : 'expand-outline'}
+                        color="#fff"
+                        size={22}
+                      />
+                    </Pressable>
                   </View>
                 </View>
-
-                <View style={styles.playerBottomTools}>
-                  <Pressable onPress={toggleOrientation} style={styles.playerToolButton}>
-                    <Ionicons
-                      name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'}
-                      color="#fff"
-                      size={21}
-                    />
-                    <Text style={styles.playerToolText}>{landscape ? 'حالت عمودی' : 'تمام‌صفحه'}</Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() => {
-                      setDisplayMenuOpen(false);
-                      setQualityMenuOpen(true);
-                      revealControls();
-                    }}
-                    style={styles.playerToolButton}
-                  >
-                    <Ionicons name="settings-outline" color="#fff" size={20} />
-                    <Text style={styles.playerToolText}>{activeSource.quality}</Text>
-                  </Pressable>
-
-                  {landscape ? (
-                    <Pressable
-                      onPress={() => {
-                        setQualityMenuOpen(false);
-                        setDisplayMenuOpen(true);
-                        revealControls();
-                      }}
-                      style={styles.playerToolButton}
-                    >
-                      <Ionicons name="scan-outline" color="#fff" size={20} />
-                      <Text style={styles.playerToolText}>{displayModeLabel}</Text>
-                    </Pressable>
-                  ) : null}
-
-                  {landscape ? (
-                    <Pressable onPress={lockPlayer} style={styles.playerToolButton}>
-                      <Ionicons name="lock-closed-outline" color="#fff" size={20} />
-                      <Text style={styles.playerToolText}>قفل</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
               </View>
-            </View>
-          ) : null}
+            ) : null}
 
-          {locked && lockIndicatorVisible ? (
-            <Pressable onPress={unlockPlayer} style={styles.playerLockedButton}>
-              <Ionicons name="lock-closed" color="#fff" size={25} />
-              <Text style={styles.playerLockedText}>برای بازکردن قفل بزنید</Text>
-            </Pressable>
-          ) : null}
-
-          {qualityMenuOpen && !locked ? (
-            <View style={styles.playerQualityOverlay}>
+            {locked && lockIndicatorVisible ? (
               <Pressable
-                style={StyleSheet.absoluteFill}
                 onPress={() => {
-                  setQualityMenuOpen(false);
-                  revealControls();
+                  setLocked(false);
+                  setLockIndicatorVisible(false);
+                  setControlsVisible(true);
                 }}
-              />
-              <View style={menuCardStyle}>
-                <View style={styles.playerQualityHeader}>
-                  {!landscape ? <View style={styles.playerMenuGrabber} /> : null}
-                  <Text style={styles.playerQualityTitle}>تنظیمات پخش</Text>
-                  <Text style={styles.playerQualityDescription}>
-                    {request.language ? languageTitle(request.language) : 'پخش آنلاین'} • کیفیت فعلی {activeSource.quality}
-                  </Text>
-                </View>
-                <ScrollView
-                  style={[styles.playerMenuScroll, { maxHeight: menuScrollHeight }]}
-                  contentContainerStyle={styles.playerMenuScrollContent}
-                  showsVerticalScrollIndicator
-                >
-                  {orderedSources.map((source) => {
-                    const selected = source.id === activeSource.id;
-                    return (
-                      <Pressable
-                        key={source.id}
-                        onPress={() => switchQuality(source)}
-                        style={[styles.playerQualityOption, selected && styles.playerQualityOptionSelected]}
-                      >
-                        <Text style={[styles.playerQualityOptionText, selected && styles.playerQualityOptionTextSelected]}>
-                          {source.quality}
-                        </Text>
-                        <Ionicons
-                          name={selected ? 'radio-button-on' : 'radio-button-off'}
-                          color={selected ? COLORS.gold : COLORS.muted}
-                          size={20}
-                        />
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            </View>
-          ) : null}
+                style={styles.playerLockedButton}
+              >
+                <Ionicons name="lock-closed" color="#fff" size={24} />
+                <Text style={styles.playerLockedText}>برای بازکردن قفل بزنید</Text>
+              </Pressable>
+            ) : null}
 
-          {displayMenuOpen && landscape && !locked ? (
-            <View style={styles.playerQualityOverlay}>
-              <Pressable
-                style={StyleSheet.absoluteFill}
-                onPress={() => {
-                  setDisplayMenuOpen(false);
-                  revealControls();
-                }}
-              />
-              <View style={menuCardStyle}>
-                <View style={styles.playerQualityHeader}>
-                  <Text style={styles.playerQualityTitle}>اندازه تصویر</Text>
-                  <Text style={styles.playerQualityDescription}>
-                    حالت پیش‌فرض، نمایش کامل تصویر بدون برش است.
-                  </Text>
-                </View>
-                {([
-                  { id: 'fit', title: 'نمایش کامل', icon: 'contract-outline' },
-                  { id: 'fill', title: 'پر کردن صفحه', icon: 'expand-outline' },
-                ] as const).map((option) => {
-                  const selected = option.id === displayMode;
-                  return (
-                    <Pressable
-                      key={option.id}
-                      onPress={() => {
-                        setDisplayMode(option.id);
-                        setDisplayMenuOpen(false);
-                        revealControls();
-                      }}
-                      style={[styles.playerDisplayOption, selected && styles.playerQualityOptionSelected]}
-                    >
-                      <Text style={[styles.playerDisplayOptionTitle, selected && styles.playerQualityOptionTextSelected]}>
-                        {option.title}
-                      </Text>
-                      <Ionicons name={option.icon} color={selected ? COLORS.gold : COLORS.muted} size={21} />
+            {settingsOpen && !locked ? (
+              <View style={styles.playerSettingsOverlay}>
+                <Pressable
+                  style={StyleSheet.absoluteFill}
+                  onPress={() => {
+                    setSettingsOpen(false);
+                    revealControls();
+                  }}
+                />
+                <View style={[styles.playerSettingsCard, landscape && styles.playerSettingsCardLandscape]}>
+                  <View style={styles.playerSettingsHeader}>
+                    <Text style={styles.playerSettingsTitle}>تنظیمات پخش</Text>
+                    <Pressable onPress={() => setSettingsOpen(false)} style={styles.playerSettingsClose}>
+                      <Ionicons name="close" color="#fff" size={20} />
                     </Pressable>
-                  );
-                })}
+                  </View>
+                  <Text style={styles.playerSettingsLabel}>کیفیت</Text>
+                  <View style={styles.playerSettingsOptions}>
+                    {orderedSources.map((source) => {
+                      const selected = source.id === activeSource.id;
+                      return (
+                        <Pressable
+                          key={source.id}
+                          onPress={() => void switchQuality(source)}
+                          style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
+                        >
+                          <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>
+                            {source.quality}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <Text style={styles.playerSettingsLabel}>اندازه تصویر</Text>
+                  <View style={styles.playerSettingsOptions}>
+                    {([
+                      ['fit', 'نمایش کامل'],
+                      ['fill', 'پر کردن صفحه'],
+                    ] as const).map(([id, label]) => {
+                      const selected = displayMode === id;
+                      return (
+                        <Pressable
+                          key={id}
+                          onPress={() => {
+                            setDisplayMode(id);
+                            setSettingsOpen(false);
+                            revealControls();
+                          }}
+                          style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
+                        >
+                          <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>
+                            {label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
               </View>
-            </View>
-          ) : null}
+            ) : null}
+          </View>
         </View>
       </View>
     </Modal>
@@ -5034,7 +5009,6 @@ function AppContent() {
         onOpenRelated={setSelectedItem}
         onOpenPerson={setSelectedPerson}
         onBrowse={openCatalogFilter}
-        onMenu={() => { setSelectedItem(null); requestAnimationFrame(() => setMenuOpen(true)); }}
         vpnActive={vpnActive}
         onVpnRetry={() => { void refreshVpnState(false); }}
       />
@@ -5480,6 +5454,9 @@ const styles = StyleSheet.create({
   personWorksEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', textAlign: 'center', marginTop: 10 },
   personWorksEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 18, textAlign: 'center', marginTop: 6 },
   mediaModal: { flex: 1, backgroundColor: '#000' },
+  playerScreenCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+  videoFrame: { position: 'relative', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+  videoFrameLandscape: { width: '100%', height: '100%' },
   webModal: { flex: 1, backgroundColor: COLORS.background },
   mediaModalHeader: { height: 62, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
   mediaCloseButton: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong },
@@ -5557,26 +5534,44 @@ const styles = StyleSheet.create({
   storageTotals: { marginTop: 13, padding: 11, borderRadius: 11, alignItems: 'flex-end', gap: 5, backgroundColor: 'rgba(216,180,90,0.06)' },
   storageTotalText: { ...rtlText, color: COLORS.text, fontSize: 8.7, fontWeight: '800' },
   downloadLibraryBytes: { ...rtlText, color: COLORS.text, fontSize: 8.3, marginTop: 7, width: '100%' },
-  playerControlsLayer: { ...StyleSheet.absoluteFillObject, zIndex: 12, backgroundColor: 'rgba(0,0,0,0.14)' },
-  playerOverlayHeader: { position: 'absolute', right: 12, left: 12, minHeight: 52, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 9, borderRadius: 16, backgroundColor: 'rgba(5,7,10,0.80)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.11)' },
+  playerControlsLayer: { ...StyleSheet.absoluteFillObject, zIndex: 12 },
+  playerTopGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 78 },
+  playerBottomGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 112 },
+  playerOverlayHeader: { position: 'absolute', top: 7, right: 9, left: 9, minHeight: 42, paddingHorizontal: 4, flexDirection: 'row', alignItems: 'center', gap: 8 },
   playerOverlayHeaderLandscape: { right: 16, left: 16, minHeight: 48 },
   playerCenterZone: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
-  playerCenterControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 26 },
+  playerCenterControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 22 },
   playerCenterControlsLandscape: { gap: 34 },
   playerRoundButton: { width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.76)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   playerPrimaryButton: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   playerSkipText: { position: 'absolute', color: '#fff', fontSize: 8, fontWeight: '900' },
-  playerBottomPanel: { position: 'absolute', left: 12, right: 12, zIndex: 14, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10, borderRadius: 17, backgroundColor: 'rgba(5,7,10,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  playerBottomPanel: { position: 'absolute', left: 10, right: 10, bottom: 5, zIndex: 14, paddingHorizontal: 4, paddingTop: 4, paddingBottom: 2 },
   playerBottomPanelLandscape: { left: 18, right: 18, paddingHorizontal: 14, paddingTop: 8, paddingBottom: 8 },
   playerTimelineWrap: { width: '100%' },
-  playerTimelineTrack: { width: '100%', height: 24, justifyContent: 'center' },
+  playerTimelineTrack: { width: '100%', height: 20, justifyContent: 'center' },
   playerTimelineRail: { position: 'absolute', left: 0, right: 0, height: 4, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.24)' },
   playerTimelineFill: { position: 'absolute', left: 0, height: 4, borderRadius: 3, backgroundColor: '#fff' },
   playerTimelineThumb: { position: 'absolute', width: 14, height: 14, marginLeft: -7, borderRadius: 7, backgroundColor: '#fff' },
   playerTimeRow: { marginTop: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 9 },
   playerTimeText: { color: '#fff', fontSize: 9.5, fontWeight: '800' },
   playerVersionText: { ...rtlText, minWidth: 0, flex: 1, color: 'rgba(255,255,255,0.88)', fontSize: 8.5, textAlign: 'center' },
-  playerBottomTools: { marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  playerBottomTools: { marginTop: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
+  playerControlRow: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  playerControlIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  playerControlSpacer: { flex: 1 },
+  playerTimeSeparator: { color: 'rgba(255,255,255,0.48)', fontSize: 9 },
+  playerSettingsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, backgroundColor: 'rgba(0,0,0,0.62)' },
+  playerSettingsCard: { width: '100%', maxWidth: 360, padding: 14, borderRadius: 17, backgroundColor: 'rgba(16,19,25,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  playerSettingsCardLandscape: { maxWidth: 440 },
+  playerSettingsHeader: { minHeight: 34, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
+  playerSettingsTitle: { ...rtlText, color: '#fff', fontSize: 14, fontWeight: '900' },
+  playerSettingsClose: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
+  playerSettingsLabel: { ...rtlText, color: COLORS.muted, fontSize: 9, fontWeight: '800', marginTop: 12, marginBottom: 7 },
+  playerSettingsOptions: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 7 },
+  playerSettingChip: { minHeight: 36, paddingHorizontal: 12, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  playerSettingChipActive: { backgroundColor: 'rgba(216,180,90,0.14)', borderColor: 'rgba(216,180,90,0.72)' },
+  playerSettingChipText: { color: '#D2D5DA', fontSize: 10, fontWeight: '800' },
+  playerSettingChipTextActive: { color: COLORS.gold },
   playerToolButton: { minWidth: 72, minHeight: 42, paddingHorizontal: 10, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(8,10,14,0.92)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   playerToolText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
   playerLockedButton: { position: 'absolute', left: 24, top: '45%', minHeight: 50, paddingHorizontal: 15, borderRadius: 16, zIndex: 40, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(5,7,10,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)' },

@@ -93,6 +93,12 @@ export type CatalogItem = {
   episodeCount?: number;
   seasonCount?: number;
   latestEpisode?: LatestEpisode | null;
+  /** روزهای پخش هفتگی، ترجیحاً از TMDB یا منبع رسمی. */
+  airDays?: DayId[];
+  airTime?: string;
+  nextEpisodeAirDate?: string;
+  nextEpisodeNumber?: number;
+  isAiring?: boolean;
   updateLabel?: string;
   meaningfulUpdatedAt?: string;
   categoryKeys?: string[];

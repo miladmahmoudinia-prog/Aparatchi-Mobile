@@ -47,6 +47,22 @@ const asString = (value: unknown, fallback = '') =>
     ? String(value).trim()
     : fallback;
 
+
+const DAY_ALIASES: Record<string, DayId> = {
+  saturday: 'saturday', شنبه: 'saturday',
+  sunday: 'sunday', یکشنبه: 'sunday',
+  monday: 'monday', دوشنبه: 'monday',
+  tuesday: 'tuesday', سهشنبه: 'tuesday', 'سه‌شنبه': 'tuesday',
+  wednesday: 'wednesday', چهارشنبه: 'wednesday',
+  thursday: 'thursday', پنجشنبه: 'thursday',
+  friday: 'friday', جمعه: 'friday',
+};
+
+const normalizeDayId = (value: unknown): DayId | null => {
+  const key = asString(value).toLowerCase().replace(/[\s_-]+/g, '');
+  return DAY_ALIASES[key] || null;
+};
+
 const asNumber = (value: unknown, fallback = 0) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -671,6 +687,21 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
           episodeCount: asNumber(item.episodeCount, episodeSections.length),
           seasonCount: asNumber(item.seasonCount, seasonNumbers.size),
           latestEpisode,
+          airDays: stringArray(item.airDays ?? item.air_days ?? item.scheduleDays ?? item.schedule_days)
+            .map(normalizeDayId)
+            .filter((day): day is DayId => Boolean(day)),
+          ...(asString(item.airTime ?? item.air_time ?? item.scheduleTime ?? item.schedule_time)
+            ? { airTime: asString(item.airTime ?? item.air_time ?? item.scheduleTime ?? item.schedule_time) }
+            : {}),
+          ...(asString(item.nextEpisodeAirDate ?? item.next_episode_air_date)
+            ? { nextEpisodeAirDate: asString(item.nextEpisodeAirDate ?? item.next_episode_air_date) }
+            : {}),
+          ...(asNumber(item.nextEpisodeNumber ?? item.next_episode_number, 0) > 0
+            ? { nextEpisodeNumber: asNumber(item.nextEpisodeNumber ?? item.next_episode_number, 0) }
+            : {}),
+          ...(item.isAiring !== undefined || item.is_airing !== undefined
+            ? { isAiring: asBoolean(item.isAiring ?? item.is_airing) }
+            : {}),
         }
       : {}),
     ...(asString(item.updateLabel) ? { updateLabel: asString(item.updateLabel) } : {}),
@@ -692,9 +723,9 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
 const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | null => {
   if (!value || typeof value !== 'object') return null;
   const entry = value as Record<string, unknown>;
-  const day = asString(entry.day) as DayId;
+  const day = normalizeDayId(entry.day);
   const itemId = asString(entry.itemId ?? entry.item_id);
-  if (!itemId || !DAY_IDS.includes(day)) return null;
+  if (!itemId || !day || !DAY_IDS.includes(day)) return null;
 
   const region = entry.region === 'foreign' ? 'foreign' : 'iranian';
   const episode = asNumber(entry.episode, 0);
