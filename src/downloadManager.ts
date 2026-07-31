@@ -36,6 +36,9 @@ export type DownloadPauseSnapshot = {
 export type DownloadRunResult = {
   localUri?: string;
   paused: boolean;
+  destinationUri?: string;
+  resumeData?: string;
+  error?: string;
 };
 
 const DOWNLOAD_DIRECTORY = `${FileSystem.documentDirectory}aparatchi-downloads/`;
@@ -55,11 +58,15 @@ const extensionFromUrl = (url: string) => {
   return match ? `.${match[1].toLowerCase()}` : '.mp4';
 };
 
-const destinationFor = (record: DownloadRecord) => {
-  if (record.destinationUri) return record.destinationUri;
+const finalDestinationFor = (record: DownloadRecord) => {
   const extension = extensionFromUrl(record.sourceUrl);
   const baseName = sanitizeName(record.fileName || `${record.title}-${record.quality}`);
   return `${DOWNLOAD_DIRECTORY}${baseName}-${sanitizeName(record.id)}${extension}`;
+};
+
+const destinationFor = (record: DownloadRecord) => {
+  if (record.destinationUri) return record.destinationUri;
+  return `${finalDestinationFor(record)}.part`;
 };
 
 async function ensureDownloadDirectory() {
@@ -86,9 +93,43 @@ export async function loadDownloadRecords(): Promise<DownloadRecord[]> {
     const raw = await FileSystem.readAsStringAsync(DATABASE_FILE);
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
+
+    const normalized = parsed
       .filter((record) => record && typeof record.id === 'string')
       .map((record) => normalizeRecord(record as DownloadRecord));
+
+    return Promise.all(normalized.map(async (record) => {
+      if (record.status !== 'completed' || !record.localUri) return record;
+
+      const fileInfo = await FileSystem.getInfoAsync(record.localUri, { size: true }).catch(() => null);
+      const actualSize = Number((fileInfo as any)?.size || 0);
+      const expectedSize = Math.max(0, Number(record.totalBytes || 0));
+      const looksComplete = Boolean(
+        fileInfo?.exists &&
+        actualSize > 0 &&
+        /\.(?:mp4|m4v|mov|webm)(?:$|[?#])/i.test(record.localUri) &&
+        (expectedSize <= 0 || actualSize >= expectedSize * 0.97),
+      );
+
+      if (looksComplete) {
+        return {
+          ...record,
+          progress: 1,
+          bytesWritten: actualSize,
+          error: undefined,
+        };
+      }
+
+      return {
+        ...record,
+        localUri: undefined,
+        destinationUri: record.destinationUri || record.localUri,
+        status: 'failed' as const,
+        progress: expectedSize > 0 ? Math.max(0, Math.min(0.99, actualSize / expectedSize)) : 0,
+        bytesWritten: actualSize,
+        error: 'فایل دانلودشده ناقص یا حذف شده است؛ دانلود را دوباره ادامه دهید.',
+      };
+    }));
   } catch {
     return [];
   }
@@ -146,10 +187,30 @@ export async function runDownload({
       : await task.downloadAsync();
 
     if (!result?.uri) {
-      return { paused: !activeTasks.has(record.id) };
+      return { paused: !activeTasks.has(record.id), destinationUri: destination };
     }
 
-    return { localUri: result.uri, paused: false };
+    const info = await FileSystem.getInfoAsync(result.uri, { size: true });
+    const actualSize = Number((info as any).size || 0);
+    const expectedSize = Math.max(0, Number(record.totalBytes || 0));
+    if (!info.exists || actualSize <= 0 || (expectedSize > 0 && actualSize < expectedSize * 0.97)) {
+      return { paused: true, destinationUri: result.uri, error: 'فایل هنوز کامل نشده است؛ ادامه دانلود را بزنید.' };
+    }
+
+    const finalDestination = finalDestinationFor(record);
+    if (result.uri !== finalDestination) {
+      await FileSystem.deleteAsync(finalDestination, { idempotent: true }).catch(() => undefined);
+      await FileSystem.moveAsync({ from: result.uri, to: finalDestination });
+    }
+    return { localUri: finalDestination, destinationUri: finalDestination, paused: false };
+  } catch (error) {
+    const savable = typeof task.savable === 'function' ? task.savable() : null;
+    return {
+      paused: true,
+      destinationUri: task.fileUri || destination,
+      resumeData: savable?.resumeData || record.resumeData,
+      error: error instanceof Error ? error.message : 'دانلود متوقف شد.',
+    };
   } finally {
     if (activeTasks.get(record.id) === task) {
       activeTasks.delete(record.id);
@@ -185,6 +246,11 @@ export async function saveDownloadedFileToGallery(localUri?: string) {
   const permission = await requestPermissionsAsync(true, ['video']);
   if (permission.status !== 'granted') {
     throw new Error('اجازه ذخیره ویدئو در گالری داده نشد.');
+  }
+
+  const info = await FileSystem.getInfoAsync(localUri, { size: true });
+  if (!info.exists || Number((info as any).size || 0) <= 0 || !/\.(?:mp4|m4v|mov|webm)(?:$|[?#])/i.test(localUri)) {
+    throw new Error('فایل ویدئویی کامل و معتبر نیست.');
   }
 
   await Asset.create(localUri);
