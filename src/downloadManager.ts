@@ -222,13 +222,32 @@ export async function pauseDownload(id: string): Promise<DownloadPauseSnapshot |
   const task = activeTasks.get(id);
   if (!task) return null;
 
-  const snapshot = await task.pauseAsync();
+  // Remove it first so the UI can leave the "downloading" state even when
+  // Android's network stack is stuck after a VPN/interface change.
   activeTasks.delete(id);
-
-  return {
-    destinationUri: snapshot.fileUri || task.fileUri,
-    resumeData: snapshot.resumeData,
+  const savable = typeof task.savable === 'function' ? task.savable() : null;
+  const fallback: DownloadPauseSnapshot = {
+    destinationUri: task.fileUri,
+    resumeData: savable?.resumeData,
   };
+
+  try {
+    const snapshot = await Promise.race([
+      task.pauseAsync(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
+    if (!snapshot) {
+      void task.cancelAsync().catch(() => undefined);
+      return fallback.destinationUri ? fallback : null;
+    }
+    return {
+      destinationUri: snapshot.fileUri || fallback.destinationUri,
+      resumeData: snapshot.resumeData || fallback.resumeData,
+    };
+  } catch {
+    void task.cancelAsync().catch(() => undefined);
+    return fallback.destinationUri ? fallback : null;
+  }
 }
 
 export async function cancelDownload(id: string) {

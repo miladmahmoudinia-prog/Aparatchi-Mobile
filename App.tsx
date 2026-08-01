@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
-import { useEvent, useEventListener } from 'expo';
+import { useEventListener } from 'expo';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -81,6 +81,7 @@ type SearchFilter =
   | 'iranian-series'
   | 'foreign-series'
   | 'korean-movies'
+  | 'korean-series'
   | 'indian-movies'
   | 'japanese-movies'
   | 'anime-movies'
@@ -655,15 +656,40 @@ const isIranianItem = (item: CatalogItem) =>
     (item.countryNames || []).some((value) => normalizeComparableText(value) === 'iran'),
   );
 
-const isAnimeItem = (item: CatalogItem) => Boolean(
-  item.isAnime ||
-  item.contentKind === 'anime-movie' ||
-  item.contentKind === 'anime-series' ||
-  hasCategory(item, 'anime-movies') ||
-  hasCategory(item, 'anime-series') ||
-  ((item.isAnimation || item.genres.some((genre) => /انیمیشن|animation/i.test(genre))) &&
-    (item.countryCodes?.includes('JP') || item.originalLanguage === 'ja'))
-);
+const looksLikeAnimeTitle = (item: CatalogItem) => {
+  const text = normalizeComparableText([
+    item.nameFa,
+    item.name,
+    item.contentKind || '',
+    ...(item.categoryLabels || []),
+    ...(item.categoryKeys || []),
+  ].join(' '));
+  const hasJapaneseScript = /[\u3040-\u30ff\u31f0-\u31ff]/.test(`${item.nameFa} ${item.name}`);
+  const knownAnimeFranchise = /(?:انیمه|anime|jujutsu\s*kaisen|جوجوتسو|demon\s*slayer|kimetsu|شیطان\s*کش|attack\s*on\s*titan|one\s*piece|naruto|bleach|my\s*hero\s*academia|chainsaw\s*man|spy\s*[x×]\s*family|solo\s*leveling)/i.test(text);
+  return hasJapaneseScript || knownAnimeFranchise;
+};
+
+const isAnimeItem = (item: CatalogItem) => {
+  const animated = Boolean(
+    item.isAnimation ||
+    item.genres.some((genre) => /انیمیشن|animation|anime/i.test(genre)) ||
+    item.contentKind === 'animation-movie' ||
+    item.contentKind === 'animation-series' ||
+    hasCategory(item, 'animation-movies') ||
+    hasCategory(item, 'animation-series'),
+  );
+  if (!animated) return false;
+  return Boolean(
+    item.isAnime ||
+    item.contentKind === 'anime-movie' ||
+    item.contentKind === 'anime-series' ||
+    hasCategory(item, 'anime-movies') ||
+    hasCategory(item, 'anime-series') ||
+    item.countryCodes?.includes('JP') ||
+    item.originalLanguage === 'ja' ||
+    looksLikeAnimeTitle(item)
+  );
+};
 
 const isAnimatedItem = (item: CatalogItem) => Boolean(
   item.isAnimation ||
@@ -745,7 +771,7 @@ const filterTitle = (filter: SearchFilter) => {
     latest: 'جدیدترین‌ها', updated: 'به‌روزشده‌ها',
     'iranian-movies': 'فیلم‌های ایرانی', 'foreign-movies': 'فیلم‌های خارجی',
     'iranian-series': 'سریال‌های ایرانی', 'foreign-series': 'سریال‌های خارجی',
-    'korean-movies': 'فیلم‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی', 'japanese-movies': 'فیلم‌های ژاپنی',
+    'korean-movies': 'فیلم‌های کره‌ای', 'korean-series': 'سریال‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی', 'japanese-movies': 'فیلم‌های ژاپنی',
     'anime-movies': 'انیمه‌های سینمایی', 'anime-series': 'انیمه‌های سریالی',
     'animation-movies': 'انیمیشن‌های سینمایی', 'animation-series': 'انیمیشن‌های سریالی',
     programs: 'تاک‌شوها و برنامه‌ها', documentaries: 'مستندها', collections: 'کالکشن‌ها',
@@ -775,6 +801,7 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'iranian-series': return item.type === 'series' && isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item);
     case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item);
     case 'korean-movies': return item.type === 'movie' && item.countryCodes?.includes('KR') && !isAnimatedItem(item);
+    case 'korean-series': return item.type === 'series' && item.countryCodes?.includes('KR') && !isAnimatedItem(item) && !isProgramItem(item);
     case 'indian-movies': return item.type === 'movie' && item.countryCodes?.includes('IN') && !isAnimatedItem(item);
     case 'japanese-movies': return item.type === 'movie' && item.countryCodes?.includes('JP') && !isAnimatedItem(item);
     case 'anime-movies': return item.type === 'movie' && isAnimeItem(item);
@@ -1626,6 +1653,7 @@ function HomeScreen({
     { filter: 'iranian-series', title: 'سریال‌های ایرانی', items: catalogItemsForFilter(catalog, 'iranian-series') },
     { filter: 'foreign-series', title: 'سریال‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-series') },
     { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-movies') },
+    { filter: 'korean-series', title: 'سریال‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-series') },
     { filter: 'indian-movies', title: 'فیلم‌های هندی', items: catalogItemsForFilter(catalog, 'indian-movies') },
     { filter: 'japanese-movies', title: 'فیلم‌های ژاپنی', items: catalogItemsForFilter(catalog, 'japanese-movies') },
     { filter: 'anime-movies', title: 'انیمه‌های سینمایی', items: catalogItemsForFilter(catalog, 'anime-movies') },
@@ -1696,6 +1724,7 @@ const CATEGORY_FALLBACK_ART: Record<string, number> = {
   updated: require('./assets/category-art/updated.jpg'),
   'mobile-operator': require('./assets/category-art/operator.jpg'),
   'korean-movies': require('./assets/category-art/korean.jpg'),
+  'korean-series': require('./assets/category-art/korean.jpg'),
   'indian-movies': require('./assets/category-art/indian.jpg'),
   'japanese-movies': require('./assets/category-art/foreign-movies.jpg'),
   collections: require('./assets/category-art/collections.jpg'),
@@ -1731,6 +1760,7 @@ function CategoriesScreen({
     { filter: 'updated', title: 'به‌روزشده‌ها', subtitle: 'قسمت یا نسخه تازه', icon: 'refresh-outline' },
     { filter: 'mobile-operator', title: 'ویژه اینترنت همراه', subtitle: 'محتوای اپراتوری', icon: 'phone-portrait-outline' },
     { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', subtitle: 'سینمای کره جنوبی', icon: 'location-outline' },
+    { filter: 'korean-series', title: 'سریال‌های کره‌ای', subtitle: 'مجموعه‌های کره جنوبی', icon: 'tv-outline' },
     { filter: 'indian-movies', title: 'فیلم‌های هندی', subtitle: 'سینمای هند', icon: 'location-outline' },
     { filter: 'japanese-movies', title: 'فیلم‌های ژاپنی', subtitle: 'سینمای ژاپن', icon: 'location-outline' },
     { filter: 'collections', title: 'کالکشن‌ها', subtitle: 'قسمت‌های یک مجموعه', icon: 'layers-outline' },
@@ -2671,7 +2701,7 @@ function DownloadsScreen({
                       : record.status === 'downloading'
                         ? `${toPersianDigits(percent)}٪ در حال دریافت`
                         : record.status === 'paused'
-                          ? `${toPersianDigits(percent)}٪ متوقف شده`
+                          ? record.error || `${toPersianDigits(percent)}٪ متوقف شده`
                           : record.error || 'دریافت ناموفق بود'}
                   </Text>
                 </View>
@@ -3173,14 +3203,12 @@ function PersonProfileModal({
   visible,
   onClose,
   onOpenItem,
-  onMenu,
 }: {
   person: CatalogPerson | null;
   catalog: CatalogItem[];
   visible: boolean;
   onClose: () => void;
   onOpenItem: (item: CatalogItem) => void;
-  onMenu: () => void;
 }) {
   const { width: screenWidth } = useWindowDimensions();
   if (!person) return null;
@@ -3198,7 +3226,7 @@ function PersonProfileModal({
             <Ionicons name="arrow-forward" color="#fff" size={21} />
           </Pressable>
           <Text numberOfLines={1} style={styles.personProfileTopTitle}>صفحه عوامل</Text>
-          <Pressable onPress={onMenu} style={styles.detailCircleButton}><Ionicons name="menu" color="#fff" size={21} /></Pressable>
+          <View style={styles.detailCircleButtonPlaceholder} />
         </View>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.personProfileContent}>
           <View style={styles.personProfileHeader}>
@@ -3265,66 +3293,19 @@ function VideoPlayerModal({
   const [displayMode, setDisplayMode] = useState<PlayerDisplayMode>('fit');
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const [firstFrameReady, setFirstFrameReady] = useState(false);
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const [locked, setLocked] = useState(false);
-  const [lockIndicatorVisible, setLockIndicatorVisible] = useState(false);
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const landscape = viewportWidth > viewportHeight;
-  const portraitFrameHeight = Math.max(
-    210,
-    Math.min(viewportWidth * 9 / 16, viewportHeight - insets.top - insets.bottom - 28),
-  );
-  const progressWidthRef = useRef(1);
+  const portraitFrameHeight = Math.round(viewportWidth * 9 / 16);
   const latestTimeRef = useRef(Math.max(0, Number(request.resumeAt || 0)));
   const latestDurationRef = useRef(0);
   const resumeAppliedRef = useRef(false);
-  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const player = useVideoPlayer(initialSource.url, (instance) => {
-    instance.timeUpdateEventInterval = 0.5;
+    instance.timeUpdateEventInterval = 0.75;
     instance.play();
   });
-  const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
-
-  const clearControlsTimer = () => {
-    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
-    controlsTimerRef.current = null;
-  };
-
-  const scheduleControlsHide = () => {
-    clearControlsTimer();
-    if (!isPlaying || settingsOpen || locked) return;
-    controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 3200);
-  };
-
-  const revealControls = () => {
-    if (locked) return;
-    setControlsVisible(true);
-    requestAnimationFrame(scheduleControlsHide);
-  };
-
-  const showLockIndicator = () => {
-    setLockIndicatorVisible(true);
-    if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
-    lockTimerRef.current = setTimeout(() => setLockIndicatorVisible(false), 2200);
-  };
-
-  useEffect(() => {
-    if (controlsVisible) scheduleControlsHide();
-    return clearControlsTimer;
-  }, [controlsVisible, isPlaying, locked, settingsOpen]);
-
-  useEffect(
-    () => () => {
-      clearControlsTimer();
-      if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
-      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
-    },
-    [],
-  );
 
   useEventListener(player, 'sourceLoad', ({ duration: loadedDuration }) => {
     const safeDuration = Math.max(0, Number(loadedDuration || player.duration || 0));
@@ -3356,6 +3337,13 @@ function VideoPlayerModal({
     onProgress(request, safeDuration, safeDuration, true);
   });
 
+  useEffect(
+    () => () => {
+      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
+    },
+    [],
+  );
+
   const closePlayer = () => {
     const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
     const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
@@ -3366,13 +3354,8 @@ function VideoPlayerModal({
   };
 
   const handleBack = () => {
-    if (locked) {
-      showLockIndicator();
-      return;
-    }
     if (settingsOpen) {
       setSettingsOpen(false);
-      revealControls();
       return;
     }
     if (landscape) {
@@ -3382,19 +3365,9 @@ function VideoPlayerModal({
     closePlayer();
   };
 
-  const toggleOrientation = async () => {
-    setSettingsOpen(false);
-    revealControls();
-    await ScreenOrientation.lockAsync(
-      landscape
-        ? ScreenOrientation.OrientationLock.PORTRAIT_UP
-        : ScreenOrientation.OrientationLock.LANDSCAPE,
-    ).catch(() => undefined);
-  };
-
   const switchQuality = async (nextSource: PlaybackSource) => {
     if (nextSource.id === activeSource.id || switchingQuality) return;
-    const previousTime = Number(player.currentTime || 0);
+    const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
     setSwitchingQuality(true);
     setFirstFrameReady(false);
     try {
@@ -3409,37 +3382,17 @@ function VideoPlayerModal({
     } finally {
       setSwitchingQuality(false);
       setSettingsOpen(false);
-      revealControls();
     }
   };
 
-  const seekBy = (seconds: number) => {
-    const maximum = Math.max(0, Number(player.duration || duration || 0));
-    const next = Math.max(0, Math.min(maximum || Number.MAX_SAFE_INTEGER, Number(player.currentTime || 0) + seconds));
-    player.currentTime = next;
-    setCurrentTime(next);
-    revealControls();
-  };
-
-  const seekFromProgress = (locationX: number) => {
-    const safeDuration = Math.max(0, Number(player.duration || duration || 0));
-    if (!safeDuration || progressWidthRef.current <= 0) return;
-    const ratio = Math.max(0, Math.min(1, locationX / progressWidthRef.current));
-    const next = ratio * safeDuration;
-    player.currentTime = next;
-    setCurrentTime(next);
-    revealControls();
-  };
-
-  const lockPlayer = () => {
+  const toggleOrientation = () => {
     setSettingsOpen(false);
-    setControlsVisible(false);
-    setLocked(true);
-    showLockIndicator();
+    void ScreenOrientation.lockAsync(
+      landscape
+        ? ScreenOrientation.OrientationLock.PORTRAIT_UP
+        : ScreenOrientation.OrientationLock.LANDSCAPE,
+    ).catch(() => undefined);
   };
-
-  const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
-  const videoContentFit: 'contain' | 'cover' = displayMode === 'fill' ? 'cover' : 'contain';
 
   return (
     <Modal
@@ -3466,162 +3419,63 @@ function VideoPlayerModal({
               <Image
                 source={{ uri: request.artwork }}
                 style={StyleSheet.absoluteFill}
-                contentFit="contain"
+                contentFit="cover"
                 cachePolicy="memory-disk"
+                transition={120}
               />
             ) : null}
 
             <VideoView
               player={player}
-              style={styles.videoView}
-              nativeControls={false}
-              contentFit={videoContentFit}
+              style={[styles.videoView, !firstFrameReady && styles.videoViewPreparing]}
+              nativeControls={firstFrameReady && !switchingQuality}
+              buttonOptions={{
+                showBottomBar: true,
+                showPlayPause: true,
+                showSeekBackward: true,
+                showSeekForward: true,
+                showNext: false,
+                showPrevious: false,
+              }}
+              contentFit={displayMode === 'fill' ? 'cover' : 'contain'}
               allowsPictureInPicture
-              allowsFullscreen={false}
+              allowsFullscreen
               surfaceType="textureView"
+              useExoShutter
               onFirstFrameRender={() => setFirstFrameReady(true)}
             />
 
-            <Pressable
-              style={StyleSheet.absoluteFill}
-              onPress={() => {
-                if (locked) {
-                  showLockIndicator();
-                  return;
-                }
-                setControlsVisible((visible) => !visible);
-              }}
-            />
-
             {!firstFrameReady || switchingQuality ? (
-              <View style={styles.qualitySwitchLoading} pointerEvents="none">
-                <ActivityIndicator color={COLORS.gold} size="large" />
-                <Text style={styles.qualitySwitchLoadingText}>
+              <View style={styles.playerPreparingOverlay} pointerEvents="none">
+                <ActivityIndicator color={COLORS.gold} size="small" />
+                <Text style={styles.playerPreparingText}>
                   {switchingQuality ? 'در حال تغییر کیفیت…' : 'در حال آماده‌سازی ویدئو…'}
                 </Text>
               </View>
             ) : null}
 
-            {controlsVisible && !locked ? (
-              <View style={styles.playerControlsLayer} pointerEvents="box-none">
-                <LinearGradient
-                  colors={['rgba(0,0,0,0.78)', 'transparent']}
-                  style={styles.playerTopGradient}
-                  pointerEvents="none"
-                />
-                <View style={styles.playerOverlayHeader} pointerEvents="box-none">
-                  <Pressable onPress={handleBack} style={styles.mediaCloseButton}>
-                    <Ionicons name="close" color="#fff" size={22} />
-                  </Pressable>
-                  <Text numberOfLines={1} style={styles.mediaModalTitle}>{request.title}</Text>
-                </View>
-
-                <View style={styles.playerCenterZone} pointerEvents="box-none">
-                  <View style={styles.playerCenterControls}>
-                    <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton}>
-                      <Ionicons name="play-back" color="#fff" size={25} />
-                      <Text style={styles.playerSkipText}>۱۰</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => {
-                        if (isPlaying) player.pause(); else player.play();
-                        revealControls();
-                      }}
-                      style={styles.playerPrimaryButton}
-                    >
-                      <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={30} />
-                    </Pressable>
-                    <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton}>
-                      <Ionicons name="play-forward" color="#fff" size={25} />
-                      <Text style={styles.playerSkipText}>۱۰</Text>
-                    </Pressable>
-                  </View>
-                </View>
-
-                <LinearGradient
-                  colors={['transparent', 'rgba(0,0,0,0.92)']}
-                  style={styles.playerBottomGradient}
-                  pointerEvents="none"
-                />
-                <View style={styles.playerBottomPanel} pointerEvents="box-none">
-                  <Pressable
-                    style={styles.playerTimelineTrack}
-                    onLayout={(event) => {
-                      progressWidthRef.current = event.nativeEvent.layout.width || 1;
-                    }}
-                    onPress={(event) => seekFromProgress(event.nativeEvent.locationX)}
-                  >
-                    <View style={styles.playerTimelineRail} />
-                    <View style={[styles.playerTimelineFill, { width: `${progress * 100}%` }]} />
-                    <View style={[styles.playerTimelineThumb, { left: `${progress * 100}%` }]} />
-                  </Pressable>
-
-                  <View style={styles.playerControlRow}>
-                    <Pressable
-                      onPress={() => {
-                        if (isPlaying) player.pause(); else player.play();
-                        revealControls();
-                      }}
-                      style={styles.playerControlIcon}
-                    >
-                      <Ionicons name={isPlaying ? 'pause' : 'play'} color="#fff" size={21} />
-                    </Pressable>
-                    <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
-                    <Text style={styles.playerTimeSeparator}>/</Text>
-                    <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
-                    <View style={styles.playerControlSpacer} />
-                    <Text numberOfLines={1} style={styles.playerVersionText}>
-                      {activeSource.quality}
-                    </Text>
-                    {landscape ? (
-                      <Pressable onPress={lockPlayer} style={styles.playerControlIcon}>
-                        <Ionicons name="lock-closed-outline" color="#fff" size={20} />
-                      </Pressable>
-                    ) : null}
-                    <Pressable
-                      onPress={() => {
-                        setSettingsOpen(true);
-                        setControlsVisible(true);
-                      }}
-                      style={styles.playerControlIcon}
-                    >
-                      <Ionicons name="settings-outline" color="#fff" size={21} />
-                    </Pressable>
-                    <Pressable onPress={toggleOrientation} style={styles.playerControlIcon}>
-                      <Ionicons
-                        name={landscape ? 'contract-outline' : 'expand-outline'}
-                        color="#fff"
-                        size={22}
-                      />
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            ) : null}
-
-            {locked && lockIndicatorVisible ? (
-              <Pressable
-                onPress={() => {
-                  setLocked(false);
-                  setLockIndicatorVisible(false);
-                  setControlsVisible(true);
-                }}
-                style={styles.playerLockedButton}
-              >
-                <Ionicons name="lock-closed" color="#fff" size={24} />
-                <Text style={styles.playerLockedText}>برای بازکردن قفل بزنید</Text>
+            <View
+              pointerEvents="box-none"
+              style={[
+                styles.nativePlayerTopBar,
+                { top: landscape ? Math.max(8, insets.top + 4) : 8 },
+              ]}
+            >
+              <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
+                <Ionicons name="close" color="#fff" size={21} />
               </Pressable>
-            ) : null}
+              <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
+              <Pressable onPress={() => setSettingsOpen(true)} style={styles.nativePlayerTopButton} accessibilityLabel="تنظیمات پخش">
+                <Ionicons name="settings-outline" color="#fff" size={20} />
+              </Pressable>
+              <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel="چرخش صفحه">
+                <Ionicons name={landscape ? 'contract-outline' : 'expand-outline'} color="#fff" size={20} />
+              </Pressable>
+            </View>
 
-            {settingsOpen && !locked ? (
+            {settingsOpen ? (
               <View style={styles.playerSettingsOverlay}>
-                <Pressable
-                  style={StyleSheet.absoluteFill}
-                  onPress={() => {
-                    setSettingsOpen(false);
-                    revealControls();
-                  }}
-                />
+                <Pressable style={StyleSheet.absoluteFill} onPress={() => setSettingsOpen(false)} />
                 <View style={[styles.playerSettingsCard, landscape && styles.playerSettingsCardLandscape]}>
                   <View style={styles.playerSettingsHeader}>
                     <Text style={styles.playerSettingsTitle}>تنظیمات پخش</Text>
@@ -3650,7 +3504,7 @@ function VideoPlayerModal({
                   <View style={styles.playerSettingsOptions}>
                     {([
                       ['fit', 'نمایش کامل'],
-                      ['fill', 'پر کردن صفحه'],
+                      ['fill', 'پر کردن کادر'],
                     ] as const).map(([id, label]) => {
                       const selected = displayMode === id;
                       return (
@@ -3659,17 +3513,17 @@ function VideoPlayerModal({
                           onPress={() => {
                             setDisplayMode(id);
                             setSettingsOpen(false);
-                            revealControls();
                           }}
                           style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
                         >
-                          <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>
-                            {label}
-                          </Text>
+                          <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>{label}</Text>
                         </Pressable>
                       );
                     })}
                   </View>
+                  <Text style={styles.nativePlayerStatusText}>
+                    {`${formatPlaybackTime(currentTime)} از ${formatPlaybackTime(duration)} • ${activeSource.quality}`}
+                  </Text>
                 </View>
               </View>
             ) : null}
@@ -3902,6 +3756,7 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
       key: 'series', title: 'سریال‌ها', icon: 'tv-outline', children: [
         { key: 'iranian-series', title: 'سریال‌های ایرانی', filter: 'iranian-series', icon: 'videocam-outline' },
         { key: 'foreign-series', title: 'سریال‌های خارجی', filter: 'foreign-series', icon: 'globe-outline' },
+        { key: 'korean-series', title: 'سریال‌های کره‌ای', filter: 'korean-series', icon: 'location-outline' },
       ],
     },
     {
@@ -4046,6 +3901,7 @@ function AppContent() {
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
   const vpnCheckSequenceRef = useRef(0);
+  const vpnPausingDownloadsRef = useRef(false);
   const activeTabRef = useRef<MainTab>('home');
   const tabHistoryRef = useRef<MainTab[]>(['home']);
   const backNavigationLockedRef = useRef(false);
@@ -4287,6 +4143,53 @@ function AppContent() {
     }, 500);
     return () => clearTimeout(timer);
   }, [downloads]);
+
+
+  const hasRunningDownloads = downloads.some((record) => record.status === 'downloading');
+  useEffect(() => {
+    if (!hasRunningDownloads) return undefined;
+    let disposed = false;
+
+    const stopForVpn = async () => {
+      if (disposed || vpnPausingDownloadsRef.current) return;
+      const active = await checkVpnActive(0).catch(() => false);
+      if (disposed) return;
+      setVpnActive(active);
+      if (!active) return;
+
+      vpnPausingDownloadsRef.current = true;
+      try {
+        const running = downloadsRef.current.filter((record) => record.status === 'downloading');
+        const snapshots = new Map<string, Awaited<ReturnType<typeof pauseDownload>>>();
+        await Promise.all(running.map(async (record) => {
+          const snapshot = await pauseDownload(record.id).catch(() => null);
+          snapshots.set(record.id, snapshot);
+        }));
+        if (disposed) return;
+        setDownloads((current) => current.map((record) => {
+          if (record.status !== 'downloading') return record;
+          const snapshot = snapshots.get(record.id);
+          return {
+            ...record,
+            status: 'paused' as const,
+            destinationUri: snapshot?.destinationUri || record.destinationUri,
+            resumeData: snapshot?.resumeData || record.resumeData,
+            error: 'فیلترشکن روشن شد؛ دانلود متوقف شد. فیلترشکن را خاموش کنید و «ادامه» را بزنید.',
+          };
+        }));
+        setVpnWarningVisible(true);
+      } finally {
+        vpnPausingDownloadsRef.current = false;
+      }
+    };
+
+    void stopForVpn();
+    const timer = setInterval(() => { void stopForVpn(); }, 3500);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [hasRunningDownloads]);
 
   useEffect(() => {
     if (!libraryLoaded) return undefined;
@@ -4667,7 +4570,20 @@ function AppContent() {
         },
       });
 
-      if (result.paused || !result.localUri) return;
+      if (result.paused || !result.localUri) {
+        setDownloads((current) => current.map((item) =>
+          item.id === record.id
+            ? {
+                ...item,
+                status: 'paused' as const,
+                destinationUri: result.destinationUri || item.destinationUri || runningRecord.destinationUri,
+                resumeData: result.resumeData || item.resumeData,
+                error: result.error || 'دانلود متوقف شده است؛ برای ادامه دوباره بزنید.',
+              }
+            : item,
+        ));
+        return;
+      }
 
       setDownloads((current) => current.map((item) =>
         item.id === record.id
@@ -4767,18 +4683,14 @@ function AppContent() {
   const pauseDownloadRecord = async (record: DownloadRecord) => {
     try {
       const snapshot = await pauseDownload(record.id);
-      if (!snapshot) {
-        Alert.alert('توقف دانلود', 'این دانلود در حال حاضر فعال نیست.');
-        return;
-      }
       setDownloads((current) => current.map((item) =>
         item.id === record.id
           ? {
               ...item,
               status: 'paused' as const,
-              destinationUri: snapshot.destinationUri,
-              resumeData: snapshot.resumeData,
-              error: undefined,
+              destinationUri: snapshot?.destinationUri || item.destinationUri,
+              resumeData: snapshot?.resumeData || item.resumeData,
+              error: snapshot ? undefined : 'دانلود متوقف شد؛ برای ادامه دوباره بزنید.',
             }
           : item,
       ));
@@ -4787,7 +4699,16 @@ function AppContent() {
     }
   };
 
-  const resumeDownloadRecord = (record: DownloadRecord) => {
+  const resumeDownloadRecord = async (record: DownloadRecord) => {
+    if (await refreshVpnState()) {
+      setDownloads((current) => current.map((item) =>
+        item.id === record.id
+          ? { ...item, status: 'paused' as const, error: 'فیلترشکن روشن است؛ آن را خاموش کنید و دوباره ادامه دهید.' }
+          : item,
+      ));
+      setVpnWarningVisible(true);
+      return;
+    }
     void executeDownload(record);
   };
 
@@ -4950,11 +4871,6 @@ function AppContent() {
             />
           </View>
         ) : null}
-        {activeTab !== 'home' && !selectedItem && !selectedPerson && !videoRequest ? (
-          <Pressable onPress={() => setMenuOpen(true)} style={styles.globalMenuButton}>
-            <Ionicons name="menu" color={COLORS.text} size={22} />
-          </Pressable>
-        ) : null}
         {contentLoading ? (
           <View pointerEvents="none" style={styles.refreshIndicator}>
             <ActivityIndicator color={COLORS.gold} size="small" />
@@ -5021,7 +4937,6 @@ function AppContent() {
           setSelectedPerson(null);
           setSelectedItem(nextItem);
         }}
-        onMenu={() => { setSelectedPerson(null); requestAnimationFrame(() => setMenuOpen(true)); }}
       />
       {videoRequest ? (
         <VideoPlayerModal
@@ -5454,6 +5369,14 @@ const styles = StyleSheet.create({
   personWorksEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', textAlign: 'center', marginTop: 10 },
   personWorksEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 18, textAlign: 'center', marginTop: 6 },
   mediaModal: { flex: 1, backgroundColor: '#000' },
+  detailCircleButtonPlaceholder: { width: 46, height: 46 },
+  videoViewPreparing: { opacity: 0 },
+  playerPreparingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.40)' },
+  playerPreparingText: { ...rtlText, color: '#fff', fontSize: 10, fontWeight: '800', marginTop: 10 },
+  nativePlayerTopBar: { position: 'absolute', zIndex: 30, left: 8, right: 8, minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  nativePlayerTopButton: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.78)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  nativePlayerTitle: { ...rtlText, minWidth: 0, flex: 1, color: '#fff', fontSize: 10.5, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
+  nativePlayerStatusText: { ...rtlText, color: 'rgba(255,255,255,0.66)', fontSize: 8.5, textAlign: 'center', marginTop: 13 },
   playerScreenCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   videoFrame: { position: 'relative', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   videoFrameLandscape: { width: '100%', height: '100%' },
