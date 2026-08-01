@@ -966,7 +966,7 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
   const candidates = new Map<string, { person: CatalogPerson; itemIds: Set<string>; iranian: number; foreign: number; score: number }>();
   for (const item of catalog) {
     for (const person of item.people || []) {
-      if (person.role !== 'actor' || !isSafeHttpUrl(person.image)) continue;
+      if (person.role !== 'actor') continue;
       const key = person.tmdbId ? `tmdb:${person.tmdbId}` : `name:${normalizeComparableText(personName(person))}`;
       if (!key) continue;
       const current = candidates.get(key) || { person, itemIds: new Set<string>(), iranian: 0, foreign: 0, score: 0 };
@@ -974,7 +974,11 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
       if (item.ir || item.countryCodes?.includes('IR')) current.iranian += 1;
       else current.foreign += 1;
       current.score += 24 + Math.max(0, 14 - Number(person.order || 0) * 2) + Number(item.rate || 0);
-      if (Number(person.popularity || 0) > Number(current.person.popularity || 0)) current.person = person;
+      const currentHasImage = isSafeHttpUrl(current.person.image);
+      const nextHasImage = isSafeHttpUrl(person.image);
+      if ((!currentHasImage && nextHasImage) || Number(person.popularity || 0) > Number(current.person.popularity || 0)) {
+        current.person = person;
+      }
       candidates.set(key, current);
     }
   }
@@ -986,30 +990,37 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
       itemIds: [...itemIds],
       workCount: itemIds.size,
       region: iranian >= foreign ? 'iranian' as const : 'foreign' as const,
-      score: score + itemIds.size * 34 + Number(person.popularity || 0) * 2,
+      score:
+        score +
+        itemIds.size * 34 +
+        Number(person.popularity || 0) * 2 +
+        (isSafeHttpUrl(person.image) ? 18 : 0),
     }))
     .sort((a, b) => b.score - a.score);
   const iranian = ranked.filter((person) => person.region === 'iranian');
   const foreign = ranked.filter((person) => person.region === 'foreign');
   const result: FeaturedPerson[] = [];
-  for (let index = 0; result.length < 16 && (index < iranian.length || index < foreign.length); index += 1) {
+  for (let index = 0; result.length < 30 && (index < iranian.length || index < foreign.length); index += 1) {
     if (foreign[index]) result.push(foreign[index]);
-    if (result.length < 16 && iranian[index]) result.push(iranian[index]);
+    if (result.length < 30 && iranian[index]) result.push(iranian[index]);
   }
   return result;
 };
 
 function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
-  const normalizedImage = optimizedImageUrl(person.image, 'person');
-  const [failedUrl, setFailedUrl] = useState('');
+  const optimized = optimizedImageUrl(person.image, 'person');
+  const original = String(person.image || '').trim().replace(/^http:\/\//i, 'https://');
+  const imageCandidates = useMemo(
+    () => [...new Set([optimized, original].filter((url) => isSafeHttpUrl(url)))],
+    [optimized, original],
+  );
+  const [imageIndex, setImageIndex] = useState(0);
 
   useEffect(() => {
-    setFailedUrl('');
-  }, [normalizedImage, person.id, person.tmdbId]);
+    setImageIndex(0);
+  }, [person.id, person.tmdbId, optimized, original]);
 
-  const image = normalizedImage && failedUrl !== normalizedImage && isSafeHttpUrl(normalizedImage)
-    ? normalizedImage
-    : '';
+  const image = imageCandidates[imageIndex] || '';
 
   return image ? (
     <Image
@@ -1019,7 +1030,7 @@ function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) 
       cachePolicy="memory-disk"
       transition={120}
       recyclingKey={`${person.id}:${image}`}
-      onError={() => setFailedUrl(image)}
+      onError={() => setImageIndex((current) => current + 1)}
     />
   ) : (
     <View style={[style, styles.personImageFallback]}>
@@ -1843,8 +1854,34 @@ function HomeStarsSection({
   onOpen: (item: CatalogItem) => void;
 }) {
   const resolvedPeople = useMemo(() => {
-    const valid = people.filter((person) => person.role === 'actor' && isSafeHttpUrl(person.image));
-    return valid.length ? valid : deriveFeaturedPeople(catalog);
+    const merged = new Map<string, FeaturedPerson>();
+    for (const person of [...people, ...deriveFeaturedPeople(catalog)]) {
+      if (person.role !== 'actor' || !personName(person)) continue;
+      const key = person.tmdbId
+        ? `tmdb:${person.tmdbId}`
+        : `name:${normalizeComparableText(personName(person))}`;
+      const explicitIds = new Set(person.itemIds || []);
+      const matchedIds = explicitIds.size
+        ? catalog.filter((item) => explicitIds.has(item.id)).map((item) => item.id)
+        : personWorksFor(person, catalog).map((item) => item.id);
+      if (!matchedIds.length) continue;
+      const current = merged.get(key);
+      const next: FeaturedPerson = {
+        ...(current || person),
+        ...person,
+        itemIds: [...new Set([...(current?.itemIds || []), ...matchedIds])],
+        workCount: new Set([...(current?.itemIds || []), ...matchedIds]).size,
+        image: isSafeHttpUrl(person.image) ? person.image : current?.image,
+      };
+      merged.set(key, next);
+    }
+    return [...merged.values()]
+      .sort((a, b) =>
+        Number(isSafeHttpUrl(b.image)) - Number(isSafeHttpUrl(a.image)) ||
+        Number(b.popularity || 0) - Number(a.popularity || 0) ||
+        Number(b.workCount || 0) - Number(a.workCount || 0),
+      )
+      .slice(0, 32);
   }, [catalog, people]);
   const [selectedId, setSelectedId] = useState('');
 
@@ -1872,79 +1909,79 @@ function HomeStarsSection({
     <View style={styles.starsSection}>
       <View style={styles.starsHeader}>
         <View style={styles.starsHeaderIcon}>
-          <Ionicons name="sparkles-outline" color={COLORS.gold} size={20} />
+          <Ionicons name="sparkles-outline" color={COLORS.gold} size={17} />
         </View>
         <View style={styles.starsHeaderText}>
           <Text style={styles.starsTitle}>ستارگان</Text>
-          <Text style={styles.starsSubtitle}>بازیگران محبوب و آثار موجودشان در آپاراتچی</Text>
+          <Text style={styles.starsSubtitle}>بازیگران محبوب ایرانی و خارجی</Text>
         </View>
+      </View>
+
+      <View style={styles.starChooserRow}>
+        <View style={styles.starMiniProfileCard}>
+          <View style={styles.starMiniProfileAvatarWrap}>
+            <PersonAvatar person={selected} style={styles.starMiniProfileAvatar} />
+          </View>
+          <View style={styles.starMiniProfileInfo}>
+            <Text numberOfLines={2} style={styles.starMiniProfileName}>{personName(selected)}</Text>
+            <View style={styles.starMiniFacts}>
+              {birthday ? <Text numberOfLines={1} style={styles.starMiniFactText}>{birthday}</Text> : null}
+              {age > 0 ? <Text numberOfLines={1} style={styles.starMiniFactText}>{toPersianDigits(age)} ساله</Text> : null}
+              {location ? <Text numberOfLines={1} style={styles.starMiniLocation}>{location}</Text> : null}
+            </View>
+          </View>
+        </View>
+
+        <FlatList
+          horizontal
+          inverted
+          style={styles.starPeopleRail}
+          data={resolvedPeople}
+          keyExtractor={(person) => person.id}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.starsPeopleList}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={4}
+          renderItem={({ item: person }) => {
+            const active = person.id === selected.id;
+            return (
+              <Pressable onPress={() => setSelectedId(person.id)} style={styles.starPersonCard} hitSlop={5}>
+                <View style={[styles.starPersonAvatarWrap, active && styles.starPersonAvatarActive]}>
+                  <PersonAvatar person={person} style={styles.starPersonAvatar} />
+                </View>
+                <Text numberOfLines={1} style={[styles.starPersonName, active && styles.starPersonNameActive]}>
+                  {personName(person)}
+                </Text>
+              </Pressable>
+            );
+          }}
+        />
       </View>
 
       <FlatList
         horizontal
         inverted
-        data={resolvedPeople}
-        keyExtractor={(person) => person.id}
+        data={works.slice(0, 18)}
+        keyExtractor={(item) => item.id}
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.starsPeopleList}
-        initialNumToRender={8}
-        maxToRenderPerBatch={8}
-        renderItem={({ item: person }) => {
-          const active = person.id === selected.id;
-          return (
-            <Pressable onPress={() => setSelectedId(person.id)} style={styles.starPersonCard}>
-              <View style={[styles.starPersonAvatarWrap, active && styles.starPersonAvatarActive]}>
-                <PersonAvatar person={person} style={styles.starPersonAvatar} />
-                {active ? <View style={styles.starPersonActiveDot} /> : null}
-              </View>
-              <Text numberOfLines={1} style={[styles.starPersonName, active && styles.starPersonNameActive]}>
-                {personName(person)}
-              </Text>
-            </Pressable>
-          );
-        }}
+        contentContainerStyle={styles.starWorksList}
+        initialNumToRender={5}
+        maxToRenderPerBatch={5}
+        windowSize={3}
+        renderItem={({ item }) => (
+          <Pressable onPress={() => onOpen(item)} style={styles.starWorkCard}>
+            <CatalogArtwork
+              primary={item.poster}
+              fallback={item.posterFallback || item.backdrop}
+              localFallback={localArtworkForItem(item)}
+              style={styles.starWorkPoster}
+              imageKind="poster"
+            />
+            <Text numberOfLines={2} style={styles.starWorkTitle}>{item.nameFa}</Text>
+          </Pressable>
+        )}
       />
-
-      <View style={styles.starSpotlightCard}>
-        <LinearGradient
-          colors={['rgba(216,180,90,0.13)', 'rgba(20,24,31,0.97)', '#0B0E13']}
-          start={{ x: 1, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={styles.starSpotlightAvatarWrap}>
-          <PersonAvatar person={selected} style={styles.starSpotlightAvatar} />
-        </View>
-        <View style={styles.starSpotlightInfo}>
-          <Text numberOfLines={2} style={styles.starSpotlightName}>{personName(selected)}</Text>
-          <View style={styles.starFactsRow}>
-            {birthday ? (
-              <View style={styles.starFactChip}>
-                <Ionicons name="calendar-outline" color={COLORS.gold} size={13} />
-                <Text style={styles.starFactText}>{birthday}</Text>
-              </View>
-            ) : null}
-            {age > 0 ? (
-              <View style={styles.starFactChip}>
-                <Ionicons name="time-outline" color={COLORS.gold} size={13} />
-                <Text style={styles.starFactText}>{toPersianDigits(age)} ساله</Text>
-              </View>
-            ) : null}
-            {location ? (
-              <View style={styles.starFactChip}>
-                <Ionicons name="location-outline" color={COLORS.gold} size={13} />
-                <Text numberOfLines={1} style={styles.starFactText}>{location}</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.starWorksHeader}>
-        <Text style={styles.starWorksTitle}>آثار موجود</Text>
-        <Text style={styles.starWorksCount}>{toPersianDigits(works.length)} عنوان</Text>
-      </View>
-      <HorizontalCatalog items={works.slice(0, 14)} onOpen={onOpen} />
     </View>
   );
 }
@@ -2127,11 +2164,15 @@ function HomeScreen({
         <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} />
         <ContinueWatchingSection records={watchProgress} catalog={catalog} onResume={onResume} onRemove={onRemoveProgress} />
         <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} weeklySchedule={weeklySchedule} onOpenItem={onOpen} />
-        <HomeStarsSection people={featuredPeople} catalog={catalog} onOpen={onOpen} />
         {rows.slice(0, mountedRowCount).map((row) => row.items.length ? (
-          <View key={row.filter} style={styles.catalogSection}>
-            <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
-            <HorizontalCatalog items={row.items.slice(0, 12)} onOpen={onOpen} />
+          <View key={row.filter}>
+            <View style={styles.catalogSection}>
+              <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
+              <HorizontalCatalog items={row.items.slice(0, 12)} onOpen={onOpen} />
+            </View>
+            {row.filter === 'foreign-movies' ? (
+              <HomeStarsSection people={featuredPeople} catalog={catalog} onOpen={onOpen} />
+            ) : null}
           </View>
         ) : null)}
       </ScrollView>
@@ -5615,31 +5656,33 @@ const styles = StyleSheet.create({
   continueMeta: { ...rtlText, width: '100%', color: '#D4D7DB', fontSize: 8.5, marginTop: 5 },
   continueProgressTrack: { width: '100%', height: 5, backgroundColor: '#090B0F' },
   continueProgressFill: { height: '100%', backgroundColor: COLORS.red },
-  starsSection: { marginTop: 34, paddingTop: 17, paddingBottom: 18, borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(216,180,90,0.15)', backgroundColor: 'rgba(12,15,20,0.72)' },
-  starsHeader: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'center', gap: 11 },
-  starsHeaderIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.09)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
+  starsSection: { marginTop: 22, marginBottom: 5, paddingTop: 13, paddingBottom: 13, borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(216,180,90,0.15)', backgroundColor: 'rgba(12,15,20,0.72)' },
+  starsHeader: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
+  starsHeaderIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.09)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
   starsHeaderText: { flex: 1, alignItems: 'flex-end' },
-  starsTitle: { ...rtlText, color: COLORS.text, fontSize: 19, lineHeight: 28, fontWeight: '900', letterSpacing: -0.5 },
-  starsSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8.5, lineHeight: 16, marginTop: 2 },
-  starsPeopleList: { flexDirection: 'row-reverse', gap: 12, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 9 },
-  starPersonCard: { width: 82, alignItems: 'center' },
-  starPersonAvatarWrap: { width: 72, height: 72, borderRadius: 36, padding: 2, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)' },
-  starPersonAvatarActive: { borderWidth: 2.5, borderColor: COLORS.red, shadowColor: COLORS.red, shadowOpacity: 0.35, shadowRadius: 10, elevation: 5 },
-  starPersonAvatar: { width: '100%', height: '100%', borderRadius: 34 },
-  starPersonActiveDot: { position: 'absolute', bottom: 3, right: 3, width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.gold, borderWidth: 2, borderColor: '#0C0F14' },
-  starPersonName: { width: '100%', minHeight: 29, color: COLORS.muted, fontSize: 8.5, lineHeight: 14, fontWeight: '800', textAlign: 'center', marginTop: 7, writingDirection: 'ltr' },
+  starsTitle: { ...rtlText, color: COLORS.text, fontSize: 17, lineHeight: 23, fontWeight: '900', letterSpacing: -0.4 },
+  starsSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8, lineHeight: 13, marginTop: 1 },
+  starChooserRow: { marginTop: 11, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'center', gap: 9 },
+  starMiniProfileCard: { width: 138, minHeight: 92, padding: 7, borderRadius: 15, overflow: 'hidden', flexDirection: 'row-reverse', alignItems: 'center', gap: 7, backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
+  starMiniProfileAvatarWrap: { width: 50, height: 68, borderRadius: 11, overflow: 'hidden', flexShrink: 0, backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: 'rgba(216,180,90,0.42)' },
+  starMiniProfileAvatar: { width: '100%', height: '100%' },
+  starMiniProfileInfo: { minWidth: 0, flex: 1, alignItems: 'flex-end' },
+  starMiniProfileName: { width: '100%', color: COLORS.text, fontSize: 10.5, lineHeight: 15, fontWeight: '900', textAlign: 'right', writingDirection: 'ltr' },
+  starMiniFacts: { width: '100%', marginTop: 5, gap: 2 },
+  starMiniFactText: { width: '100%', color: '#D4D7DD', fontSize: 7.3, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
+  starMiniLocation: { width: '100%', color: COLORS.gold, fontSize: 7.1, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
+  starPeopleRail: { flex: 1, minWidth: 0 },
+  starsPeopleList: { flexDirection: 'row-reverse', gap: 8, paddingLeft: 5, paddingRight: 2, paddingVertical: 3 },
+  starPersonCard: { width: 58, alignItems: 'center' },
+  starPersonAvatarWrap: { width: 53, height: 53, borderRadius: 27, padding: 1.5, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1.2, borderColor: 'rgba(255,255,255,0.12)' },
+  starPersonAvatarActive: { borderWidth: 2.2, borderColor: COLORS.red, shadowColor: COLORS.red, shadowOpacity: 0.3, shadowRadius: 7, elevation: 4 },
+  starPersonAvatar: { width: '100%', height: '100%', borderRadius: 25 },
+  starPersonName: { width: '100%', minHeight: 21, color: COLORS.muted, fontSize: 7.1, lineHeight: 10, fontWeight: '800', textAlign: 'center', marginTop: 5, writingDirection: 'ltr' },
   starPersonNameActive: { color: COLORS.text },
-  starSpotlightCard: { minHeight: 126, marginHorizontal: 18, marginTop: 8, padding: 12, borderRadius: 18, overflow: 'hidden', flexDirection: 'row-reverse', alignItems: 'center', gap: 14, borderWidth: 1, borderColor: 'rgba(216,180,90,0.28)', backgroundColor: '#10141B' },
-  starSpotlightAvatarWrap: { width: 96, height: 104, borderRadius: 15, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: 'rgba(216,180,90,0.42)' },
-  starSpotlightAvatar: { width: '100%', height: '100%' },
-  starSpotlightInfo: { minWidth: 0, flex: 1, alignItems: 'flex-end' },
-  starSpotlightName: { width: '100%', color: COLORS.text, fontSize: 18, lineHeight: 25, fontWeight: '900', textAlign: 'right', writingDirection: 'ltr' },
-  starFactsRow: { width: '100%', marginTop: 11, flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6 },
-  starFactChip: { minHeight: 29, maxWidth: '100%', paddingHorizontal: 8, borderRadius: 9, flexDirection: 'row-reverse', alignItems: 'center', gap: 5, backgroundColor: 'rgba(7,9,12,0.54)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
-  starFactText: { minWidth: 0, flexShrink: 1, color: '#D5D8DE', fontSize: 8.5, fontWeight: '800' },
-  starWorksHeader: { marginTop: 17, paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
-  starWorksTitle: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900' },
-  starWorksCount: { color: COLORS.gold, fontSize: 8.5, fontWeight: '900' },
+  starWorksList: { flexDirection: 'row-reverse', gap: 9, paddingHorizontal: 15, paddingTop: 10, paddingBottom: 1 },
+  starWorkCard: { width: 104 },
+  starWorkPoster: { width: 104, height: 145, borderRadius: 13, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  starWorkTitle: { ...rtlText, width: '100%', minHeight: 29, marginTop: 6, color: COLORS.text, fontSize: 8.2, lineHeight: 13, fontWeight: '800', textAlign: 'right' },
   tabScreenContent: { paddingHorizontal: 16, paddingBottom: 28, paddingTop: 18 },
   header: {
     height: 66,

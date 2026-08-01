@@ -776,14 +776,14 @@ const normalizeFeaturedPeople = (value: unknown): FeaturedPerson[] => {
       ? normalizePersonImage(record.profile_path, 'tmdb')
       : normalizePersonImage(record.image ?? record.imageUrl ?? record.image_url, asString(record.source) === 'tmdb' ? 'tmdb' : 'upera');
     const itemIds = stringArray(record.itemIds ?? record.item_ids);
-    if (!image || !itemIds.length) return [];
+    if (!itemIds.length) return [];
     return [{
       id,
       nameFa: nameFa || name,
       name,
       role: 'actor' as const,
       roleLabel: 'بازیگر',
-      image,
+      ...(image ? { image } : {}),
       ...(tmdbId > 0 ? { tmdbId } : {}),
       ...(asString(record.birthday ?? record.birth_date) ? { birthday: asString(record.birthday ?? record.birth_date) } : {}),
       ...(asString(record.deathday ?? record.death_date) ? { deathday: asString(record.deathday ?? record.death_date) } : {}),
@@ -796,7 +796,7 @@ const normalizeFeaturedPeople = (value: unknown): FeaturedPerson[] => {
       source: asString(record.source, 'tmdb'),
       order: index,
     } satisfies FeaturedPerson];
-  }).slice(0, 24);
+  }).slice(0, 36);
 };
 
 const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | null => {
