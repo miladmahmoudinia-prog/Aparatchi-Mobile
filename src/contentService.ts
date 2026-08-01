@@ -157,15 +157,25 @@ const normalizePersonRole = (value: unknown, fallback: CatalogPerson['role'] | n
 const normalizePersonImage = (value: unknown, source: 'tmdb' | 'upera' = 'upera') => {
   const raw = asString(value).trim();
   if (!raw || /default|placeholder|no[-_ ]?image/i.test(raw)) return '';
-  if (/^https?:\/\//i.test(raw)) return raw.replace(/^http:\/\//i, 'https://');
+  if (/^https?:\/\//i.test(raw)) {
+    const httpsUrl = raw.replace(/^http:\/\//i, 'https://');
+    return source === 'tmdb'
+      ? httpsUrl.replace(
+          /(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)/i,
+          '$1w185',
+        )
+      : httpsUrl;
+  }
   if (/^\/\//.test(raw)) return `https:${raw}`;
   if (raw.startsWith('/')) {
-    if (source === 'tmdb') return `https://image.tmdb.org/t/p/w342${raw}`;
+    if (source === 'tmdb') return `https://image.tmdb.org/t/p/w185${raw}`;
     if (/^\/(?:s3|uploads?|images?|storage|media)\//i.test(raw)) return `https://thumb.upera.tv${raw}`;
     return `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
   }
   if (/\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(raw)) {
-    return `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
+    return source === 'tmdb'
+      ? `https://image.tmdb.org/t/p/w185/${raw.replace(/^\/+/, '')}`
+      : `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
   }
   return '';
 };
@@ -239,13 +249,19 @@ const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
     if (!id || seen.has(id)) return [];
     seen.add(id);
 
-    const image = person.profile_path
-      ? normalizePersonImage(person.profile_path, 'tmdb')
-      : normalizePersonImage(
-          person.image ?? person.image_url ?? person.imageUrl ?? person.profile ?? person.profile_image ??
-          person.profileImage ?? person.photo ?? person.photo_url ?? person.photoUrl ??
-          person.avatar ?? person.thumb ?? person.thumbnail ?? person.poster,
-        );
+    const personSource =
+      asString(person.source).toLowerCase() === 'tmdb' ||
+      asNumber(person.tmdbId ?? person.tmdb_id, 0) > 0
+        ? 'tmdb'
+        : 'upera';
+    const rawPersonImage =
+      person.profile_path ?? person.profilePath ??
+      person.image ?? person.image_url ?? person.imageUrl ??
+      person.profile ?? person.profile_url ?? person.profileUrl ??
+      person.profile_image ?? person.profileImage ??
+      person.photo ?? person.photo_url ?? person.photoUrl ??
+      person.avatar ?? person.thumb ?? person.thumbnail ?? person.poster;
+    const image = normalizePersonImage(rawPersonImage, personSource);
     const character = asString(
       person.character ?? person.characterName ?? person.character_name ??
       person.roleName ?? person.role_name ?? person.as,
@@ -800,7 +816,9 @@ const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | 
     nameFa: asString(entry.nameFa ?? entry.name_fa),
     poster: asString(entry.poster),
     day,
-    time: asString(entry.time, 'زمان انتشار اعلام نشده'),
+    ...(asString(entry.time) && !/نامشخص|اعلام\s*نشده|unknown|tbd/i.test(asString(entry.time))
+      ? { time: asString(entry.time) }
+      : {}),
     ...(season > 0 ? { season } : {}),
     ...(episode > 0 ? { episode } : {}),
     region,
@@ -883,8 +901,14 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
   }
 
   try {
-    const response = await fetch(remoteUrl, {
-      headers: { Accept: 'application/json', 'Cache-Control': 'max-age=300' },
+    const refreshSeparator = remoteUrl.includes('?') ? '&' : '?';
+    const requestUrl = `${remoteUrl}${refreshSeparator}_aparatchi_refresh=${Math.floor(Date.now() / 60_000)}`;
+    const response = await fetch(requestUrl, {
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache, no-store, max-age=0',
+        Pragma: 'no-cache',
+      },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 

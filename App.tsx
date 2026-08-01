@@ -137,6 +137,25 @@ const isSafeHttpUrl = (url?: string) => Boolean(url && /^https?:\/\//i.test(url)
 const isPlaceholderUrl = (url?: string) =>
   Boolean(url && (/example\.com/i.test(url) || /replace-with/i.test(url)));
 
+const optimizedImageUrl = (
+  value?: string,
+  kind: 'poster' | 'backdrop' | 'person' = 'poster',
+) => {
+  const url = String(value || '').trim().replace(/^http:\/\//i, 'https://');
+  if (!url) return '';
+  const tmdbSize = kind === 'person' ? 'w185' : kind === 'backdrop' ? 'w780' : 'w342';
+  return url.replace(
+    /(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)/i,
+    `$1${tmdbSize}`,
+  );
+};
+
+const scheduleTimeValue = (value?: string) => {
+  const text = String(value || '').trim();
+  if (!text || /نامشخص|اعلام\s*نشده|unknown|tbd/i.test(text)) return '';
+  return text;
+};
+
 const isDirectMediaUrl = (url: string) =>
   /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
 
@@ -228,7 +247,7 @@ const inferredScheduleFromCatalog = (catalog: CatalogItem[]): ScheduleEntry[] =>
       nameFa: item.nameFa,
       poster: item.poster,
       day,
-      time: item.airTime || 'زمان انتشار اعلام نشده',
+      time: scheduleTimeValue(item.airTime),
       ...(item.nextEpisodeSeasonNumber ? { season: item.nextEpisodeSeasonNumber } : {}),
       ...(item.nextEpisodeNumber ? { episode: item.nextEpisodeNumber } : {}),
       region: isIranianItem(item) ? 'iranian' : 'foreign',
@@ -981,16 +1000,26 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
 };
 
 function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
-  const [failed, setFailed] = useState(false);
-  const image = !failed && isSafeHttpUrl(person.image) ? person.image : '';
+  const normalizedImage = optimizedImageUrl(person.image, 'person');
+  const [failedUrl, setFailedUrl] = useState('');
+
+  useEffect(() => {
+    setFailedUrl('');
+  }, [normalizedImage, person.id, person.tmdbId]);
+
+  const image = normalizedImage && failedUrl !== normalizedImage && isSafeHttpUrl(normalizedImage)
+    ? normalizedImage
+    : '';
+
   return image ? (
     <Image
       source={{ uri: image }}
       style={style}
       contentFit="cover"
       cachePolicy="memory-disk"
-      transition={150}
-      onError={() => setFailed(true)}
+      transition={120}
+      recyclingKey={`${person.id}:${image}`}
+      onError={() => setFailedUrl(image)}
     />
   ) : (
     <View style={[style, styles.personImageFallback]}>
@@ -1006,6 +1035,7 @@ function CatalogArtwork({
   style,
   contentFit = 'cover',
   transition = 80,
+  imageKind = 'poster',
 }: {
   primary?: string;
   fallback?: string;
@@ -1013,45 +1043,78 @@ function CatalogArtwork({
   style: any;
   contentFit?: 'cover' | 'contain';
   transition?: number;
+  imageKind?: 'poster' | 'backdrop';
 }) {
-  const primaryUrl = isSafeHttpUrl(primary) && !isPlaceholderUrl(primary) ? String(primary) : '';
-  const fallbackUrl = isSafeHttpUrl(fallback) && !isPlaceholderUrl(fallback) && fallback !== primary
-    ? String(fallback)
+  const primaryCandidate = optimizedImageUrl(primary, imageKind);
+  const fallbackCandidate = optimizedImageUrl(fallback, imageKind);
+  const primaryUrl = isSafeHttpUrl(primaryCandidate) && !isPlaceholderUrl(primaryCandidate)
+    ? primaryCandidate
     : '';
+  const fallbackUrl =
+    isSafeHttpUrl(fallbackCandidate) &&
+    !isPlaceholderUrl(fallbackCandidate) &&
+    fallbackCandidate !== primaryUrl
+      ? fallbackCandidate
+      : '';
   const [stage, setStage] = useState(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
+  const [retryToken, setRetryToken] = useState(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+    setRetryToken(0);
     setStage(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
   }, [primaryUrl, fallbackUrl]);
 
-  const source = stage === 0
-    ? { uri: primaryUrl }
-    : stage === 1
-      ? { uri: fallbackUrl }
-      : localFallback;
+  const remoteUrl = stage === 0 ? primaryUrl : stage === 1 ? fallbackUrl : '';
 
-  if (!source) {
-    return (
-      <View style={[style, styles.catalogArtworkFallback]}>
-        <Ionicons name="film-outline" color="rgba(216,180,90,0.58)" size={28} />
-      </View>
-    );
-  }
+  const handleRemoteError = () => {
+    setStage((current) => {
+      if (current === 0 && fallbackUrl) return 1;
+      if (retryToken < 1 && (primaryUrl || fallbackUrl)) {
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = setTimeout(() => {
+          setRetryToken((token) => token + 1);
+          setStage(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
+        }, 2800);
+      }
+      return 2;
+    });
+  };
 
   return (
-    <Image
-      source={source}
-      style={style}
-      contentFit={contentFit}
-      cachePolicy="memory-disk"
-      transition={transition}
-      onError={() => {
-        setStage((current) => {
-          if (current === 0 && fallbackUrl) return 1;
-          return 2;
-        });
-      }}
-    />
+    <View style={[style, styles.catalogArtworkContainer]}>
+      {localFallback ? (
+        <Image
+          source={localFallback}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={0}
+        />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, styles.catalogArtworkFallback]}>
+          <Ionicons name="image-outline" color="rgba(216,180,90,0.58)" size={25} />
+        </View>
+      )}
+
+      {remoteUrl ? (
+        <Image
+          key={`${remoteUrl}:${retryToken}`}
+          source={{ uri: remoteUrl }}
+          style={StyleSheet.absoluteFill}
+          contentFit={contentFit}
+          cachePolicy="memory-disk"
+          transition={transition}
+          recyclingKey={`${remoteUrl}:${retryToken}`}
+          onError={handleRemoteError}
+        />
+      ) : null}
+    </View>
   );
 }
 
@@ -1151,6 +1214,7 @@ function HeroSlide({
         style={StyleSheet.absoluteFill}
         contentFit="cover"
         transition={0}
+        imageKind="backdrop"
       />
       <LinearGradient
         colors={['rgba(7,9,12,0.04)', 'rgba(7,9,12,0.54)', COLORS.background]}
@@ -1228,8 +1292,9 @@ function HeroSlider({
 
   useEffect(() => {
     const urls = safeItems
-      .map((item) => item.backdrop || item.poster)
-      .filter((url): url is string => Boolean(url));
+      .slice(0, 3)
+      .map((item) => optimizedImageUrl(item.backdrop || item.poster, 'backdrop'))
+      .filter((url): url is string => Boolean(isSafeHttpUrl(url)));
     if (urls.length) void Image.prefetch(urls).catch(() => undefined);
   }, [safeItems]);
 
@@ -1296,19 +1361,30 @@ function ScheduleCard({
   entry,
   onOpen,
   compact = false,
+  width,
 }: {
   entry: ScheduleEntry;
   onOpen: () => void;
   compact?: boolean;
+  width?: number;
 }) {
   const episodeLabel = entry.episode
     ? [
         entry.season ? `فصل ${toPersianDigits(entry.season)}` : '',
         `قسمت ${toPersianDigits(entry.episode)}`,
       ].filter(Boolean).join(' • ')
-    : 'قسمت بعدی';
+    : '';
+  const timeLabel = scheduleTimeValue(entry.time);
+
   return (
-    <Pressable onPress={onOpen} style={[styles.scheduleCard, compact && styles.scheduleCardCompact]}>
+    <Pressable
+      onPress={onOpen}
+      style={[
+        styles.scheduleCard,
+        compact && styles.scheduleCardCompact,
+        width ? { width } : null,
+      ]}
+    >
       <CatalogArtwork
         primary={entry.poster}
         localFallback={CATEGORY_FALLBACK_ART.series}
@@ -1320,13 +1396,17 @@ function ScheduleCard({
           <Text style={styles.scheduleRegion}>{entry.region === 'iranian' ? 'ایرانی' : 'خارجی'}</Text>
           <View style={styles.liveDot} />
         </View>
-        <Text numberOfLines={compact ? 2 : 1} style={[styles.scheduleName, compact && styles.scheduleNameCompact]}>
+        <Text numberOfLines={2} style={[styles.scheduleName, compact && styles.scheduleNameCompact]}>
           {entry.nameFa}
         </Text>
-        <Text numberOfLines={1} style={styles.scheduleEpisode}>{episodeLabel}</Text>
-        <Text numberOfLines={1} style={[styles.scheduleTime, compact && styles.scheduleTimeCompact]}>
-          {entry.time || 'زمان انتشار اعلام نشده'}
-        </Text>
+        {episodeLabel ? (
+          <Text numberOfLines={1} style={styles.scheduleEpisode}>{episodeLabel}</Text>
+        ) : null}
+        {timeLabel ? (
+          <Text numberOfLines={1} style={[styles.scheduleTime, compact && styles.scheduleTimeCompact]}>
+            {timeLabel}
+          </Text>
+        ) : null}
       </View>
       {!compact ? <Ionicons name="chevron-back" color={COLORS.muted} size={15} /> : null}
     </Pressable>
@@ -1491,27 +1571,39 @@ function WeeklySchedule({
         </View>
       ) : null}
 
-      <View style={[styles.scheduleList, dayEntries.length > 1 && styles.scheduleGrid]}>
-        {dayEntries.map((entry) => {
-          const item = catalog.find((candidate) => String(candidate.id) === String(entry.itemId)) || catalogByName.get(normalizeComparableText(entry.nameFa));
-          const compact = dayEntries.length > 1 && scheduleViewportWidth < 760;
-          return (
-            <ScheduleCard
-              key={`${entry.id}:${entry.day}`}
-              entry={entry}
-              compact={compact}
-              onOpen={() => item ? onOpenItem(item) : Alert.alert('برنامه هفتگی', 'صفحه این سریال هنوز در کاتالوگ پیدا نشده است.')}
-            />
-          );
-        })}
-        {!scheduleLoading && !dayEntries.length ? (
-          <View style={styles.scheduleEmpty}>
-            <Ionicons name="calendar-outline" color={COLORS.muted} size={28} />
-            <Text style={styles.scheduleEmptyTitle}>برای این روز برنامه‌ای نداریم</Text>
-            <Text style={styles.scheduleEmptyText}>می‌توانید روز دیگری را انتخاب کنید.</Text>
-          </View>
-        ) : null}
-      </View>
+      {dayEntries.length ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.scheduleHorizontalList}
+          style={styles.scheduleHorizontalViewport}
+          decelerationRate="fast"
+        >
+          {dayEntries.map((entry) => {
+            const item = catalog.find((candidate) => String(candidate.id) === String(entry.itemId)) || catalogByName.get(normalizeComparableText(entry.nameFa));
+            const availableWidth = Math.max(270, scheduleViewportWidth - 52);
+            const compact = dayEntries.length > 1;
+            const cardWidth = compact
+              ? Math.max(148, Math.min(196, (availableWidth - 8) / 2))
+              : availableWidth;
+            return (
+              <ScheduleCard
+                key={`${entry.id}:${entry.day}`}
+                entry={entry}
+                compact={compact}
+                width={cardWidth}
+                onOpen={() => item ? onOpenItem(item) : Alert.alert('برنامه هفتگی', 'صفحه این سریال هنوز در کاتالوگ پیدا نشده است.')}
+              />
+            );
+          })}
+        </ScrollView>
+      ) : !scheduleLoading ? (
+        <View style={styles.scheduleEmpty}>
+          <Ionicons name="calendar-outline" color={COLORS.muted} size={28} />
+          <Text style={styles.scheduleEmptyTitle}>برای این روز برنامه‌ای نداریم</Text>
+          <Text style={styles.scheduleEmptyText}>می‌توانید روز دیگری را انتخاب کنید.</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1651,12 +1743,23 @@ function PeopleSection({
   item: CatalogItem;
   onOpen: (person: CatalogPerson) => void;
 }) {
-  const people = (item.people || [])
-    .filter((person) => person.role === 'director' || person.role === 'actor')
-    .sort((a, b) => {
-      const roleDifference = (a.role === 'director' ? 0 : 1) - (b.role === 'director' ? 0 : 1);
-      return roleDifference || (a.order || 0) - (b.order || 0);
-    });
+  const people = useMemo(
+    () => (item.people || [])
+      .filter((person) => person.role === 'director' || person.role === 'actor')
+      .sort((a, b) => {
+        const roleDifference = (a.role === 'director' ? 0 : 1) - (b.role === 'director' ? 0 : 1);
+        return roleDifference || (a.order || 0) - (b.order || 0);
+      }),
+    [item.people],
+  );
+
+  useEffect(() => {
+    const urls = people
+      .slice(0, 8)
+      .map((person) => optimizedImageUrl(person.image, 'person'))
+      .filter((url): url is string => Boolean(isSafeHttpUrl(url)));
+    if (urls.length) void Image.prefetch([...new Set(urls)]).catch(() => undefined);
+  }, [item.id, people]);
 
   if (!people.length) return null;
 
@@ -1678,6 +1781,10 @@ function PeopleSection({
         keyExtractor={(person) => person.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.peopleList}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={4}
+        removeClippedSubviews={false}
         renderItem={({ item: person }) => (
           <Pressable onPress={() => onOpen(person)} style={styles.personCard}>
             <View style={styles.personAvatarWrap}>
@@ -1717,9 +1824,10 @@ function HorizontalCatalog({
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-      initialNumToRender={5}
-      maxToRenderPerBatch={5}
-      windowSize={5}
+      initialNumToRender={3}
+      maxToRenderPerBatch={3}
+      updateCellsBatchingPeriod={80}
+      windowSize={3}
       removeClippedSubviews
     />
   );
@@ -1952,6 +2060,7 @@ function HomeScreen({
   const scrollRef = useRef<ScrollView>(null);
   const newest = useMemo(() => catalogItemsForFilter(catalog, 'latest'), [catalog]);
   const updated = useMemo(() => catalogItemsForFilter(catalog, 'updated'), [catalog]);
+  const [mountedRowCount, setMountedRowCount] = useState(4);
 
   useEffect(() => {
     if (initialScrollOffset > 0) requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: initialScrollOffset, animated: false }));
@@ -1978,13 +2087,20 @@ function HomeScreen({
   ], [catalog, newest, updated]);
 
   useEffect(() => {
-    const urls = [...newest.slice(0, 14), ...updated.slice(0, 10)]
-      .flatMap((item) => [
-        item.poster,
-        item.posterFallback,
-        item.backdrop,
-        item.backdropFallback,
-      ])
+    setMountedRowCount((current) => Math.min(Math.max(4, current), rows.length));
+    if (mountedRowCount >= rows.length) return undefined;
+    const timer = setTimeout(() => {
+      setMountedRowCount((current) => Math.min(rows.length, current + 3));
+    }, 520);
+    return () => clearTimeout(timer);
+  }, [mountedRowCount, rows.length]);
+
+  useEffect(() => {
+    const urls = [
+      ...newest.slice(0, 6).map((item) => item.poster || item.posterFallback),
+      ...updated.slice(0, 3).map((item) => item.poster || item.posterFallback),
+    ]
+      .map((url) => optimizedImageUrl(url, 'poster'))
       .filter((url): url is string => Boolean(isSafeHttpUrl(url) && !isPlaceholderUrl(url)));
     if (urls.length) void Image.prefetch([...new Set(urls)]).catch(() => undefined);
   }, [newest, updated]);
@@ -2012,7 +2128,7 @@ function HomeScreen({
         <ContinueWatchingSection records={watchProgress} catalog={catalog} onResume={onResume} onRemove={onRemoveProgress} />
         <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} weeklySchedule={weeklySchedule} onOpenItem={onOpen} />
         <HomeStarsSection people={featuredPeople} catalog={catalog} onOpen={onOpen} />
-        {rows.map((row) => row.items.length ? (
+        {rows.slice(0, mountedRowCount).map((row) => row.items.length ? (
           <View key={row.filter} style={styles.catalogSection}>
             <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
             <HorizontalCatalog items={row.items.slice(0, 12)} onOpen={onOpen} />
@@ -3874,6 +3990,10 @@ function VideoPlayerModal({
   };
 
   const chromeVisible = !firstFrameReady || switchingQuality || settingsOpen || controlsVisible;
+  const frameTop = landscape ? 0 : Math.max(0, Math.round((viewportHeight - portraitFrameHeight) / 2));
+  const frameRect = landscape
+    ? { top: 0, left: 0, width: viewportWidth, height: viewportHeight }
+    : { top: frameTop, left: 0, width: viewportWidth, height: portraitFrameHeight };
 
   return (
     <Modal
@@ -3887,137 +4007,129 @@ function VideoPlayerModal({
     >
       <View style={styles.mediaModal}>
         <StatusBar style="light" hidden={landscape} backgroundColor="#000000" />
-        <View style={styles.playerScreenCenter}>
-          <View
-            onTouchStart={revealControls}
-            style={[
-              styles.videoFrame,
-              landscape
-                ? styles.videoFrameLandscape
-                : { width: viewportWidth, height: portraitFrameHeight },
-            ]}
-          >
-            {request.artwork && !firstFrameReady ? (
-              <Image
-                source={{ uri: request.artwork }}
-                style={StyleSheet.absoluteFill}
-                contentFit="contain"
-                cachePolicy="memory-disk"
-                transition={80}
-              />
-            ) : null}
 
-            <VideoView
-              player={player}
-              style={[styles.videoView, !firstFrameReady && styles.videoViewPreparing]}
-              nativeControls={firstFrameReady && !switchingQuality}
-              buttonOptions={{
-                showBottomBar: true,
-                showPlayPause: true,
-                showSeekBackward: true,
-                showSeekForward: true,
-                showNext: false,
-                showPrevious: false,
-              }}
-              contentFit={displayMode === 'fill' ? 'cover' : 'contain'}
-              allowsPictureInPicture
-              allowsFullscreen={false}
-              surfaceType="textureView"
-              useExoShutter
-              onFirstFrameRender={() => {
-                setFirstFrameReady(true);
-                setControlsVisible(true);
-              }}
+        <View
+          onTouchStart={revealControls}
+          style={[styles.videoFrame, frameRect]}
+        >
+          {request.artwork && !firstFrameReady ? (
+            <Image
+              source={{ uri: optimizedImageUrl(request.artwork, 'backdrop') }}
+              style={StyleSheet.absoluteFill}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              transition={80}
             />
+          ) : null}
 
-            {!firstFrameReady || switchingQuality ? (
-              <View style={styles.playerPreparingOverlay} pointerEvents="none">
-                <View style={styles.playerPreparingSpinner}>
-                  <ActivityIndicator color={COLORS.gold} size="small" />
-                </View>
-              </View>
-            ) : null}
+          <VideoView
+            player={player}
+            style={[styles.videoView, !firstFrameReady && styles.videoViewPreparing]}
+            nativeControls={firstFrameReady && !switchingQuality && !settingsOpen}
+            buttonOptions={{
+              showBottomBar: true,
+              showPlayPause: true,
+              showSeekBackward: true,
+              showSeekForward: true,
+              showNext: false,
+              showPrevious: false,
+            }}
+            contentFit={displayMode === 'fill' ? 'cover' : 'contain'}
+            allowsPictureInPicture
+            allowsFullscreen={false}
+            surfaceType="textureView"
+            useExoShutter
+            onFirstFrameRender={() => {
+              setFirstFrameReady(true);
+              setControlsVisible(true);
+            }}
+          />
 
-            {chromeVisible ? (
-              <View
-                pointerEvents="box-none"
-                style={[
-                  styles.nativePlayerTopBar,
-                  {
-                    top: landscape ? Math.max(8, insets.top + 4) : 8,
-                    left: landscapeLeftInset,
-                    right: landscapeRightInset,
-                  },
-                ]}
-              >
-                <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
-                  <Ionicons name="close" color="#fff" size={21} />
+          {chromeVisible ? (
+            <View
+              pointerEvents="box-none"
+              style={[
+                styles.nativePlayerTopBar,
+                {
+                  top: landscape ? Math.max(8, insets.top + 4) : 8,
+                  left: landscapeLeftInset,
+                  right: landscapeRightInset,
+                },
+              ]}
+            >
+              <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
+                <Ionicons name="close" color="#fff" size={21} />
+              </Pressable>
+              <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
+              {qualitySources.length > 1 ? (
+                <Pressable
+                  onPress={() => {
+                    clearControlsTimer();
+                    setControlsVisible(true);
+                    setSettingsOpen(true);
+                  }}
+                  style={styles.nativePlayerTopButton}
+                  accessibilityLabel="تنظیمات پخش"
+                >
+                  <Ionicons name="settings-outline" color="#fff" size={20} />
                 </Pressable>
-                <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
-                {qualitySources.length > 1 ? (
-                  <Pressable
-                    onPress={() => {
-                      clearControlsTimer();
-                      setControlsVisible(true);
-                      setSettingsOpen(true);
-                    }}
-                    style={styles.nativePlayerTopButton}
-                    accessibilityLabel="تنظیمات پخش"
-                  >
-                    <Ionicons name="settings-outline" color="#fff" size={20} />
-                  </Pressable>
-                ) : null}
-                <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
-                  <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
-                </Pressable>
-              </View>
-            ) : null}
+              ) : null}
+              <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
+                <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
 
-            {settingsOpen ? (
-              <View style={styles.playerSettingsOverlay}>
-                <Pressable style={StyleSheet.absoluteFill} onPress={() => {
+        {!firstFrameReady || switchingQuality ? (
+          <View style={[styles.playerFramePortal, frameRect]} pointerEvents="none">
+            <ActivityIndicator color={COLORS.gold} size="small" />
+          </View>
+        ) : null}
+
+        {settingsOpen ? (
+          <View style={[styles.playerFramePortal, styles.playerSettingsPortal, frameRect]}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => {
+              setSettingsOpen(false);
+              revealControls();
+            }} />
+            <View style={[styles.playerSettingsCard, landscape && styles.playerSettingsCardLandscape]}>
+              <View style={styles.playerSettingsHeader}>
+                <Text style={styles.playerSettingsTitle}>کیفیت پخش</Text>
+                <Pressable onPress={() => {
                   setSettingsOpen(false);
                   revealControls();
-                }} />
-                <View style={[styles.playerSettingsCard, landscape && styles.playerSettingsCardLandscape]}>
-                  <View style={styles.playerSettingsHeader}>
-                    <Text style={styles.playerSettingsTitle}>کیفیت پخش</Text>
-                    <Pressable onPress={() => {
-                      setSettingsOpen(false);
-                      revealControls();
-                    }} style={styles.playerSettingsClose}>
-                      <Ionicons name="close" color="#fff" size={18} />
-                    </Pressable>
-                  </View>
-                  {qualitySources.length ? (
-                    <View style={styles.playerSettingsOptions}>
-                      {qualitySources.map((source) => {
-                        const activeQuality = String(activeSource.quality || '').match(/(\d{3,4})\s*p/i)?.[1];
-                        const selected = source.id === activeSource.id || activeQuality === String(source.quality).replace(/\D/g, '');
-                        return (
-                          <Pressable
-                            key={source.id}
-                            onPress={() => void switchQuality(source)}
-                            style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
-                          >
-                            <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>
-                              {source.quality}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  ) : (
-                    <Text style={styles.playerSettingsEmpty}>برای این ویدئو کیفیت جداگانه‌ای ثبت نشده است.</Text>
-                  )}
-                  <Text style={styles.nativePlayerStatusText}>
-                    {`${formatPlaybackTime(currentTime)} از ${formatPlaybackTime(duration)}`}
-                  </Text>
-                </View>
+                }} style={styles.playerSettingsClose}>
+                  <Ionicons name="close" color="#fff" size={18} />
+                </Pressable>
               </View>
-            ) : null}
+              {qualitySources.length ? (
+                <View style={styles.playerSettingsOptions}>
+                  {qualitySources.map((source) => {
+                    const activeQuality = String(activeSource.quality || '').match(/(\d{3,4})\s*p/i)?.[1];
+                    const selected = source.id === activeSource.id || activeQuality === String(source.quality).replace(/\D/g, '');
+                    return (
+                      <Pressable
+                        key={source.id}
+                        onPress={() => void switchQuality(source)}
+                        style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
+                      >
+                        <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>
+                          {source.quality}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.playerSettingsEmpty}>برای این ویدئو کیفیت جداگانه‌ای ثبت نشده است.</Text>
+              )}
+              <Text style={styles.nativePlayerStatusText}>
+                {`${formatPlaybackTime(currentTime)} از ${formatPlaybackTime(duration)}`}
+              </Text>
+            </View>
           </View>
-        </View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -5581,7 +5693,7 @@ const styles = StyleSheet.create({
   primaryButton: { height: 48, alignSelf: 'stretch', marginTop: 16, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: COLORS.red, shadowColor: COLORS.red, shadowOpacity: 0.35, shadowRadius: 18, elevation: 5 },
   primaryButtonText: { color: '#fff', fontSize: 13, fontWeight: '900' },
   roundButton: { width: 48, height: 48, borderRadius: 13, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', backgroundColor: 'rgba(10,12,15,0.65)' },
-  scheduleSection: { marginHorizontal: 12, marginTop: 34, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(216,180,90,0.24)', backgroundColor: '#0C0F14', shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 20, elevation: 6 },
+  scheduleSection: { marginHorizontal: 12, marginTop: 26, padding: 12, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(216,180,90,0.24)', backgroundColor: '#0C0F14', shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 20, elevation: 6 },
   scheduleHeader: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   eyebrow: { ...rtlText, color: COLORS.red, fontSize: 10, fontWeight: '900', marginBottom: 4 },
   sectionTitle: { ...rtlText, color: COLORS.text, fontSize: 18, lineHeight: 27, fontWeight: '900', letterSpacing: -0.45 },
@@ -5603,21 +5715,23 @@ const styles = StyleSheet.create({
   scheduleLoadingText: { ...rtlText, color: COLORS.muted, fontSize: 10 },
   scheduleList: { gap: 7 },
   scheduleGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', alignItems: 'stretch', justifyContent: 'space-between' },
+  scheduleHorizontalViewport: { marginTop: 1, flexGrow: 0 },
+  scheduleHorizontalList: { flexDirection: 'row-reverse', gap: 8, paddingVertical: 2, paddingHorizontal: 1 },
   scheduleCard: { minHeight: 72, flexDirection: 'row-reverse', alignItems: 'center', gap: 9, padding: 7, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  scheduleCardCompact: { width: '49%', minHeight: 108, alignItems: 'flex-start', padding: 7, gap: 7 },
-  schedulePoster: { width: 48, height: 58, borderRadius: 8, backgroundColor: COLORS.surfaceStrong },
-  schedulePosterCompact: { width: 42, height: 54, borderRadius: 8 },
-  scheduleCardBody: { flex: 1, alignItems: 'flex-end' },
+  scheduleCardCompact: { height: 88, minHeight: 88, alignItems: 'center', padding: 7, gap: 7 },
+  schedulePoster: { width: 48, height: 58, borderRadius: 8, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
+  schedulePosterCompact: { width: 43, height: 58, borderRadius: 8 },
+  scheduleCardBody: { minWidth: 0, flex: 1, alignItems: 'flex-end', justifyContent: 'center' },
   scheduleSourceRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 5 },
   scheduleRegion: { color: COLORS.blue, fontSize: 8, fontWeight: '800' },
   liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: COLORS.red },
   scheduleName: { ...rtlText, color: COLORS.text, fontSize: 13, fontWeight: '900', marginTop: 5 },
-  scheduleNameCompact: { fontSize: 10.5, lineHeight: 16, marginTop: 3 },
+  scheduleNameCompact: { fontSize: 10.2, lineHeight: 15, marginTop: 2 },
   scheduleEpisode: { ...rtlText, color: COLORS.muted, fontSize: 9, marginTop: 3 },
   scheduleTimeWrap: { alignItems: 'center', gap: 5 },
   scheduleTime: { ...rtlText, color: COLORS.gold, fontSize: 11, fontWeight: '900', marginTop: 4 },
-  scheduleTimeCompact: { fontSize: 8, lineHeight: 13 },
-  scheduleEmpty: { minHeight: 135, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 },
+  scheduleTimeCompact: { fontSize: 7.8, lineHeight: 12 },
+  scheduleEmpty: { minHeight: 112, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 },
   scheduleEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '800', marginTop: 8 },
   scheduleEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 16, marginTop: 5, textAlign: 'center' },
   scheduleFootnote: { ...rtlText, color: '#5E646D', fontSize: 8, lineHeight: 15, marginTop: 11 },
@@ -5648,6 +5762,7 @@ const styles = StyleSheet.create({
   posterCard: { width: 137, alignItems: 'flex-end' },
   posterImageWrap: { width: 137, height: 194, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', backgroundColor: COLORS.surface },
   posterImage: { width: '100%', height: '100%' },
+  catalogArtworkContainer: { overflow: 'hidden', backgroundColor: '#141820' },
   catalogArtworkFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#141820' },
   posterGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 65 },
   posterAccess: { position: 'absolute', top: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.9)' },
@@ -5904,18 +6019,20 @@ const styles = StyleSheet.create({
   personWorksEmpty: { minHeight: 180, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   personWorksEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', textAlign: 'center', marginTop: 10 },
   personWorksEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 18, textAlign: 'center', marginTop: 6 },
-  mediaModal: { flex: 1, backgroundColor: '#000' },
+  mediaModal: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#000' },
   detailCircleButtonPlaceholder: { width: 46, height: 46 },
   videoViewPreparing: { opacity: 0 },
   playerPreparingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   playerPreparingSpinner: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  playerFramePortal: { position: 'absolute', zIndex: 70, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  playerSettingsPortal: { zIndex: 80, backgroundColor: 'rgba(0,0,0,0.42)' },
   playerPreparingText: { ...rtlText, color: '#fff', fontSize: 9.5, fontWeight: '800', marginTop: 9 },
   nativePlayerTopBar: { position: 'absolute', zIndex: 30, left: 8, right: 8, minHeight: 42, paddingHorizontal: 2, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(0,0,0,0.18)', borderRadius: 14 },
   nativePlayerTopButton: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.78)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   nativePlayerTitle: { ...rtlText, minWidth: 0, flex: 1, color: '#fff', fontSize: 10.5, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   nativePlayerStatusText: { ...rtlText, color: 'rgba(255,255,255,0.66)', fontSize: 8.5, textAlign: 'center', marginTop: 13 },
   playerScreenCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
-  videoFrame: { position: 'relative', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+  videoFrame: { position: 'absolute', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   videoFrameLandscape: { width: '100%', height: '100%' },
   webModal: { flex: 1, backgroundColor: COLORS.background },
   mediaModalHeader: { height: 62, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#080A0E', borderBottomWidth: 1, borderBottomColor: COLORS.border },
@@ -6021,8 +6138,8 @@ const styles = StyleSheet.create({
   playerControlSpacer: { flex: 1 },
   playerTimeSeparator: { color: 'rgba(255,255,255,0.48)', fontSize: 9 },
   playerSettingsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.42)' },
-  playerSettingsCard: { width: 228, maxWidth: '82%', maxHeight: '84%', padding: 8, borderRadius: 13, backgroundColor: 'rgba(16,19,25,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
-  playerSettingsCardLandscape: { width: 252, maxWidth: '46%', maxHeight: '78%' },
+  playerSettingsCard: { width: 216, maxWidth: '78%', maxHeight: '78%', padding: 8, borderRadius: 13, backgroundColor: 'rgba(16,19,25,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  playerSettingsCardLandscape: { width: 236, maxWidth: '40%', maxHeight: '70%' },
   playerSettingsHeader: { minHeight: 30, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   playerSettingsTitle: { ...rtlText, color: '#fff', fontSize: 12, fontWeight: '900' },
   playerSettingsClose: { width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },

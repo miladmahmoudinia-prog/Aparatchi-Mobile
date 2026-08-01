@@ -141,7 +141,7 @@ export type ScheduleEntry = {
   nameFa: string;
   poster: string;
   day: DayId;
-  time: string;
+  time?: string;
   season?: number;
   episode?: number;
   region: 'iranian' | 'foreign';
