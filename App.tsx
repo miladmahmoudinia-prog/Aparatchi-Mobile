@@ -39,7 +39,7 @@ import {
   checkMobileOperatorAccess,
   MobileOperatorAccessStatus,
 } from './src/operatorAccess';
-import { CatalogItem, CatalogPerson, DayId, DownloadFile, DownloadSection, MediaLanguage, ScheduleEntry } from './src/types';
+import { CatalogItem, CatalogPerson, DayId, DownloadFile, DownloadSection, FeaturedPerson, MediaLanguage, ScheduleEntry } from './src/types';
 import {
   DownloadRecord,
   cancelDownload,
@@ -915,6 +915,71 @@ const personWorksFor = (person: CatalogPerson, catalog: CatalogItem[]) =>
     'latest',
   );
 
+const personAge = (person: CatalogPerson) => {
+  if (!person.birthday) return 0;
+  const birthday = new Date(`${person.birthday}T12:00:00`);
+  const endDate = person.deathday ? new Date(`${person.deathday}T12:00:00`) : new Date();
+  if (!Number.isFinite(birthday.getTime()) || !Number.isFinite(endDate.getTime())) return 0;
+  let age = endDate.getFullYear() - birthday.getFullYear();
+  const beforeBirthday =
+    endDate.getMonth() < birthday.getMonth() ||
+    (endDate.getMonth() === birthday.getMonth() && endDate.getDate() < birthday.getDate());
+  if (beforeBirthday) age -= 1;
+  return Math.max(0, age);
+};
+
+const formatPersonBirthday = (value?: string) => {
+  if (!value) return '';
+  const date = new Date(`${value}T12:00:00`);
+  if (!Number.isFinite(date.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat('fa-IR-u-ca-gregory', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(date);
+  } catch {
+    return toPersianDigits(value.replace(/-/g, '/'));
+  }
+};
+
+const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
+  const candidates = new Map<string, { person: CatalogPerson; itemIds: Set<string>; iranian: number; foreign: number; score: number }>();
+  for (const item of catalog) {
+    for (const person of item.people || []) {
+      if (person.role !== 'actor' || !isSafeHttpUrl(person.image)) continue;
+      const key = person.tmdbId ? `tmdb:${person.tmdbId}` : `name:${normalizeComparableText(personName(person))}`;
+      if (!key) continue;
+      const current = candidates.get(key) || { person, itemIds: new Set<string>(), iranian: 0, foreign: 0, score: 0 };
+      current.itemIds.add(item.id);
+      if (item.ir || item.countryCodes?.includes('IR')) current.iranian += 1;
+      else current.foreign += 1;
+      current.score += 24 + Math.max(0, 14 - Number(person.order || 0) * 2) + Number(item.rate || 0);
+      if (Number(person.popularity || 0) > Number(current.person.popularity || 0)) current.person = person;
+      candidates.set(key, current);
+    }
+  }
+  const ranked = [...candidates.values()]
+    .map(({ person, itemIds, iranian, foreign, score }) => ({
+      ...person,
+      nameFa: personName(person),
+      name: personName(person),
+      itemIds: [...itemIds],
+      workCount: itemIds.size,
+      region: iranian >= foreign ? 'iranian' as const : 'foreign' as const,
+      score: score + itemIds.size * 34 + Number(person.popularity || 0) * 2,
+    }))
+    .sort((a, b) => b.score - a.score);
+  const iranian = ranked.filter((person) => person.region === 'iranian');
+  const foreign = ranked.filter((person) => person.region === 'foreign');
+  const result: FeaturedPerson[] = [];
+  for (let index = 0; result.length < 16 && (index < iranian.length || index < foreign.length); index += 1) {
+    if (foreign[index]) result.push(foreign[index]);
+    if (result.length < 16 && iranian[index]) result.push(iranian[index]);
+  }
+  return result;
+};
+
 function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
   const [failed, setFailed] = useState(false);
   const image = !failed && isSafeHttpUrl(person.image) ? person.image : '';
@@ -1060,7 +1125,7 @@ function SectionTitle({
         <Text style={styles.sectionTitle}>{title}</Text>
       </View>
       {action ? (
-        <Pressable onPress={onAction} style={styles.sectionAction}>
+        <Pressable onPress={onAction} hitSlop={12} style={styles.sectionAction}>
           <Text style={styles.sectionActionText}>{action}</Text>
           <Ionicons name="chevron-back" color={COLORS.gold} size={15} />
         </Pressable>
@@ -1660,6 +1725,122 @@ function HorizontalCatalog({
   );
 }
 
+function HomeStarsSection({
+  people,
+  catalog,
+  onOpen,
+}: {
+  people: FeaturedPerson[];
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+}) {
+  const resolvedPeople = useMemo(() => {
+    const valid = people.filter((person) => person.role === 'actor' && isSafeHttpUrl(person.image));
+    return valid.length ? valid : deriveFeaturedPeople(catalog);
+  }, [catalog, people]);
+  const [selectedId, setSelectedId] = useState('');
+
+  useEffect(() => {
+    if (!resolvedPeople.length) return;
+    if (!resolvedPeople.some((person) => person.id === selectedId)) setSelectedId(resolvedPeople[0].id);
+  }, [resolvedPeople, selectedId]);
+
+  const selected = resolvedPeople.find((person) => person.id === selectedId) || resolvedPeople[0];
+  const works = useMemo(() => {
+    if (!selected) return [];
+    const explicitIds = new Set(selected.itemIds || []);
+    const matched = explicitIds.size
+      ? catalog.filter((item) => explicitIds.has(item.id))
+      : personWorksFor(selected, catalog);
+    return sortForCatalogFilter(matched, 'latest');
+  }, [catalog, selected]);
+
+  if (!selected || !works.length) return null;
+  const birthday = formatPersonBirthday(selected.birthday);
+  const age = personAge(selected);
+  const location = selected.nationality || selected.placeOfBirth || '';
+
+  return (
+    <View style={styles.starsSection}>
+      <View style={styles.starsHeader}>
+        <View style={styles.starsHeaderIcon}>
+          <Ionicons name="sparkles-outline" color={COLORS.gold} size={20} />
+        </View>
+        <View style={styles.starsHeaderText}>
+          <Text style={styles.starsTitle}>ستارگان</Text>
+          <Text style={styles.starsSubtitle}>بازیگران محبوب و آثار موجودشان در آپاراتچی</Text>
+        </View>
+      </View>
+
+      <FlatList
+        horizontal
+        inverted
+        data={resolvedPeople}
+        keyExtractor={(person) => person.id}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.starsPeopleList}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        renderItem={({ item: person }) => {
+          const active = person.id === selected.id;
+          return (
+            <Pressable onPress={() => setSelectedId(person.id)} style={styles.starPersonCard}>
+              <View style={[styles.starPersonAvatarWrap, active && styles.starPersonAvatarActive]}>
+                <PersonAvatar person={person} style={styles.starPersonAvatar} />
+                {active ? <View style={styles.starPersonActiveDot} /> : null}
+              </View>
+              <Text numberOfLines={1} style={[styles.starPersonName, active && styles.starPersonNameActive]}>
+                {personName(person)}
+              </Text>
+            </Pressable>
+          );
+        }}
+      />
+
+      <View style={styles.starSpotlightCard}>
+        <LinearGradient
+          colors={['rgba(216,180,90,0.13)', 'rgba(20,24,31,0.97)', '#0B0E13']}
+          start={{ x: 1, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        <View style={styles.starSpotlightAvatarWrap}>
+          <PersonAvatar person={selected} style={styles.starSpotlightAvatar} />
+        </View>
+        <View style={styles.starSpotlightInfo}>
+          <Text numberOfLines={2} style={styles.starSpotlightName}>{personName(selected)}</Text>
+          <View style={styles.starFactsRow}>
+            {birthday ? (
+              <View style={styles.starFactChip}>
+                <Ionicons name="calendar-outline" color={COLORS.gold} size={13} />
+                <Text style={styles.starFactText}>{birthday}</Text>
+              </View>
+            ) : null}
+            {age > 0 ? (
+              <View style={styles.starFactChip}>
+                <Ionicons name="time-outline" color={COLORS.gold} size={13} />
+                <Text style={styles.starFactText}>{toPersianDigits(age)} ساله</Text>
+              </View>
+            ) : null}
+            {location ? (
+              <View style={styles.starFactChip}>
+                <Ionicons name="location-outline" color={COLORS.gold} size={13} />
+                <Text numberOfLines={1} style={styles.starFactText}>{location}</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.starWorksHeader}>
+        <Text style={styles.starWorksTitle}>آثار موجود</Text>
+        <Text style={styles.starWorksCount}>{toPersianDigits(works.length)} عنوان</Text>
+      </View>
+      <HorizontalCatalog items={works.slice(0, 14)} onOpen={onOpen} />
+    </View>
+  );
+}
+
 function ContinueWatchingSection({
   records,
   catalog,
@@ -1743,6 +1924,7 @@ function HomeScreen({
   catalog,
   iranianSchedule,
   weeklySchedule,
+  featuredPeople,
   watchProgress,
   onReloadContent,
   onOpen,
@@ -1756,6 +1938,7 @@ function HomeScreen({
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
   weeklySchedule: ScheduleEntry[];
+  featuredPeople: FeaturedPerson[];
   watchProgress: WatchProgressRecord[];
   onReloadContent: () => void;
   onOpen: (item: CatalogItem) => void;
@@ -1828,6 +2011,7 @@ function HomeScreen({
         <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} />
         <ContinueWatchingSection records={watchProgress} catalog={catalog} onResume={onResume} onRemove={onRemoveProgress} />
         <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} weeklySchedule={weeklySchedule} onOpenItem={onOpen} />
+        <HomeStarsSection people={featuredPeople} catalog={catalog} onOpen={onOpen} />
         {rows.map((row) => row.items.length ? (
           <View key={row.filter} style={styles.catalogSection}>
             <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
@@ -5130,6 +5314,7 @@ function AppContent() {
               catalog={content.items}
               iranianSchedule={content.iranianSchedule}
               weeklySchedule={content.weeklySchedule || []}
+              featuredPeople={content.featuredPeople || []}
               watchProgress={watchProgress}
               onReloadContent={() => void reloadContent(true)}
               onOpen={setSelectedItem}
@@ -5318,6 +5503,31 @@ const styles = StyleSheet.create({
   continueMeta: { ...rtlText, width: '100%', color: '#D4D7DB', fontSize: 8.5, marginTop: 5 },
   continueProgressTrack: { width: '100%', height: 5, backgroundColor: '#090B0F' },
   continueProgressFill: { height: '100%', backgroundColor: COLORS.red },
+  starsSection: { marginTop: 34, paddingTop: 17, paddingBottom: 18, borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(216,180,90,0.15)', backgroundColor: 'rgba(12,15,20,0.72)' },
+  starsHeader: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'center', gap: 11 },
+  starsHeaderIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.09)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
+  starsHeaderText: { flex: 1, alignItems: 'flex-end' },
+  starsTitle: { ...rtlText, color: COLORS.text, fontSize: 19, lineHeight: 28, fontWeight: '900', letterSpacing: -0.5 },
+  starsSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8.5, lineHeight: 16, marginTop: 2 },
+  starsPeopleList: { flexDirection: 'row-reverse', gap: 12, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 9 },
+  starPersonCard: { width: 82, alignItems: 'center' },
+  starPersonAvatarWrap: { width: 72, height: 72, borderRadius: 36, padding: 2, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.12)' },
+  starPersonAvatarActive: { borderWidth: 2.5, borderColor: COLORS.red, shadowColor: COLORS.red, shadowOpacity: 0.35, shadowRadius: 10, elevation: 5 },
+  starPersonAvatar: { width: '100%', height: '100%', borderRadius: 34 },
+  starPersonActiveDot: { position: 'absolute', bottom: 3, right: 3, width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.gold, borderWidth: 2, borderColor: '#0C0F14' },
+  starPersonName: { width: '100%', minHeight: 29, color: COLORS.muted, fontSize: 8.5, lineHeight: 14, fontWeight: '800', textAlign: 'center', marginTop: 7, writingDirection: 'ltr' },
+  starPersonNameActive: { color: COLORS.text },
+  starSpotlightCard: { minHeight: 126, marginHorizontal: 18, marginTop: 8, padding: 12, borderRadius: 18, overflow: 'hidden', flexDirection: 'row-reverse', alignItems: 'center', gap: 14, borderWidth: 1, borderColor: 'rgba(216,180,90,0.28)', backgroundColor: '#10141B' },
+  starSpotlightAvatarWrap: { width: 96, height: 104, borderRadius: 15, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: 'rgba(216,180,90,0.42)' },
+  starSpotlightAvatar: { width: '100%', height: '100%' },
+  starSpotlightInfo: { minWidth: 0, flex: 1, alignItems: 'flex-end' },
+  starSpotlightName: { width: '100%', color: COLORS.text, fontSize: 18, lineHeight: 25, fontWeight: '900', textAlign: 'right', writingDirection: 'ltr' },
+  starFactsRow: { width: '100%', marginTop: 11, flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6 },
+  starFactChip: { minHeight: 29, maxWidth: '100%', paddingHorizontal: 8, borderRadius: 9, flexDirection: 'row-reverse', alignItems: 'center', gap: 5, backgroundColor: 'rgba(7,9,12,0.54)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
+  starFactText: { minWidth: 0, flexShrink: 1, color: '#D5D8DE', fontSize: 8.5, fontWeight: '800' },
+  starWorksHeader: { marginTop: 17, paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
+  starWorksTitle: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900' },
+  starWorksCount: { color: COLORS.gold, fontSize: 8.5, fontWeight: '900' },
   tabScreenContent: { paddingHorizontal: 16, paddingBottom: 28, paddingTop: 18 },
   header: {
     height: 66,
@@ -5413,7 +5623,7 @@ const styles = StyleSheet.create({
   scheduleFootnote: { ...rtlText, color: '#5E646D', fontSize: 8, lineHeight: 15, marginTop: 11 },
   catalogSection: { marginTop: 30 },
   sectionTitleRow: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'flex-end', justifyContent: 'space-between' },
-  sectionAction: { flexDirection: 'row-reverse', alignItems: 'center', gap: 2, paddingBottom: 2 },
+  sectionAction: { minWidth: 88, minHeight: 44, paddingHorizontal: 8, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 3 },
   sectionActionText: { color: COLORS.gold, fontSize: 10, fontWeight: '800' },
   collectionSection: { marginTop: 24, paddingTop: 18, borderTopWidth: 1, borderTopColor: COLORS.border, gap: 13 },
   collectionHeader: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10 },

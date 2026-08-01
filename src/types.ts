@@ -13,6 +13,17 @@ export type CatalogPerson = {
   order?: number;
   tmdbId?: number;
   source?: string;
+  birthday?: string;
+  deathday?: string;
+  placeOfBirth?: string;
+  nationality?: string;
+  popularity?: number;
+};
+
+export type FeaturedPerson = CatalogPerson & {
+  itemIds: string[];
+  workCount?: number;
+  region?: 'iranian' | 'foreign';
 };
 
 export type MediaLanguage = 'dubbed' | 'subtitled';
@@ -144,6 +155,7 @@ export type CatalogPayload = {
   items: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
   weeklySchedule?: ScheduleEntry[];
+  featuredPeople?: FeaturedPerson[];
 };
 
 export type DayId =

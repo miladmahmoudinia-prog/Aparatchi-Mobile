@@ -5,6 +5,7 @@ import {
   CatalogItem,
   CatalogPerson,
   CatalogPayload,
+  FeaturedPerson,
   DayId,
   DownloadFile,
   DownloadSection,
@@ -24,6 +25,7 @@ const LOCAL_PAYLOAD: CatalogPayload = {
   items: CATALOG,
   iranianSchedule: VERIFIED_IRANIAN_SCHEDULE,
   weeklySchedule: [],
+  featuredPeople: [],
 };
 
 const REMOTE_CACHE_URI = FileSystem.documentDirectory
@@ -261,6 +263,11 @@ const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
         ? { tmdbId: asNumber(person.tmdbId ?? person.tmdb_id, 0) }
         : {}),
       ...(asString(person.source) ? { source: asString(person.source) } : {}),
+      ...(asString(person.birthday ?? person.birth_date) ? { birthday: asString(person.birthday ?? person.birth_date) } : {}),
+      ...(asString(person.deathday ?? person.death_date) ? { deathday: asString(person.deathday ?? person.death_date) } : {}),
+      ...(asString(person.placeOfBirth ?? person.place_of_birth) ? { placeOfBirth: asString(person.placeOfBirth ?? person.place_of_birth) } : {}),
+      ...(asString(person.nationality) ? { nationality: asString(person.nationality) } : {}),
+      ...(asNumber(person.popularity, 0) > 0 ? { popularity: asNumber(person.popularity, 0) } : {}),
       order: asNumber(person.order ?? person.castOrder ?? person.cast_order, index),
     } satisfies CatalogPerson];
   }).sort((a, b) => {
@@ -734,6 +741,48 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   };
 };
 
+
+const normalizeFeaturedPeople = (value: unknown): FeaturedPerson[] => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const record = entry as Record<string, unknown>;
+    const role = normalizePersonRole(record.role, 'actor');
+    if (role !== 'actor') return [];
+    const name = asString(record.name ?? record.nameFa ?? record.name_fa);
+    const nameFa = asString(record.nameFa ?? record.name_fa, name);
+    const tmdbId = asNumber(record.tmdbId ?? record.tmdb_id, 0);
+    const id = asString(record.id, tmdbId > 0 ? `actor-tmdb-${tmdbId}` : `featured-${index}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`);
+    if (!id || !name || seen.has(id)) return [];
+    seen.add(id);
+    const image = record.profile_path
+      ? normalizePersonImage(record.profile_path, 'tmdb')
+      : normalizePersonImage(record.image ?? record.imageUrl ?? record.image_url, asString(record.source) === 'tmdb' ? 'tmdb' : 'upera');
+    const itemIds = stringArray(record.itemIds ?? record.item_ids);
+    if (!image || !itemIds.length) return [];
+    return [{
+      id,
+      nameFa: nameFa || name,
+      name,
+      role: 'actor' as const,
+      roleLabel: 'بازیگر',
+      image,
+      ...(tmdbId > 0 ? { tmdbId } : {}),
+      ...(asString(record.birthday ?? record.birth_date) ? { birthday: asString(record.birthday ?? record.birth_date) } : {}),
+      ...(asString(record.deathday ?? record.death_date) ? { deathday: asString(record.deathday ?? record.death_date) } : {}),
+      ...(asString(record.placeOfBirth ?? record.place_of_birth) ? { placeOfBirth: asString(record.placeOfBirth ?? record.place_of_birth) } : {}),
+      ...(asString(record.nationality) ? { nationality: asString(record.nationality) } : {}),
+      ...(asNumber(record.popularity, 0) > 0 ? { popularity: asNumber(record.popularity, 0) } : {}),
+      itemIds,
+      workCount: asNumber(record.workCount ?? record.work_count, itemIds.length),
+      region: record.region === 'iranian' ? 'iranian' : 'foreign',
+      source: asString(record.source, 'tmdb'),
+      order: index,
+    } satisfies FeaturedPerson];
+  }).slice(0, 24);
+};
+
 const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | null => {
   if (!value || typeof value !== 'object') return null;
   const entry = value as Record<string, unknown>;
@@ -783,6 +832,7 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
     items: newestFirst(items),
     iranianSchedule: normalizeSchedule(payload.iranianSchedule),
     weeklySchedule: normalizeSchedule(payload.weeklySchedule),
+    featuredPeople: normalizeFeaturedPeople(payload.featuredPeople ?? payload.featured_people),
   };
 };
 
