@@ -10,6 +10,15 @@ export type DownloadRecord = {
   subtitle: string;
   quality: string;
   sourceUrl: string;
+  /** تصویر پوستر یا بندانگشتی برای نمایش آفلاین در صفحه دریافت‌ها. */
+  artwork?: string;
+  /** نوع محتوای اصلی برای نمایش دقیق اطلاعات فیلم یا سریال. */
+  mediaType?: 'movie' | 'series';
+  /** اطلاعات قسمت برای دانلودهای سریالی. */
+  seasonNumber?: number;
+  episodeNumber?: number;
+  episodeTitle?: string;
+  language?: 'dubbed' | 'subtitled';
   localUri?: string;
   destinationUri?: string;
   resumeData?: string;

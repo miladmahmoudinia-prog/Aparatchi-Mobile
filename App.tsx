@@ -1494,7 +1494,10 @@ function PeopleSection({
             <Text numberOfLines={2} style={styles.personCardName}>{personName(person)}</Text>
             <Text numberOfLines={1} style={styles.personCardRole}>{personRoleTitle(person)}</Text>
             {person.character ? (
-              <Text numberOfLines={1} style={styles.personCardCharacter}>{person.character}</Text>
+              <View style={styles.personCardCharacterRow}>
+                <Text style={styles.personCardCharacterLabel}>نقش:</Text>
+                <Text numberOfLines={1} style={styles.personCardCharacter}>{person.character}</Text>
+              </View>
             ) : null}
           </Pressable>
         )}
@@ -2542,7 +2545,7 @@ function FavoritesScreen({
             <View style={styles.historyList}>
               {history.map((record) => {
                 const catalogItem = catalog.find((item) => item.id === record.itemId);
-                const artwork = record.artwork || catalogItem?.poster || catalogItem?.backdrop;
+                const artwork = record.artwork || catalogItem?.backdrop || catalogItem?.poster;
                 const percent = watchProgressPercent(record);
                 return (
                   <Pressable key={record.id} onPress={() => onOpenHistory(record)} style={styles.historyCard}>
@@ -2597,8 +2600,41 @@ function FavoritesScreen({
   );
 }
 
+const downloadLanguageLabel = (language?: MediaLanguage) =>
+  language === 'dubbed' ? 'دوبله فارسی' : language === 'subtitled' ? 'زیرنویس فارسی' : '';
+
+const downloadDisplayMeta = (record: DownloadRecord, catalogItem?: CatalogItem) => {
+  const matchedGroup = catalogItem?.downloads?.find((group) =>
+    (group.files || []).some((file) =>
+      file.url === record.sourceUrl || record.id.endsWith(`-${file.id}`),
+    ),
+  );
+  const matchedFile = matchedGroup?.files?.find((file) =>
+    file.url === record.sourceUrl || record.id.endsWith(`-${file.id}`),
+  );
+  const mediaType = record.mediaType || catalogItem?.type;
+  const seasonNumber = Number(record.seasonNumber || matchedGroup?.seasonNumber || 0);
+  const episodeNumber = Number(record.episodeNumber || matchedGroup?.episodeNumber || 0);
+  const language = record.language || matchedFile?.language;
+  const artwork = record.artwork || catalogItem?.poster || catalogItem?.backdrop;
+  const episodeTitle = record.episodeTitle || cleanMediaLabel(matchedGroup?.subtitle);
+
+  return {
+    artwork,
+    mediaType,
+    seasonNumber,
+    episodeNumber,
+    language,
+    episodeTitle,
+    episodeLabel: mediaType === 'series' && episodeNumber > 0
+      ? `فصل ${toPersianDigits(seasonNumber || 1)} • قسمت ${toPersianDigits(episodeNumber)}`
+      : '',
+  };
+};
+
 function DownloadsScreen({
   downloads,
+  catalog,
   onPlay,
   onPause,
   onResume,
@@ -2607,6 +2643,7 @@ function DownloadsScreen({
   onClearCompleted,
 }: {
   downloads: DownloadRecord[];
+  catalog: CatalogItem[];
   onPlay: (record: DownloadRecord) => void;
   onPause: (record: DownloadRecord) => void;
   onResume: (record: DownloadRecord) => void;
@@ -2681,14 +2718,51 @@ function DownloadsScreen({
             const percent = Math.round(record.progress * 100);
             const canPlay = record.status === 'completed' && Boolean(record.localUri);
             const canResume = record.status === 'paused' || record.status === 'failed';
+            const catalogItem = catalog.find((item) => item.id === record.itemId);
+            const display = downloadDisplayMeta(record, catalogItem);
+            const languageLabel = downloadLanguageLabel(display.language);
+            const compactMeta = [display.episodeLabel, languageLabel, record.quality]
+              .filter(Boolean)
+              .join(' • ');
 
             return (
               <View key={record.id} style={styles.downloadLibraryCard}>
+                <Pressable
+                  disabled={!canPlay}
+                  onPress={() => canPlay && onPlay(record)}
+                  style={styles.downloadLibraryArtworkWrap}
+                >
+                  {display.artwork ? (
+                    <Image
+                      source={{ uri: display.artwork }}
+                      style={styles.downloadLibraryArtwork}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                      transition={160}
+                    />
+                  ) : (
+                    <View style={styles.downloadLibraryArtworkFallback}>
+                      <Ionicons name={display.mediaType === 'series' ? 'tv-outline' : 'film-outline'} color={COLORS.gold} size={24} />
+                    </View>
+                  )}
+                  {canPlay ? (
+                    <View style={styles.downloadLibraryArtworkPlay}>
+                      <Ionicons name="play" color="#fff" size={15} />
+                    </View>
+                  ) : null}
+                </Pressable>
+
                 <View style={styles.downloadLibraryInfo}>
                   <Text numberOfLines={1} style={styles.downloadLibraryTitle}>{record.title}</Text>
-                  <Text style={styles.downloadLibraryMeta}>
-                    {[record.subtitle, record.quality].filter(Boolean).join(' • ')}
-                  </Text>
+                  {record.subtitle ? (
+                    <Text numberOfLines={1} style={styles.downloadLibraryEnglish}>{record.subtitle}</Text>
+                  ) : null}
+                  {compactMeta ? (
+                    <Text numberOfLines={1} style={styles.downloadLibraryMeta}>{compactMeta}</Text>
+                  ) : null}
+                  {display.episodeTitle && display.episodeTitle !== record.title ? (
+                    <Text numberOfLines={1} style={styles.downloadLibraryEpisodeTitle}>{display.episodeTitle}</Text>
+                  ) : null}
                   {record.status !== 'completed' ? (
                     <View style={styles.progressTrack}>
                       <View style={[styles.progressFill, { width: `${percent}%` }]} />
@@ -2715,11 +2789,6 @@ function DownloadsScreen({
                   {canResume ? (
                     <Pressable onPress={() => onResume(record)} style={styles.downloadLibraryControl}>
                       <Ionicons name="play" color={COLORS.text} size={18} />
-                    </Pressable>
-                  ) : null}
-                  {canPlay ? (
-                    <Pressable onPress={() => onPlay(record)} style={styles.downloadLibraryPlay}>
-                      <Ionicons name="play" color="#fff" size={18} />
                     </Pressable>
                   ) : null}
                   <Pressable onPress={() => onMenu(record)} style={styles.downloadLibraryMenu}>
@@ -2883,7 +2952,7 @@ function EpisodeDownloadGroup({
   openLanguage: string | null;
   onToggle: (defaultLanguageId: string | null) => void;
   onToggleLanguage: (id: string) => void;
-  onOpenFile: (file: DownloadFile) => void;
+  onOpenFile: (file: DownloadFile, group: DownloadSection) => void;
   onPlayLanguage: (language?: MediaLanguage) => void;
   onOpenOperator: (file: DownloadFile) => void;
   iranian: boolean;
@@ -2921,7 +2990,7 @@ function EpisodeDownloadGroup({
               group={languageGroup}
               open={openLanguage === languageGroup.id}
               onToggle={() => onToggleLanguage(languageGroup.id)}
-              onOpenFile={onOpenFile}
+              onOpenFile={(file) => onOpenFile(file, group)}
               onPlay={playbackSourcesForFiles(group.files.filter((file) => file.language === languageGroup.language)).length
                 ? () => onPlayLanguage(languageGroup.language)
                 : undefined}
@@ -2956,7 +3025,7 @@ function SeriesEpisodeList({
   openLanguage: string | null;
   onToggleEpisode: (id: string, defaultLanguageId: string | null) => void;
   onToggleLanguage: (id: string) => void;
-  onOpenFile: (file: DownloadFile) => void;
+  onOpenFile: (file: DownloadFile, group: DownloadSection) => void;
   onPlayLanguage: (group: DownloadSection, language?: MediaLanguage) => void;
   onOpenOperator: (file: DownloadFile) => void;
 }) {
@@ -3080,7 +3149,7 @@ function DetailModal({
   episodeAlertBusy: boolean;
   onEpisodeAlert: () => void;
   onStream: (item: CatalogItem, episodeGroup?: DownloadSection | null, language?: MediaLanguage) => void;
-  onDownload: (item: CatalogItem, file: DownloadFile) => void;
+  onDownload: (item: CatalogItem, file: DownloadFile, episodeGroup?: DownloadSection) => void;
   onOperatorOpen: (item: CatalogItem, file: DownloadFile) => void;
   onOpenRelated: (item: CatalogItem) => void;
   onOpenPerson: (person: CatalogPerson) => void;
@@ -3180,7 +3249,7 @@ function DetailModal({
                 openLanguage={openLanguage}
                 onToggleEpisode={(id, defaultLanguageId) => { const nextOpen = openGroup === id ? null : id; setOpenGroup(nextOpen); setOpenLanguage(nextOpen ? defaultLanguageId : null); }}
                 onToggleLanguage={(id) => setOpenLanguage((current) => current === id ? null : id)}
-                onOpenFile={(file) => onDownload(item, file)}
+                onOpenFile={(file, group) => onDownload(item, file, group)}
                 onPlayLanguage={(group, language) => onStream(item, group, language)}
                 onOpenOperator={(file) => onOperatorOpen(item, file)}
               />
@@ -4610,7 +4679,7 @@ function AppContent() {
     }
   };
 
-  const startDownloadInsideApp = async (item: CatalogItem, file: DownloadFile) => {
+  const startDownloadInsideApp = async (item: CatalogItem, file: DownloadFile, episodeGroup?: DownloadSection) => {
     if (isOperatorFile(file)) {
       await openOperatorAccess(item, file);
       return;
@@ -4668,7 +4737,13 @@ function AppContent() {
       subtitle: item.name,
       quality: cleanQualityLabel(file.quality),
       sourceUrl: file.url,
-      fileName: `${item.name}-${cleanQualityLabel(file.quality)}`,
+      artwork: item.backdrop || item.poster,
+      mediaType: item.type,
+      seasonNumber: episodeGroup?.seasonNumber,
+      episodeNumber: episodeGroup?.episodeNumber,
+      episodeTitle: cleanMediaLabel(episodeGroup?.subtitle),
+      language: file.language,
+      fileName: `${item.name}-${episodeGroup?.seasonNumber ? `S${episodeGroup.seasonNumber}-` : ''}${episodeGroup?.episodeNumber ? `E${episodeGroup.episodeNumber}-` : ''}${cleanQualityLabel(file.quality)}`,
       progress: 0,
       status: 'downloading',
       createdAt: new Date().toISOString(),
@@ -4862,6 +4937,7 @@ function AppContent() {
           <View pointerEvents={activeTab === 'downloads' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'downloads' && styles.tabSceneHidden]}>
             <DownloadsScreen
               downloads={downloads}
+              catalog={content.items}
               onPlay={playDownloadedRecord}
               onPause={pauseDownloadRecord}
               onResume={resumeDownloadRecord}
@@ -5260,16 +5336,21 @@ const styles = StyleSheet.create({
   bottomLabel: { color: COLORS.muted, fontSize: 8.5, fontWeight: '700', marginTop: 3 },
   bottomLabelActive: { color: COLORS.text },
   downloadLibrary: { gap: 10 },
-  downloadLibraryCard: { minHeight: 112, flexDirection: 'row-reverse', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  downloadLibraryInfo: { flex: 1, alignItems: 'flex-end' },
-  downloadLibraryTitle: { ...rtlText, color: COLORS.text, fontSize: 14, fontWeight: '900', width: '100%' },
-  downloadLibraryMeta: { ...rtlText, color: COLORS.muted, fontSize: 9, marginTop: 5, width: '100%' },
-  downloadLibraryStatus: { ...rtlText, color: COLORS.gold, fontSize: 9, marginTop: 7, width: '100%' },
-  downloadLibraryActions: { gap: 8 },
-  downloadLibraryPlay: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.red },
-  downloadLibraryControl: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.12)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
-  downloadLibraryMenu: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
-  progressTrack: { width: '100%', height: 6, borderRadius: 4, overflow: 'hidden', backgroundColor: '#080A0E', marginTop: 11 },
+  downloadLibraryCard: { minHeight: 120, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, padding: 8, borderRadius: 16, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  downloadLibraryArtworkWrap: { width: 112, height: 84, borderRadius: 12, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
+  downloadLibraryArtwork: { width: '100%', height: '100%' },
+  downloadLibraryArtworkFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong },
+  downloadLibraryArtworkPlay: { position: 'absolute', left: 7, bottom: 7, width: 31, height: 31, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.96)' },
+  downloadLibraryInfo: { minWidth: 0, flex: 1, alignItems: 'flex-end' },
+  downloadLibraryTitle: { ...rtlText, color: COLORS.text, fontSize: 11.5, fontWeight: '900', width: '100%' },
+  downloadLibraryEnglish: { width: '100%', color: COLORS.muted, fontSize: 7.8, textAlign: 'right', marginTop: 3 },
+  downloadLibraryMeta: { ...rtlText, color: COLORS.gold, fontSize: 8.3, fontWeight: '800', marginTop: 5, width: '100%' },
+  downloadLibraryEpisodeTitle: { ...rtlText, color: COLORS.muted, fontSize: 7.5, marginTop: 3, width: '100%' },
+  downloadLibraryStatus: { ...rtlText, color: COLORS.gold, fontSize: 8.2, marginTop: 5, width: '100%' },
+  downloadLibraryActions: { gap: 6 },
+  downloadLibraryControl: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.12)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
+  downloadLibraryMenu: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  progressTrack: { width: '100%', height: 5, borderRadius: 4, overflow: 'hidden', backgroundColor: '#080A0E', marginTop: 7 },
   progressFill: { height: '100%', borderRadius: 4, backgroundColor: COLORS.gold },
   playerDisplayButton: { minWidth: 72, height: 38, paddingHorizontal: 8, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
   playerDisplayButtonText: { color: COLORS.text, fontSize: 9, fontWeight: '900' },
@@ -5346,7 +5427,9 @@ const styles = StyleSheet.create({
   personAvatarInitials: { color: COLORS.gold, fontSize: 18, fontWeight: '900' },
   personCardName: { ...rtlText, width: '100%', minHeight: 31, color: COLORS.text, fontSize: 9.5, lineHeight: 15, fontWeight: '900', textAlign: 'center', marginTop: 8 },
   personCardRole: { color: COLORS.gold, fontSize: 7.5, fontWeight: '800', marginTop: 2 },
-  personCardCharacter: { ...rtlText, width: '100%', color: COLORS.muted, fontSize: 7, textAlign: 'center', marginTop: 3 },
+  personCardCharacterRow: { width: '100%', minHeight: 14, marginTop: 3, paddingHorizontal: 2, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 3 },
+  personCardCharacterLabel: { color: COLORS.muted, fontSize: 6.8, fontWeight: '800' },
+  personCardCharacter: { minWidth: 0, flexShrink: 1, color: COLORS.muted, fontSize: 6.8, textAlign: 'left', writingDirection: 'ltr' },
   personProfileScreen: { flex: 1, backgroundColor: COLORS.background },
   personProfileTopBar: { minHeight: 62, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: COLORS.border, backgroundColor: '#080A0E' },
   personProfileTopTitle: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 14, fontWeight: '900', textAlign: 'center' },
@@ -5456,7 +5539,7 @@ const styles = StyleSheet.create({
   vpnLinksHiddenButtonText: { color: '#fff', fontSize: 10.5, fontWeight: '900' },
   storageTotals: { marginTop: 13, padding: 11, borderRadius: 11, alignItems: 'flex-end', gap: 5, backgroundColor: 'rgba(216,180,90,0.06)' },
   storageTotalText: { ...rtlText, color: COLORS.text, fontSize: 8.7, fontWeight: '800' },
-  downloadLibraryBytes: { ...rtlText, color: COLORS.text, fontSize: 8.3, marginTop: 7, width: '100%' },
+  downloadLibraryBytes: { ...rtlText, color: COLORS.text, fontSize: 7.6, marginTop: 5, width: '100%' },
   playerControlsLayer: { ...StyleSheet.absoluteFillObject, zIndex: 12 },
   playerTopGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 78 },
   playerBottomGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 112 },
