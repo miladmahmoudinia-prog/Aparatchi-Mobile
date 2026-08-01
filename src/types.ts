@@ -11,6 +11,8 @@ export type CatalogPerson = {
   character?: string;
   image?: string;
   order?: number;
+  tmdbId?: number;
+  source?: string;
 };
 
 export type MediaLanguage = 'dubbed' | 'subtitled';
@@ -45,6 +47,7 @@ export type DownloadSection = {
   seasonNumber?: number;
   episodeNumber?: number;
   sourceUpdatedAt?: string;
+  tmdbValidationVersion?: number;
 };
 
 export type LatestEpisode = {
@@ -77,7 +80,11 @@ export type CatalogItem = {
   /** عوامل و بازیگران با شناسهٔ پایدار منبع. */
   people?: CatalogPerson[];
   poster: string;
+  /** پوستر جایگزین معتبر، معمولاً از TMDB، برای خطای آدرس اصلی. */
+  posterFallback?: string;
   backdrop: string;
+  /** تصویر پس‌زمینهٔ جایگزین برای خطای آدرس اصلی. */
+  backdropFallback?: string;
   overview: string;
   genres: string[];
   rate?: number;
@@ -97,6 +104,7 @@ export type CatalogItem = {
   airDays?: DayId[];
   airTime?: string;
   nextEpisodeAirDate?: string;
+  nextEpisodeSeasonNumber?: number;
   nextEpisodeNumber?: number;
   isAiring?: boolean;
   updateLabel?: string;
@@ -113,6 +121,7 @@ export type CatalogItem = {
   updatedAt?: string;
   sourceCreatedAt?: string;
   sourceUpdatedAt?: string;
+  tmdbValidationVersion?: number;
 };
 
 export type ScheduleEntry = {
@@ -122,6 +131,7 @@ export type ScheduleEntry = {
   poster: string;
   day: DayId;
   time: string;
+  season?: number;
   episode?: number;
   region: 'iranian' | 'foreign';
   sourceLabel?: string;

@@ -257,6 +257,10 @@ const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
       roleLabel: asString(person.roleLabel ?? person.role_label, role === 'director' ? 'کارگردان' : 'بازیگر'),
       ...(character ? { character } : {}),
       ...(image ? { image } : {}),
+      ...(asNumber(person.tmdbId ?? person.tmdb_id, 0) > 0
+        ? { tmdbId: asNumber(person.tmdbId ?? person.tmdb_id, 0) }
+        : {}),
+      ...(asString(person.source) ? { source: asString(person.source) } : {}),
       order: asNumber(person.order ?? person.castOrder ?? person.cast_order, index),
     } satisfies CatalogPerson];
   }).sort((a, b) => {
@@ -569,8 +573,10 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const type = item.type === 'series' || item.type === 'movie' ? item.type : null;
   const nameFa = asString(item.nameFa ?? item.name_fa ?? item.name);
   const name = asString(item.name ?? item.nameFa ?? item.name_fa, nameFa);
-  const poster = asString(item.poster);
-  const backdrop = asString(item.backdrop, poster);
+  const posterFallback = asString(item.posterFallback ?? item.poster_fallback);
+  const backdropFallback = asString(item.backdropFallback ?? item.backdrop_fallback);
+  const poster = asString(item.poster, posterFallback || backdropFallback);
+  const backdrop = asString(item.backdrop, backdropFallback || poster);
   const countryMetadata = normalizeCountryMetadata(item);
   const iranian = asBoolean(item.ir) || countryMetadata.countryCodes.includes('IR');
   if (iranian && !countryMetadata.countryCodes.includes('IR')) {
@@ -580,7 +586,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     countryMetadata.countryLabels.unshift('ایران');
   }
 
-  if (!id || !type || !nameFa || !poster) return null;
+  if (!id || !type || !nameFa) return null;
 
   const downloads = normalizeDownloads(item.downloads, iranian);
   const episodeSections = downloads.filter((section) => (section.episodeNumber || 0) > 0);
@@ -671,7 +677,9 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     ...(collectionOrder > 0 ? { collectionOrder } : {}),
     ...(people.length ? { people } : {}),
     poster,
+    ...(posterFallback ? { posterFallback } : {}),
     backdrop,
+    ...(backdropFallback ? { backdropFallback } : {}),
     overview: asString(item.overview, 'توضیحی ثبت نشده است.'),
     genres: stringArray(item.genres),
     ...(Number.isFinite(rate) ? { rate } : {}),
@@ -696,6 +704,9 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
           ...(asString(item.nextEpisodeAirDate ?? item.next_episode_air_date)
             ? { nextEpisodeAirDate: asString(item.nextEpisodeAirDate ?? item.next_episode_air_date) }
             : {}),
+          ...(asNumber(item.nextEpisodeSeasonNumber ?? item.next_episode_season_number, 0) > 0
+            ? { nextEpisodeSeasonNumber: asNumber(item.nextEpisodeSeasonNumber ?? item.next_episode_season_number, 0) }
+            : {}),
           ...(asNumber(item.nextEpisodeNumber ?? item.next_episode_number, 0) > 0
             ? { nextEpisodeNumber: asNumber(item.nextEpisodeNumber ?? item.next_episode_number, 0) }
             : {}),
@@ -717,6 +728,9 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     ...(asString(item.updatedAt) ? { updatedAt: asString(item.updatedAt) } : {}),
     ...(asString(item.sourceCreatedAt) ? { sourceCreatedAt: asString(item.sourceCreatedAt) } : {}),
     ...(asString(item.sourceUpdatedAt) ? { sourceUpdatedAt: asString(item.sourceUpdatedAt) } : {}),
+    ...(asNumber(item.tmdbValidationVersion ?? item.tmdb_validation_version, 0) > 0
+      ? { tmdbValidationVersion: asNumber(item.tmdbValidationVersion ?? item.tmdb_validation_version, 0) }
+      : {}),
   };
 };
 
@@ -728,6 +742,7 @@ const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | 
   if (!itemId || !day || !DAY_IDS.includes(day)) return null;
 
   const region = entry.region === 'foreign' ? 'foreign' : 'iranian';
+  const season = asNumber(entry.season, 0);
   const episode = asNumber(entry.episode, 0);
 
   return {
@@ -736,7 +751,8 @@ const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | 
     nameFa: asString(entry.nameFa ?? entry.name_fa),
     poster: asString(entry.poster),
     day,
-    time: asString(entry.time, '—'),
+    time: asString(entry.time, 'زمان انتشار اعلام نشده'),
+    ...(season > 0 ? { season } : {}),
     ...(episode > 0 ? { episode } : {}),
     region,
     ...(asString(entry.sourceLabel) ? { sourceLabel: asString(entry.sourceLabel) } : {}),

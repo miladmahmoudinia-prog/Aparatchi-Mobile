@@ -176,17 +176,31 @@ const adaptiveTitleStyle = (value: string, context: 'hero' | 'detail') => {
 
 const adaptiveTitleLines = (value: string) => titleVisualScore(value) > 46 ? 3 : 2;
 
+function useDebouncedText(value: string, delay = 240) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [delay, value]);
+  return debounced;
+}
+
 
 const DAY_INDEX: DayId[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const SCHEDULE_DAY_OVERRIDES: Array<{ pattern: RegExp; day: DayId }> = [
   { pattern: /(^|\s)بدنام($|\s)/i, day: 'friday' },
 ];
 
+const localDayId = (date = new Date()): DayId =>
+  TODAY_BY_JS_DAY[date.getDay()] || 'saturday';
+
 const dayFromDateValue = (value?: string): DayId | null => {
   if (!value) return null;
-  const timestamp = Date.parse(value);
+  const raw = String(value).trim();
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+  const timestamp = Date.parse(dateOnly ? `${raw}T12:00:00` : raw);
   if (!Number.isFinite(timestamp)) return null;
-  return DAY_INDEX[new Date(timestamp).getDay()] || null;
+  return localDayId(new Date(timestamp));
 };
 
 const inferredScheduleFromCatalog = (catalog: CatalogItem[]): ScheduleEntry[] => {
@@ -214,7 +228,8 @@ const inferredScheduleFromCatalog = (catalog: CatalogItem[]): ScheduleEntry[] =>
       nameFa: item.nameFa,
       poster: item.poster,
       day,
-      time: item.airTime || 'زمان نامشخص',
+      time: item.airTime || 'زمان انتشار اعلام نشده',
+      ...(item.nextEpisodeSeasonNumber ? { season: item.nextEpisodeSeasonNumber } : {}),
       ...(item.nextEpisodeNumber ? { episode: item.nextEpisodeNumber } : {}),
       region: isIranianItem(item) ? 'iranian' : 'foreign',
       sourceLabel: item.nextEpisodeAirDate ? 'برنامه رسمی پخش' : 'بر اساس آخرین به‌روزرسانی',
@@ -658,14 +673,15 @@ const isIranianItem = (item: CatalogItem) =>
     (item.countryNames || []).some((value) => /iran/i.test(normalizeComparableText(value))),
   );
 
+const hasSpecificCountry = (item: CatalogItem, code: string, originalLanguage: string) => {
+  const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
+  // وقتی کشور معتبر ثبت شده، زبان یا برچسب قدیمی نباید اثر را وارد کشور دیگری کند.
+  if (countryCodes.length) return countryCodes.includes(code);
+  return String(item.originalLanguage || '').toLowerCase() === originalLanguage;
+};
+
 const isKoreanItem = (item: CatalogItem) =>
-  Boolean(
-    item.countryCodes?.includes('KR') ||
-    item.originalLanguage === 'ko' ||
-    hasCategory(item, item.type === 'series' ? 'korean-series' : 'korean-movies') ||
-    (item.countryLabels || []).some((value) => /کره/.test(normalizeComparableText(value))) ||
-    (item.countryNames || []).some((value) => /korea/i.test(normalizeComparableText(value))),
-  );
+  hasSpecificCountry(item, 'KR', 'ko');
 
 const looksLikeAnimeTitle = (item: CatalogItem) => {
   const text = normalizeComparableText([
@@ -818,8 +834,8 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isDocumentaryItem(item);
     case 'korean-movies': return item.type === 'movie' && isKoreanItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
     case 'korean-series': return item.type === 'series' && isKoreanItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isDocumentaryItem(item);
-    case 'indian-movies': return item.type === 'movie' && item.countryCodes?.includes('IN') && !isAnimatedItem(item);
-    case 'japanese-movies': return item.type === 'movie' && item.countryCodes?.includes('JP') && !isAnimatedItem(item);
+    case 'indian-movies': return item.type === 'movie' && hasSpecificCountry(item, 'IN', 'hi') && !isAnimatedItem(item);
+    case 'japanese-movies': return item.type === 'movie' && hasSpecificCountry(item, 'JP', 'ja') && !isAnimatedItem(item);
     case 'anime-movies': return item.type === 'movie' && isAnimeItem(item);
     case 'anime-series': return item.type === 'series' && isAnimeItem(item);
     case 'animation-movies': return item.type === 'movie' && isAnimationItem(item);
@@ -918,6 +934,76 @@ function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) 
   );
 }
 
+function CatalogArtwork({
+  primary,
+  fallback,
+  localFallback,
+  style,
+  contentFit = 'cover',
+  transition = 80,
+}: {
+  primary?: string;
+  fallback?: string;
+  localFallback?: any;
+  style: any;
+  contentFit?: 'cover' | 'contain';
+  transition?: number;
+}) {
+  const primaryUrl = isSafeHttpUrl(primary) && !isPlaceholderUrl(primary) ? String(primary) : '';
+  const fallbackUrl = isSafeHttpUrl(fallback) && !isPlaceholderUrl(fallback) && fallback !== primary
+    ? String(fallback)
+    : '';
+  const [stage, setStage] = useState(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
+
+  useEffect(() => {
+    setStage(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
+  }, [primaryUrl, fallbackUrl]);
+
+  const source = stage === 0
+    ? { uri: primaryUrl }
+    : stage === 1
+      ? { uri: fallbackUrl }
+      : localFallback;
+
+  if (!source) {
+    return (
+      <View style={[style, styles.catalogArtworkFallback]}>
+        <Ionicons name="film-outline" color="rgba(216,180,90,0.58)" size={28} />
+      </View>
+    );
+  }
+
+  return (
+    <Image
+      source={source}
+      style={style}
+      contentFit={contentFit}
+      cachePolicy="memory-disk"
+      transition={transition}
+      onError={() => {
+        setStage((current) => {
+          if (current === 0 && fallbackUrl) return 1;
+          return 2;
+        });
+      }}
+    />
+  );
+}
+
+const localArtworkForItem = (item: CatalogItem) => {
+  if (isAnimeItem(item)) {
+    return item.type === 'series'
+      ? CATEGORY_FALLBACK_ART['anime-series']
+      : CATEGORY_FALLBACK_ART['anime-movies'];
+  }
+  if (isAnimationItem(item)) {
+    return item.type === 'series'
+      ? CATEGORY_FALLBACK_ART['animation-series']
+      : CATEGORY_FALLBACK_ART['animation-movies'];
+  }
+  return item.type === 'series' ? CATEGORY_FALLBACK_ART.series : CATEGORY_FALLBACK_ART.movie;
+};
+
 function Logo() {
   return (
     <View style={styles.logoWrap}>
@@ -992,13 +1078,13 @@ function HeroSlide({
 }) {
   return (
     <View style={styles.hero}>
-      <Image
+      <CatalogArtwork
         key={`${item.type}:${item.id}:${item.backdrop || item.poster}`}
-        recyclingKey={`${item.type}:${item.id}`}
-        source={{ uri: item.backdrop || item.poster }}
+        primary={item.backdrop || item.poster}
+        fallback={item.backdropFallback || item.posterFallback || item.poster}
+        localFallback={localArtworkForItem(item)}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
-        cachePolicy="memory-disk"
         transition={0}
       />
       <LinearGradient
@@ -1144,29 +1230,40 @@ function HeroSlider({
 function ScheduleCard({
   entry,
   onOpen,
+  compact = false,
 }: {
   entry: ScheduleEntry;
   onOpen: () => void;
+  compact?: boolean;
 }) {
+  const episodeLabel = entry.episode
+    ? [
+        entry.season ? `فصل ${toPersianDigits(entry.season)}` : '',
+        `قسمت ${toPersianDigits(entry.episode)}`,
+      ].filter(Boolean).join(' • ')
+    : 'قسمت بعدی';
   return (
-    <Pressable onPress={onOpen} style={styles.scheduleCard}>
-      <Image source={{ uri: entry.poster }} style={styles.schedulePoster} contentFit="cover" transition={180} />
+    <Pressable onPress={onOpen} style={[styles.scheduleCard, compact && styles.scheduleCardCompact]}>
+      <CatalogArtwork
+        primary={entry.poster}
+        localFallback={CATEGORY_FALLBACK_ART.series}
+        style={[styles.schedulePoster, compact && styles.schedulePosterCompact]}
+        contentFit="cover"
+      />
       <View style={styles.scheduleCardBody}>
         <View style={styles.scheduleSourceRow}>
           <Text style={styles.scheduleRegion}>{entry.region === 'iranian' ? 'ایرانی' : 'خارجی'}</Text>
           <View style={styles.liveDot} />
         </View>
-        <Text numberOfLines={1} style={styles.scheduleName}>
+        <Text numberOfLines={compact ? 2 : 1} style={[styles.scheduleName, compact && styles.scheduleNameCompact]}>
           {entry.nameFa}
         </Text>
-        <Text style={styles.scheduleEpisode}>
-          {entry.episode ? `قسمت ${toPersianDigits(entry.episode)}` : 'قسمت جدید'}
+        <Text numberOfLines={1} style={styles.scheduleEpisode}>{episodeLabel}</Text>
+        <Text numberOfLines={1} style={[styles.scheduleTime, compact && styles.scheduleTimeCompact]}>
+          {entry.time || 'زمان انتشار اعلام نشده'}
         </Text>
       </View>
-      <View style={styles.scheduleTimeWrap}>
-        <Text style={styles.scheduleTime}>{entry.time}</Text>
-        <Ionicons name="chevron-back" color={COLORS.muted} size={15} />
-      </View>
+      {!compact ? <Ionicons name="chevron-back" color={COLORS.muted} size={15} /> : null}
     </Pressable>
   );
 }
@@ -1182,10 +1279,11 @@ function WeeklySchedule({
   weeklySchedule: ScheduleEntry[];
   onOpenItem: (item: CatalogItem) => void;
 }) {
-  const [selectedDay, setSelectedDay] = useState<DayId>(TODAY_BY_JS_DAY[new Date().getDay()]);
+  const [selectedDay, setSelectedDay] = useState<DayId>(() => localDayId());
   const [filter, setFilter] = useState<ScheduleFilter>('all');
   const [foreignEntries, setForeignEntries] = useState<ScheduleEntry[]>([]);
   const [loadingForeign, setLoadingForeign] = useState(true);
+  const { width: scheduleViewportWidth } = useWindowDimensions();
 
   useEffect(() => {
     let mounted = true;
@@ -1234,7 +1332,10 @@ function WeeklySchedule({
             itemId: String(entry.itemId || entry.id),
           };
 
-      const key = `${normalized.itemId}:${normalized.day}:${normalized.region}`;
+      // Later, more authoritative sources replace fallback entries even when
+      // the fallback guessed a different weekday. Keeping the day in the key
+      // caused one series to appear on both Sunday and its real broadcast day.
+      const key = `${normalized.itemId}:${normalized.region}`;
       merged.set(key, normalized);
     };
 
@@ -1251,16 +1352,17 @@ function WeeklySchedule({
     });
   }, [catalogById, catalogByName, foreignEntries, inferredEntries, iranianSchedule, weeklySchedule]);
 
-  const autoSelectedDayRef = useRef(false);
   useEffect(() => {
-    if (autoSelectedDayRef.current || !allEntries.length) return;
-    autoSelectedDayRef.current = true;
-    if (allEntries.some((entry) => entry.day === selectedDay)) return;
-    const todayIndex = DAYS.findIndex((day) => day.id === selectedDay);
-    const orderedDays = [...DAYS.slice(Math.max(0, todayIndex)), ...DAYS.slice(0, Math.max(0, todayIndex))];
-    const firstPopulated = orderedDays.find((day) => allEntries.some((entry) => entry.day === day.id));
-    if (firstPopulated) setSelectedDay(firstPopulated.id);
-  }, [allEntries, selectedDay]);
+    const syncToday = () => setSelectedDay((current) => current === localDayId() ? current : localDayId());
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') syncToday();
+    });
+    const timer = setInterval(syncToday, 60_000);
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, []);
 
   const dayEntries = allEntries.filter(
     (entry) =>
@@ -1324,13 +1426,15 @@ function WeeklySchedule({
         </View>
       ) : null}
 
-      <View style={styles.scheduleList}>
+      <View style={[styles.scheduleList, dayEntries.length > 1 && styles.scheduleGrid]}>
         {dayEntries.map((entry) => {
           const item = catalog.find((candidate) => String(candidate.id) === String(entry.itemId)) || catalogByName.get(normalizeComparableText(entry.nameFa));
+          const compact = dayEntries.length > 1 && scheduleViewportWidth < 760;
           return (
             <ScheduleCard
               key={`${entry.id}:${entry.day}`}
               entry={entry}
+              compact={compact}
               onOpen={() => item ? onOpenItem(item) : Alert.alert('برنامه هفتگی', 'صفحه این سریال هنوز در کاتالوگ پیدا نشده است.')}
             />
           );
@@ -1362,7 +1466,14 @@ function PosterCard({
   return (
     <Pressable onPress={onOpen} style={[styles.posterCard, { width }]}>
       <View style={[styles.posterImageWrap, { width, height: Math.round(width * 1.42) }]}>
-        <Image source={{ uri: item.poster }} recyclingKey={`${item.type}:${item.id}`} style={styles.posterImage} contentFit="cover" cachePolicy="memory-disk" transition={80} />
+        <CatalogArtwork
+          primary={item.poster}
+          fallback={item.posterFallback || item.backdropFallback || item.backdrop}
+          localFallback={localArtworkForItem(item)}
+          style={styles.posterImage}
+          contentFit="cover"
+          transition={70}
+        />
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
         {languageBadge ? (
           <View style={styles.posterAccess}>
@@ -1683,6 +1794,18 @@ function HomeScreen({
     { filter: 'documentaries', title: 'مستندها', items: catalogItemsForFilter(catalog, 'documentaries') },
   ], [catalog, newest, updated]);
 
+  useEffect(() => {
+    const urls = [...newest.slice(0, 14), ...updated.slice(0, 10)]
+      .flatMap((item) => [
+        item.poster,
+        item.posterFallback,
+        item.backdrop,
+        item.backdropFallback,
+      ])
+      .filter((url): url is string => Boolean(isSafeHttpUrl(url) && !isPlaceholderUrl(url)));
+    if (urls.length) void Image.prefetch([...new Set(urls)]).catch(() => undefined);
+  }, [newest, updated]);
+
   if (!newest.length) return (
     <View style={[styles.screen, styles.contentUnavailable]}>
       <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={42} />
@@ -1692,25 +1815,27 @@ function HomeScreen({
   );
 
   return (
-    <ScrollView
-      ref={scrollRef}
-      style={styles.screen}
-      contentContainerStyle={styles.homeContent}
-      showsVerticalScrollIndicator={false}
-      scrollEventThrottle={80}
-      onScroll={(event) => onScrollOffset(event.nativeEvent.contentOffset.y)}
-    >
+    <View style={styles.screen}>
       <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
-      <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} />
-      <ContinueWatchingSection records={watchProgress} catalog={catalog} onResume={onResume} onRemove={onRemoveProgress} />
-      <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} weeklySchedule={weeklySchedule} onOpenItem={onOpen} />
-      {rows.map((row) => row.items.length ? (
-        <View key={row.filter} style={styles.catalogSection}>
-          <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
-          <HorizontalCatalog items={row.items.slice(0, 12)} onOpen={onOpen} />
-        </View>
-      ) : null)}
-    </ScrollView>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.homeScroll}
+        contentContainerStyle={styles.homeContent}
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={80}
+        onScroll={(event) => onScrollOffset(event.nativeEvent.contentOffset.y)}
+      >
+        <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} />
+        <ContinueWatchingSection records={watchProgress} catalog={catalog} onResume={onResume} onRemove={onRemoveProgress} />
+        <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} weeklySchedule={weeklySchedule} onOpenItem={onOpen} />
+        {rows.map((row) => row.items.length ? (
+          <View key={row.filter} style={styles.catalogSection}>
+            <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
+            <HorizontalCatalog items={row.items.slice(0, 12)} onOpen={onOpen} />
+          </View>
+        ) : null)}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -1751,6 +1876,27 @@ const CATEGORY_FALLBACK_ART: Record<string, number> = {
   programs: require('./assets/category-art/programs.jpg'),
 };
 
+const stableArtworkHash = (value: string) => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+};
+
+const categoryPreviewScore = (item: CatalogItem) => {
+  const remoteBackdrop = isSafeHttpUrl(item.backdrop) && !isPlaceholderUrl(item.backdrop);
+  const remotePoster = isSafeHttpUrl(item.poster) && !isPlaceholderUrl(item.poster);
+  const remoteFallback = isSafeHttpUrl(item.backdropFallback) || isSafeHttpUrl(item.posterFallback);
+  return (
+    (remoteBackdrop ? 180 : 0) +
+    (remotePoster ? 90 : 0) +
+    (remoteFallback ? 25 : 0) +
+    Math.max(0, Math.min(10, Number(item.rate || 0))) * 9 +
+    (stableArtworkHash(`${item.type}:${item.id}`) % 1000) / 1000
+  );
+};
+
 function CategoriesScreen({
   catalog,
   onBrowse,
@@ -1761,7 +1907,7 @@ function CategoriesScreen({
   onOpen: (item: CatalogItem) => void;
 }) {
   const [query, setQuery] = useState('');
-  const deferredQuery = useDeferredValue(normalizeComparableText(query));
+  const deferredQuery = normalizeComparableText(useDebouncedText(query, 240));
   const { width: screenWidth } = useWindowDimensions();
   const cards: CategoryCardConfig[] = [
     { filter: 'movie', title: 'همه فیلم‌ها', subtitle: 'سینمایی ایرانی و خارجی', icon: 'film-outline' },
@@ -1799,7 +1945,7 @@ function CategoriesScreen({
         ...(item.people || []).flatMap((person) => [person.nameFa, person.name || '']),
       ].join(' ')).includes(deferredQuery)),
       'latest',
-    ).slice(0, 60);
+    ).slice(0, 40);
   }, [catalog, deferredQuery]);
 
   const categoryPreviews = useMemo(() => {
@@ -1807,8 +1953,9 @@ function CategoriesScreen({
     const used = new Set<string>();
     for (const card of cards) {
       const candidates = catalogItemsForFilter(catalog, card.filter)
-        .filter((item) => Boolean(item.backdrop || item.poster));
-      const preview = candidates.find((item) => !used.has(item.id));
+        .filter((item) => Boolean(item.backdrop || item.poster || item.backdropFallback || item.posterFallback))
+        .sort((a, b) => categoryPreviewScore(b) - categoryPreviewScore(a));
+      const preview = candidates.find((item) => !used.has(item.id)) || candidates[0];
       if (preview) {
         map.set(card.filter, preview);
         used.add(preview.id);
@@ -1860,20 +2007,14 @@ function CategoriesScreen({
                   onPress={() => onBrowse(card.filter)}
                   style={[styles.categoryCard, { width: categoryWidth }]}
                 >
-                  {preview ? (
-                    <Image
-                      source={{ uri: preview.backdrop || preview.poster }}
+                  {preview || CATEGORY_FALLBACK_ART[card.filter] ? (
+                    <CatalogArtwork
+                      primary={preview?.backdrop || preview?.poster}
+                      fallback={preview?.backdropFallback || preview?.posterFallback || preview?.poster}
+                      localFallback={CATEGORY_FALLBACK_ART[card.filter]}
                       style={StyleSheet.absoluteFill}
                       contentFit="cover"
-                      cachePolicy="memory-disk"
-                      transition={120}
-                    />
-                  ) : CATEGORY_FALLBACK_ART[card.filter] ? (
-                    <Image
-                      source={CATEGORY_FALLBACK_ART[card.filter]}
-                      style={StyleSheet.absoluteFill}
-                      contentFit="cover"
-                      cachePolicy="memory-disk"
+                      transition={90}
                     />
                   ) : (
                     <LinearGradient
@@ -2019,16 +2160,16 @@ function AdvancedSearchScreen({
   const initialGenre = genreFromFilter(initialFilter);
   const initialYear = yearFromFilter(initialFilter);
   const [query, setQuery] = useState('');
-  const deferredQuery = useDeferredValue(query);
+  const deferredQuery = useDebouncedText(query, 260);
   const [filter, setFilter] = useState<SearchFilter>((initialCountry || initialGenre || initialYear) ? 'all' : initialFilter);
   const [advancedOpen, setAdvancedOpen] = useState(Boolean(initialCountry || initialGenre || initialYear));
   const [selectedCountry, setSelectedCountry] = useState(initialCountry);
   const [selectedGenre, setSelectedGenre] = useState(initialGenre);
   const [selectedYear, setSelectedYear] = useState<number | null>(initialYear || null);
   const [personQuery, setPersonQuery] = useState('');
+  const deferredPersonQuery = useDebouncedText(personQuery, 220);
   const [selectedPersonId, setSelectedPersonId] = useState('');
   const [personRole, setPersonRole] = useState<PersonRoleFilter>('all');
-  const searchReady = true;
   const { width: screenWidth } = useWindowDimensions();
   const searchableCatalog = useMemo(() => catalog.filter(itemHasUsableContent), [catalog]);
 
@@ -2047,8 +2188,18 @@ function AdvancedSearchScreen({
     setQuery('');
   }, [initialFilter]);
 
-  const normalizedQuery = deferredQuery.trim().toLowerCase();
-  const normalizedPersonQuery = personQuery.trim().toLowerCase();
+  const normalizedQuery = normalizeComparableText(deferredQuery);
+  const normalizedPersonQuery = normalizeComparableText(deferredPersonQuery);
+  const searchReady = Boolean(
+    normalizedQuery ||
+    filter !== 'all' ||
+    selectedCountry ||
+    selectedGenre ||
+    selectedYear ||
+    normalizedPersonQuery ||
+    selectedPersonId ||
+    personRole !== 'all'
+  );
 
   const availableCountryCodes = useMemo(() => advancedOpen ? [...new Set(
     searchableCatalog.flatMap((item) => item.countryCodes || []),
@@ -2117,17 +2268,15 @@ function AdvancedSearchScreen({
     if (!searchReady) return [];
     return sortForCatalogFilter(
     searchableCatalog.filter((item) => {
-      const matchesQuery =
-        !normalizedQuery ||
-        item.nameFa.toLowerCase().includes(normalizedQuery) ||
-        item.name.toLowerCase().includes(normalizedQuery) ||
-        item.genres.some((genre) => genre.toLowerCase().includes(normalizedQuery)) ||
-        (item.countryLabels || []).some((country) => country.toLowerCase().includes(normalizedQuery)) ||
-        (item.countryNames || []).some((country) => country.toLowerCase().includes(normalizedQuery)) ||
-        (item.people || []).some((person) =>
-          person.nameFa.toLowerCase().includes(normalizedQuery) ||
-          (person.name || '').toLowerCase().includes(normalizedQuery),
-        );
+      const searchableText = normalizeComparableText([
+        item.nameFa,
+        item.name,
+        ...(item.genres || []),
+        ...(item.countryLabels || []),
+        ...(item.countryNames || []),
+        ...(item.people || []).flatMap((person) => [person.nameFa, person.name || '']),
+      ].join(' '));
+      const matchesQuery = !normalizedQuery || searchableText.includes(normalizedQuery);
 
       const matchesCountry =
         !selectedCountry || item.countryCodes?.includes(selectedCountry);
@@ -2143,8 +2292,7 @@ function AdvancedSearchScreen({
       const matchesPerson = selectedPersonId
         ? eligiblePeople.some((person) => person.id === selectedPersonId)
         : !normalizedPersonQuery || eligiblePeople.some((person) =>
-          person.nameFa.toLowerCase().includes(normalizedPersonQuery) ||
-          (person.name || '').toLowerCase().includes(normalizedPersonQuery),
+          normalizeComparableText(`${person.nameFa} ${person.name || ''}`).includes(normalizedPersonQuery),
         );
 
       return (
@@ -2158,7 +2306,7 @@ function AdvancedSearchScreen({
       );
     }),
     filter,
-  );
+  ).slice(0, 80);
   }, [
     catalog,
     searchableCatalog,
@@ -2210,7 +2358,7 @@ function AdvancedSearchScreen({
   );
   const screenTitle = selectedCountry
     ? `آثار ${countryLabel(selectedCountry, catalog)}`
-    : selectedGenre || filterTitle(filter);
+    : selectedGenre || (filter === 'all' ? 'جست‌وجو' : filterTitle(filter));
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
@@ -2438,8 +2586,16 @@ function AdvancedSearchScreen({
           ) : null}
         </View>
       ) : null}
-      <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text>
-      {results.length ? (
+      {searchReady ? <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text> : null}
+      {!searchReady ? (
+        <View style={styles.searchEmptyState}>
+          <View style={styles.largeEmptyIcon}>
+            <Ionicons name="search-outline" color={COLORS.gold} size={30} />
+          </View>
+          <Text style={styles.largeEmptyTitle}>دنبال چه چیزی می‌گردید؟</Text>
+          <Text style={styles.largeEmptyText}>نام فیلم، سریال یا بازیگر را بنویسید تا نتایج نمایش داده شوند.</Text>
+        </View>
+      ) : results.length ? (
         <View style={[styles.searchGrid, { columnGap: gridGap }]}>
           {results.map((item) => (
             <PosterCard
@@ -2456,9 +2612,7 @@ function AdvancedSearchScreen({
             <Ionicons name="search-outline" color={COLORS.gold} size={30} />
           </View>
           <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
-          <Text style={styles.largeEmptyText}>
-            عبارت جست‌وجو یا یکی از فیلترها را تغییر دهید.
-          </Text>
+          <Text style={styles.largeEmptyText}>عبارت جست‌وجو یا یکی از فیلترها را تغییر دهید.</Text>
         </View>
       )}
     </ScrollView>
@@ -3385,6 +3539,8 @@ function VideoPlayerModal({
   const insets = useSafeAreaInsets();
   const landscape = viewportWidth > viewportHeight;
   const portraitFrameHeight = Math.round(viewportWidth * 9 / 16);
+  const landscapeLeftInset = landscape ? Math.max(58, insets.left + 12) : 8;
+  const landscapeRightInset = landscape ? Math.max(58, insets.right + 12) : 8;
   const latestTimeRef = useRef(Math.max(0, Number(request.resumeAt || 0)));
   const latestDurationRef = useRef(0);
   const resumeAppliedRef = useRef(false);
@@ -3592,10 +3748,9 @@ function VideoPlayerModal({
 
             {!firstFrameReady || switchingQuality ? (
               <View style={styles.playerPreparingOverlay} pointerEvents="none">
-                <ActivityIndicator color={COLORS.gold} size="small" />
-                <Text style={styles.playerPreparingText}>
-                  {switchingQuality ? 'در حال تغییر کیفیت…' : 'در حال آماده‌سازی ویدئو…'}
-                </Text>
+                <View style={styles.playerPreparingSpinner}>
+                  <ActivityIndicator color={COLORS.gold} size="small" />
+                </View>
               </View>
             ) : null}
 
@@ -3604,24 +3759,30 @@ function VideoPlayerModal({
                 pointerEvents="box-none"
                 style={[
                   styles.nativePlayerTopBar,
-                  { top: landscape ? Math.max(8, insets.top + 4) : 8 },
+                  {
+                    top: landscape ? Math.max(8, insets.top + 4) : 8,
+                    left: landscapeLeftInset,
+                    right: landscapeRightInset,
+                  },
                 ]}
               >
                 <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
                   <Ionicons name="close" color="#fff" size={21} />
                 </Pressable>
                 <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
-                <Pressable
-                  onPress={() => {
-                    clearControlsTimer();
-                    setControlsVisible(true);
-                    setSettingsOpen(true);
-                  }}
-                  style={styles.nativePlayerTopButton}
-                  accessibilityLabel="تنظیمات پخش"
-                >
-                  <Ionicons name="settings-outline" color="#fff" size={20} />
-                </Pressable>
+                {qualitySources.length > 1 ? (
+                  <Pressable
+                    onPress={() => {
+                      clearControlsTimer();
+                      setControlsVisible(true);
+                      setSettingsOpen(true);
+                    }}
+                    style={styles.nativePlayerTopButton}
+                    accessibilityLabel="تنظیمات پخش"
+                  >
+                    <Ionicons name="settings-outline" color="#fff" size={20} />
+                  </Pressable>
+                ) : null}
                 <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
                   <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
                 </Pressable>
@@ -5033,7 +5194,7 @@ function AppContent() {
         edges={['right', 'bottom', 'left']}
       >
         <BottomNavigation
-          active={activeTab === 'search' ? 'categories' : activeTab}
+          active={activeTab}
           onChange={(tab) => {
             setSelectedItem(null);
             setSelectedPerson(null);
@@ -5142,6 +5303,7 @@ const styles = StyleSheet.create({
   contentUnavailable: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 25 },
   retryButton: { marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12, backgroundColor: COLORS.red },
   retryButtonText: { color: '#fff', fontSize: 11, fontWeight: '900' },
+  homeScroll: { flex: 1 },
   homeContent: { paddingBottom: 34 },
   continueSection: { marginTop: 28 },
   continueList: { flexDirection: 'row-reverse', gap: 12, paddingHorizontal: 18, paddingBottom: 3 },
@@ -5230,16 +5392,21 @@ const styles = StyleSheet.create({
   scheduleLoading: { minHeight: 48, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 9 },
   scheduleLoadingText: { ...rtlText, color: COLORS.muted, fontSize: 10 },
   scheduleList: { gap: 7 },
-  scheduleCard: { minHeight: 72, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, padding: 7, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  scheduleGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', alignItems: 'stretch', justifyContent: 'space-between' },
+  scheduleCard: { minHeight: 72, flexDirection: 'row-reverse', alignItems: 'center', gap: 9, padding: 7, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  scheduleCardCompact: { width: '49%', minHeight: 108, alignItems: 'flex-start', padding: 7, gap: 7 },
   schedulePoster: { width: 48, height: 58, borderRadius: 8, backgroundColor: COLORS.surfaceStrong },
+  schedulePosterCompact: { width: 42, height: 54, borderRadius: 8 },
   scheduleCardBody: { flex: 1, alignItems: 'flex-end' },
   scheduleSourceRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 5 },
   scheduleRegion: { color: COLORS.blue, fontSize: 8, fontWeight: '800' },
   liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: COLORS.red },
   scheduleName: { ...rtlText, color: COLORS.text, fontSize: 13, fontWeight: '900', marginTop: 5 },
+  scheduleNameCompact: { fontSize: 10.5, lineHeight: 16, marginTop: 3 },
   scheduleEpisode: { ...rtlText, color: COLORS.muted, fontSize: 9, marginTop: 3 },
   scheduleTimeWrap: { alignItems: 'center', gap: 5 },
-  scheduleTime: { color: COLORS.gold, fontSize: 12, fontWeight: '900' },
+  scheduleTime: { ...rtlText, color: COLORS.gold, fontSize: 11, fontWeight: '900', marginTop: 4 },
+  scheduleTimeCompact: { fontSize: 8, lineHeight: 13 },
   scheduleEmpty: { minHeight: 135, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 },
   scheduleEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '800', marginTop: 8 },
   scheduleEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 16, marginTop: 5, textAlign: 'center' },
@@ -5271,6 +5438,7 @@ const styles = StyleSheet.create({
   posterCard: { width: 137, alignItems: 'flex-end' },
   posterImageWrap: { width: 137, height: 194, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', backgroundColor: COLORS.surface },
   posterImage: { width: '100%', height: '100%' },
+  catalogArtworkFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#141820' },
   posterGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 65 },
   posterAccess: { position: 'absolute', top: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.9)' },
   posterAccessText: { color: '#fff', fontSize: 8, fontWeight: '900' },
@@ -5529,7 +5697,8 @@ const styles = StyleSheet.create({
   mediaModal: { flex: 1, backgroundColor: '#000' },
   detailCircleButtonPlaceholder: { width: 46, height: 46 },
   videoViewPreparing: { opacity: 0 },
-  playerPreparingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+  playerPreparingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  playerPreparingSpinner: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   playerPreparingText: { ...rtlText, color: '#fff', fontSize: 9.5, fontWeight: '800', marginTop: 9 },
   nativePlayerTopBar: { position: 'absolute', zIndex: 30, left: 8, right: 8, minHeight: 42, paddingHorizontal: 2, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(0,0,0,0.18)', borderRadius: 14 },
   nativePlayerTopButton: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.78)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
@@ -5641,15 +5810,15 @@ const styles = StyleSheet.create({
   playerControlIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   playerControlSpacer: { flex: 1 },
   playerTimeSeparator: { color: 'rgba(255,255,255,0.48)', fontSize: 9 },
-  playerSettingsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.58)' },
-  playerSettingsCard: { width: '86%', maxWidth: 290, padding: 10, borderRadius: 14, backgroundColor: 'rgba(16,19,25,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
-  playerSettingsCardLandscape: { maxWidth: 330, width: '72%' },
+  playerSettingsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.42)' },
+  playerSettingsCard: { width: 228, maxWidth: '82%', maxHeight: '84%', padding: 8, borderRadius: 13, backgroundColor: 'rgba(16,19,25,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  playerSettingsCardLandscape: { width: 252, maxWidth: '46%', maxHeight: '78%' },
   playerSettingsHeader: { minHeight: 30, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   playerSettingsTitle: { ...rtlText, color: '#fff', fontSize: 12, fontWeight: '900' },
   playerSettingsClose: { width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
   playerSettingsLabel: { ...rtlText, color: COLORS.muted, fontSize: 8.5, fontWeight: '800', marginTop: 9, marginBottom: 6 },
-  playerSettingsOptions: { marginTop: 8, flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 6 },
-  playerSettingChip: { minHeight: 32, minWidth: 58, paddingHorizontal: 10, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  playerSettingsOptions: { marginTop: 7, flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 5 },
+  playerSettingChip: { minHeight: 29, minWidth: 52, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   playerSettingChipActive: { backgroundColor: 'rgba(216,180,90,0.14)', borderColor: 'rgba(216,180,90,0.72)' },
   playerSettingChipText: { color: '#D2D5DA', fontSize: 9.5, fontWeight: '800' },
   playerSettingChipTextActive: { color: COLORS.gold },
