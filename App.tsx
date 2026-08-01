@@ -297,6 +297,7 @@ const itemLanguages = (item: CatalogItem): MediaLanguage[] =>
 
 const itemLanguageBadge = (item: CatalogItem) => {
   if (itemHasOperatorAccess(item)) return 'ویژه همراه';
+  if (isIranianItem(item)) return '';
   const languages = itemLanguages(item);
   if (languages.includes('dubbed') && languages.includes('subtitled')) {
     return 'دوبله + زیرنویس';
@@ -652,8 +653,18 @@ const isIranianItem = (item: CatalogItem) =>
   Boolean(
     item.ir ||
     item.countryCodes?.includes('IR') ||
+    item.originalLanguage === 'fa' ||
     (item.countryLabels || []).some((value) => normalizeComparableText(value) === 'ایران') ||
-    (item.countryNames || []).some((value) => normalizeComparableText(value) === 'iran'),
+    (item.countryNames || []).some((value) => /iran/i.test(normalizeComparableText(value))),
+  );
+
+const isKoreanItem = (item: CatalogItem) =>
+  Boolean(
+    item.countryCodes?.includes('KR') ||
+    item.originalLanguage === 'ko' ||
+    hasCategory(item, item.type === 'series' ? 'korean-series' : 'korean-movies') ||
+    (item.countryLabels || []).some((value) => /کره/.test(normalizeComparableText(value))) ||
+    (item.countryNames || []).some((value) => /korea/i.test(normalizeComparableText(value))),
   );
 
 const looksLikeAnimeTitle = (item: CatalogItem) => {
@@ -687,6 +698,8 @@ const isAnimeItem = (item: CatalogItem) => {
     hasCategory(item, 'anime-series') ||
     item.countryCodes?.includes('JP') ||
     item.originalLanguage === 'ja' ||
+    (item.countryLabels || []).some((value) => /ژاپن/.test(normalizeComparableText(value))) ||
+    (item.countryNames || []).some((value) => /japan/i.test(normalizeComparableText(value))) ||
     looksLikeAnimeTitle(item)
   );
 };
@@ -703,6 +716,9 @@ const isAnimatedItem = (item: CatalogItem) => Boolean(
 const isAnimationItem = (item: CatalogItem) => isAnimatedItem(item) && !isAnimeItem(item);
 
 const mediaKindLabel = (item: CatalogItem) => {
+  if (isDocumentaryItem(item)) {
+    return item.type === 'series' ? 'مستند سریالی' : 'مستند';
+  }
   if (isAnimeItem(item)) {
     return item.type === 'movie' ? 'انیمه سینمایی' : 'انیمه سریالی';
   }
@@ -796,12 +812,12 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'subtitled':
       return !isIranianItem(item) && itemLanguages(item).includes('subtitled');
     case 'updated': return Boolean(meaningfulUpdateLabel(item));
-    case 'iranian-movies': return item.type === 'movie' && isIranianItem(item) && !isAnimatedItem(item);
-    case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isAnimatedItem(item);
-    case 'iranian-series': return item.type === 'series' && isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item);
-    case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item);
-    case 'korean-movies': return item.type === 'movie' && item.countryCodes?.includes('KR') && !isAnimatedItem(item);
-    case 'korean-series': return item.type === 'series' && item.countryCodes?.includes('KR') && !isAnimatedItem(item) && !isProgramItem(item);
+    case 'iranian-movies': return item.type === 'movie' && isIranianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
+    case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
+    case 'iranian-series': return item.type === 'series' && isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isDocumentaryItem(item);
+    case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isDocumentaryItem(item);
+    case 'korean-movies': return item.type === 'movie' && isKoreanItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
+    case 'korean-series': return item.type === 'series' && isKoreanItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isDocumentaryItem(item);
     case 'indian-movies': return item.type === 'movie' && item.countryCodes?.includes('IN') && !isAnimatedItem(item);
     case 'japanese-movies': return item.type === 'movie' && item.countryCodes?.includes('JP') && !isAnimatedItem(item);
     case 'anime-movies': return item.type === 'movie' && isAnimeItem(item);
@@ -3359,9 +3375,10 @@ function VideoPlayerModal({
   const initialSource = orderedSources.find((source) => source.id === request.initialSourceId) || orderedSources[0];
   const [activeSource, setActiveSource] = useState(initialSource);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [displayMode, setDisplayMode] = useState<PlayerDisplayMode>('fit');
+  const [displayMode] = useState<PlayerDisplayMode>('fit');
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const [firstFrameReady, setFirstFrameReady] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
@@ -3371,10 +3388,47 @@ function VideoPlayerModal({
   const latestTimeRef = useRef(Math.max(0, Number(request.resumeAt || 0)));
   const latestDurationRef = useRef(0);
   const resumeAppliedRef = useRef(false);
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const qualitySources = useMemo(() => {
+    const unique = new Map<string, PlaybackSource>();
+    orderedSources.forEach((source) => {
+      const qualityMatch = String(source.quality || '').match(/(\d{3,4})\s*p/i);
+      if (!qualityMatch) return;
+      const label = `${qualityMatch[1]}p`;
+      if (!unique.has(label)) unique.set(label, { ...source, quality: label });
+    });
+    return [...unique.values()].sort((a, b) => {
+      const aValue = Number.parseInt(a.quality, 10) || 0;
+      const bValue = Number.parseInt(b.quality, 10) || 0;
+      return bValue - aValue;
+    });
+  }, [orderedSources]);
+
   const player = useVideoPlayer(initialSource.url, (instance) => {
     instance.timeUpdateEventInterval = 0.75;
     instance.play();
   });
+
+  const clearControlsTimer = useCallback(() => {
+    if (controlsTimerRef.current) {
+      clearTimeout(controlsTimerRef.current);
+      controlsTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleControlsHide = useCallback(() => {
+    clearControlsTimer();
+    if (!firstFrameReady || settingsOpen) return;
+    controlsTimerRef.current = setTimeout(() => {
+      setControlsVisible(false);
+    }, 3200);
+  }, [clearControlsTimer, firstFrameReady, settingsOpen]);
+
+  const revealControls = useCallback(() => {
+    setControlsVisible(true);
+    scheduleControlsHide();
+  }, [scheduleControlsHide]);
 
   useEventListener(player, 'sourceLoad', ({ duration: loadedDuration }) => {
     const safeDuration = Math.max(0, Number(loadedDuration || player.duration || 0));
@@ -3406,16 +3460,27 @@ function VideoPlayerModal({
     onProgress(request, safeDuration, safeDuration, true);
   });
 
+  useEffect(() => {
+    if (!firstFrameReady || settingsOpen) {
+      clearControlsTimer();
+      setControlsVisible(true);
+      return;
+    }
+    scheduleControlsHide();
+  }, [clearControlsTimer, firstFrameReady, landscape, scheduleControlsHide, settingsOpen]);
+
   useEffect(
     () => () => {
+      clearControlsTimer();
       void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
     },
-    [],
+    [clearControlsTimer],
   );
 
   const closePlayer = () => {
     const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
     const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+    clearControlsTimer();
     player.pause();
     onProgress(request, position, safeDuration, false);
     void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
@@ -3425,10 +3490,12 @@ function VideoPlayerModal({
   const handleBack = () => {
     if (settingsOpen) {
       setSettingsOpen(false);
+      revealControls();
       return;
     }
     if (landscape) {
       void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
+      revealControls();
       return;
     }
     closePlayer();
@@ -3439,6 +3506,7 @@ function VideoPlayerModal({
     const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
     setSwitchingQuality(true);
     setFirstFrameReady(false);
+    clearControlsTimer();
     try {
       player.pause();
       await player.replaceAsync(nextSource.url);
@@ -3451,17 +3519,21 @@ function VideoPlayerModal({
     } finally {
       setSwitchingQuality(false);
       setSettingsOpen(false);
+      setControlsVisible(true);
     }
   };
 
   const toggleOrientation = () => {
     setSettingsOpen(false);
+    setControlsVisible(true);
     void ScreenOrientation.lockAsync(
       landscape
         ? ScreenOrientation.OrientationLock.PORTRAIT_UP
         : ScreenOrientation.OrientationLock.LANDSCAPE,
     ).catch(() => undefined);
   };
+
+  const chromeVisible = !firstFrameReady || switchingQuality || settingsOpen || controlsVisible;
 
   return (
     <Modal
@@ -3477,6 +3549,7 @@ function VideoPlayerModal({
         <StatusBar style="light" hidden={landscape} backgroundColor="#000000" />
         <View style={styles.playerScreenCenter}>
           <View
+            onTouchStart={revealControls}
             style={[
               styles.videoFrame,
               landscape
@@ -3488,9 +3561,9 @@ function VideoPlayerModal({
               <Image
                 source={{ uri: request.artwork }}
                 style={StyleSheet.absoluteFill}
-                contentFit="cover"
+                contentFit="contain"
                 cachePolicy="memory-disk"
-                transition={120}
+                transition={80}
               />
             ) : null}
 
@@ -3508,10 +3581,13 @@ function VideoPlayerModal({
               }}
               contentFit={displayMode === 'fill' ? 'cover' : 'contain'}
               allowsPictureInPicture
-              allowsFullscreen
+              allowsFullscreen={false}
               surfaceType="textureView"
               useExoShutter
-              onFirstFrameRender={() => setFirstFrameReady(true)}
+              onFirstFrameRender={() => {
+                setFirstFrameReady(true);
+                setControlsVisible(true);
+              }}
             />
 
             {!firstFrameReady || switchingQuality ? (
@@ -3523,75 +3599,74 @@ function VideoPlayerModal({
               </View>
             ) : null}
 
-            <View
-              pointerEvents="box-none"
-              style={[
-                styles.nativePlayerTopBar,
-                { top: landscape ? Math.max(8, insets.top + 4) : 8 },
-              ]}
-            >
-              <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
-                <Ionicons name="close" color="#fff" size={21} />
-              </Pressable>
-              <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
-              <Pressable onPress={() => setSettingsOpen(true)} style={styles.nativePlayerTopButton} accessibilityLabel="تنظیمات پخش">
-                <Ionicons name="settings-outline" color="#fff" size={20} />
-              </Pressable>
-              <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel="چرخش صفحه">
-                <Ionicons name={landscape ? 'contract-outline' : 'expand-outline'} color="#fff" size={20} />
-              </Pressable>
-            </View>
+            {chromeVisible ? (
+              <View
+                pointerEvents="box-none"
+                style={[
+                  styles.nativePlayerTopBar,
+                  { top: landscape ? Math.max(8, insets.top + 4) : 8 },
+                ]}
+              >
+                <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
+                  <Ionicons name="close" color="#fff" size={21} />
+                </Pressable>
+                <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
+                <Pressable
+                  onPress={() => {
+                    clearControlsTimer();
+                    setControlsVisible(true);
+                    setSettingsOpen(true);
+                  }}
+                  style={styles.nativePlayerTopButton}
+                  accessibilityLabel="تنظیمات پخش"
+                >
+                  <Ionicons name="settings-outline" color="#fff" size={20} />
+                </Pressable>
+                <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
+                  <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
+                </Pressable>
+              </View>
+            ) : null}
 
             {settingsOpen ? (
               <View style={styles.playerSettingsOverlay}>
-                <Pressable style={StyleSheet.absoluteFill} onPress={() => setSettingsOpen(false)} />
+                <Pressable style={StyleSheet.absoluteFill} onPress={() => {
+                  setSettingsOpen(false);
+                  revealControls();
+                }} />
                 <View style={[styles.playerSettingsCard, landscape && styles.playerSettingsCardLandscape]}>
                   <View style={styles.playerSettingsHeader}>
-                    <Text style={styles.playerSettingsTitle}>تنظیمات پخش</Text>
-                    <Pressable onPress={() => setSettingsOpen(false)} style={styles.playerSettingsClose}>
-                      <Ionicons name="close" color="#fff" size={20} />
+                    <Text style={styles.playerSettingsTitle}>کیفیت پخش</Text>
+                    <Pressable onPress={() => {
+                      setSettingsOpen(false);
+                      revealControls();
+                    }} style={styles.playerSettingsClose}>
+                      <Ionicons name="close" color="#fff" size={18} />
                     </Pressable>
                   </View>
-                  <Text style={styles.playerSettingsLabel}>کیفیت</Text>
-                  <View style={styles.playerSettingsOptions}>
-                    {orderedSources.map((source) => {
-                      const selected = source.id === activeSource.id;
-                      return (
-                        <Pressable
-                          key={source.id}
-                          onPress={() => void switchQuality(source)}
-                          style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
-                        >
-                          <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>
-                            {source.quality}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                  <Text style={styles.playerSettingsLabel}>اندازه تصویر</Text>
-                  <View style={styles.playerSettingsOptions}>
-                    {([
-                      ['fit', 'نمایش کامل'],
-                      ['fill', 'پر کردن کادر'],
-                    ] as const).map(([id, label]) => {
-                      const selected = displayMode === id;
-                      return (
-                        <Pressable
-                          key={id}
-                          onPress={() => {
-                            setDisplayMode(id);
-                            setSettingsOpen(false);
-                          }}
-                          style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
-                        >
-                          <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>{label}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
+                  {qualitySources.length ? (
+                    <View style={styles.playerSettingsOptions}>
+                      {qualitySources.map((source) => {
+                        const activeQuality = String(activeSource.quality || '').match(/(\d{3,4})\s*p/i)?.[1];
+                        const selected = source.id === activeSource.id || activeQuality === String(source.quality).replace(/\D/g, '');
+                        return (
+                          <Pressable
+                            key={source.id}
+                            onPress={() => void switchQuality(source)}
+                            style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
+                          >
+                            <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>
+                              {source.quality}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    <Text style={styles.playerSettingsEmpty}>برای این ویدئو کیفیت جداگانه‌ای ثبت نشده است.</Text>
+                  )}
                   <Text style={styles.nativePlayerStatusText}>
-                    {`${formatPlaybackTime(currentTime)} از ${formatPlaybackTime(duration)} • ${activeSource.quality}`}
+                    {`${formatPlaybackTime(currentTime)} از ${formatPlaybackTime(duration)}`}
                   </Text>
                 </View>
               </View>
@@ -5454,9 +5529,9 @@ const styles = StyleSheet.create({
   mediaModal: { flex: 1, backgroundColor: '#000' },
   detailCircleButtonPlaceholder: { width: 46, height: 46 },
   videoViewPreparing: { opacity: 0 },
-  playerPreparingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.40)' },
-  playerPreparingText: { ...rtlText, color: '#fff', fontSize: 10, fontWeight: '800', marginTop: 10 },
-  nativePlayerTopBar: { position: 'absolute', zIndex: 30, left: 8, right: 8, minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  playerPreparingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+  playerPreparingText: { ...rtlText, color: '#fff', fontSize: 9.5, fontWeight: '800', marginTop: 9 },
+  nativePlayerTopBar: { position: 'absolute', zIndex: 30, left: 8, right: 8, minHeight: 42, paddingHorizontal: 2, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(0,0,0,0.18)', borderRadius: 14 },
   nativePlayerTopButton: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.78)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   nativePlayerTitle: { ...rtlText, minWidth: 0, flex: 1, color: '#fff', fontSize: 10.5, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   nativePlayerStatusText: { ...rtlText, color: 'rgba(255,255,255,0.66)', fontSize: 8.5, textAlign: 'center', marginTop: 13 },
@@ -5566,18 +5641,19 @@ const styles = StyleSheet.create({
   playerControlIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   playerControlSpacer: { flex: 1 },
   playerTimeSeparator: { color: 'rgba(255,255,255,0.48)', fontSize: 9 },
-  playerSettingsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16, backgroundColor: 'rgba(0,0,0,0.62)' },
-  playerSettingsCard: { width: '100%', maxWidth: 360, padding: 14, borderRadius: 17, backgroundColor: 'rgba(16,19,25,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
-  playerSettingsCardLandscape: { maxWidth: 440 },
-  playerSettingsHeader: { minHeight: 34, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
-  playerSettingsTitle: { ...rtlText, color: '#fff', fontSize: 14, fontWeight: '900' },
-  playerSettingsClose: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
-  playerSettingsLabel: { ...rtlText, color: COLORS.muted, fontSize: 9, fontWeight: '800', marginTop: 12, marginBottom: 7 },
-  playerSettingsOptions: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 7 },
-  playerSettingChip: { minHeight: 36, paddingHorizontal: 12, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  playerSettingsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.58)' },
+  playerSettingsCard: { width: '86%', maxWidth: 290, padding: 10, borderRadius: 14, backgroundColor: 'rgba(16,19,25,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  playerSettingsCardLandscape: { maxWidth: 330, width: '72%' },
+  playerSettingsHeader: { minHeight: 30, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
+  playerSettingsTitle: { ...rtlText, color: '#fff', fontSize: 12, fontWeight: '900' },
+  playerSettingsClose: { width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
+  playerSettingsLabel: { ...rtlText, color: COLORS.muted, fontSize: 8.5, fontWeight: '800', marginTop: 9, marginBottom: 6 },
+  playerSettingsOptions: { marginTop: 8, flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 6 },
+  playerSettingChip: { minHeight: 32, minWidth: 58, paddingHorizontal: 10, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   playerSettingChipActive: { backgroundColor: 'rgba(216,180,90,0.14)', borderColor: 'rgba(216,180,90,0.72)' },
-  playerSettingChipText: { color: '#D2D5DA', fontSize: 10, fontWeight: '800' },
+  playerSettingChipText: { color: '#D2D5DA', fontSize: 9.5, fontWeight: '800' },
   playerSettingChipTextActive: { color: COLORS.gold },
+  playerSettingsEmpty: { ...rtlText, color: COLORS.muted, fontSize: 8.5, lineHeight: 16, textAlign: 'center', marginTop: 9 },
   playerToolButton: { minWidth: 72, minHeight: 42, paddingHorizontal: 10, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(8,10,14,0.92)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   playerToolText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
   playerLockedButton: { position: 'absolute', left: 24, top: '45%', minHeight: 50, paddingHorizontal: 15, borderRadius: 16, zIndex: 40, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(5,7,10,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)' },
