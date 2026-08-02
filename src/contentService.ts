@@ -186,22 +186,18 @@ const normalizePersonImage = (value: unknown, source: 'tmdb' | 'upera' = 'upera'
   if (/^https?:\/\//i.test(raw)) {
     const httpsUrl = raw.replace(/^http:\/\//i, 'https://');
     if (/\/assets\/media\//i.test(httpsUrl)) return httpsUrl;
-    return source === 'tmdb'
-      ? httpsUrl.replace(
-          /(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)/i,
-          '$1w342',
-        )
-      : httpsUrl;
+    if (source === 'tmdb' || /^https:\/\/image\.tmdb\.org\/t\/p\//i.test(httpsUrl)) return '';
+    return httpsUrl;
   }
   if (/^\/\//.test(raw)) return `https:${raw}`;
   if (raw.startsWith('/')) {
-    if (source === 'tmdb') return `https://image.tmdb.org/t/p/w342${raw}`;
+    if (source === 'tmdb') return '';
     if (/^\/(?:s3|uploads?|images?|storage|media)\//i.test(raw)) return `https://thumb.upera.tv${raw}`;
     return `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
   }
   if (/\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(raw)) {
     return source === 'tmdb'
-      ? `https://image.tmdb.org/t/p/w342/${raw.replace(/^\/+/, '')}`
+      ? ''
       : `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
   }
   return '';
@@ -943,6 +939,11 @@ const normalizedLocalPayload = (): CatalogPayload => {
   };
 };
 
+export const getBundledContent = (): LoadedContent => ({
+  ...normalizedLocalPayload(),
+  source: 'local',
+});
+
 const readCachedContent = async (): Promise<CatalogPayload | null> => {
   if (!REMOTE_CACHE_URI) return null;
   try {
@@ -976,6 +977,10 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
   if (preferCache) {
     const cached = await readCachedContent();
     if (cached) return { ...cached, source: 'cache' };
+    return {
+      ...normalizedLocalPayload(),
+      source: 'local',
+    };
   }
 
   try {
