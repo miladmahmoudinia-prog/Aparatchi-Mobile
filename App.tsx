@@ -268,7 +268,10 @@ const isTrustedOperatorHostUrl = (url?: string) => {
   if (url === 'about:blank') return true;
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'https:' && /(^|\.)upera\.tv$/i.test(parsed.hostname);
+    return parsed.protocol === 'https:' && (
+      /(^|\.)upera\.tv$/i.test(parsed.hostname) ||
+      /(^|\.)redl\.ink$/i.test(parsed.hostname)
+    );
   } catch {
     return false;
   }
@@ -278,7 +281,10 @@ const isOperatorPortalUrl = (url?: string) => {
   if (!url || !isTrustedOperatorHostUrl(url)) return false;
   try {
     const parsed = new URL(url);
-    return /^\/(?:stream|download)\/(?:movie|series|episode)\//i.test(parsed.pathname);
+    if (/(^|\.)redl\.ink$/i.test(parsed.hostname)) return true;
+    const decodedPath = decodeURIComponent(parsed.pathname || '');
+    return /\/(?:stream|watch|play|download)(?:\/|$)/i.test(decodedPath) &&
+      /\/(?:movie|series|episode)(?:\/|$)/i.test(decodedPath);
   } catch {
     return false;
   }
