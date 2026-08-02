@@ -209,20 +209,19 @@ const personSourceEntries = (
 
 const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
   const sources = [
+    ...personSourceEntries(item.people),
+    ...personSourceEntries(item.credits),
+    ...personSourceEntries(item.crew),
     ...personSourceEntries(item.directors, 'director'),
     ...personSourceEntries(item.director, 'director'),
     ...personSourceEntries(item.actors, 'actor'),
     ...personSourceEntries(item.actor, 'actor'),
     ...personSourceEntries(item.cast, 'actor'),
     ...personSourceEntries(item.casts, 'actor'),
-    ...personSourceEntries(item.people),
-    ...personSourceEntries(item.credits),
-    ...personSourceEntries(item.crew),
   ];
 
-  const seen = new Set<string>();
   const ownerId = asString(item.id ?? item.t_id ?? item.series_id, 'item');
-  return sources.flatMap((person, index) => {
+  const candidates = sources.flatMap((person, index) => {
     const fallbackRole = person.__fallbackRole as CatalogPerson['role'] | null;
     const role = normalizePersonRole(
       person.role ?? person.job ?? person.department ?? person.known_for_department,
@@ -237,6 +236,7 @@ const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
     const name = asString(person.name ?? person.full_name ?? person.title, nameFa);
     if (!nameFa && !name) return [];
 
+    const tmdbId = asNumber(person.tmdbId ?? person.tmdb_id, 0);
     const externalId = asString(
       person.personId ?? person.person_id ?? person.tmdbId ?? person.tmdb_id ??
       person.imdb ?? person.id ?? person.slug,
@@ -246,12 +246,9 @@ const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
     const id = externalId
       ? (externalId.startsWith(`${role}-`) ? externalId : `${role}-${externalId}`)
       : fallbackId;
-    if (!id || seen.has(id)) return [];
-    seen.add(id);
 
     const personSource =
-      asString(person.source).toLowerCase() === 'tmdb' ||
-      asNumber(person.tmdbId ?? person.tmdb_id, 0) > 0
+      asString(person.source).toLowerCase() === 'tmdb' || tmdbId > 0
         ? 'tmdb'
         : 'upera';
     const rawPersonImage =
@@ -275,9 +272,7 @@ const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
       roleLabel: asString(person.roleLabel ?? person.role_label, role === 'director' ? 'کارگردان' : 'بازیگر'),
       ...(character ? { character } : {}),
       ...(image ? { image } : {}),
-      ...(asNumber(person.tmdbId ?? person.tmdb_id, 0) > 0
-        ? { tmdbId: asNumber(person.tmdbId ?? person.tmdb_id, 0) }
-        : {}),
+      ...(tmdbId > 0 ? { tmdbId } : {}),
       ...(asString(person.source) ? { source: asString(person.source) } : {}),
       ...(asString(person.birthday ?? person.birth_date) ? { birthday: asString(person.birthday ?? person.birth_date) } : {}),
       ...(asString(person.deathday ?? person.death_date) ? { deathday: asString(person.deathday ?? person.death_date) } : {}),
@@ -286,10 +281,66 @@ const normalizePeople = (item: Record<string, unknown>): CatalogPerson[] => {
       ...(asNumber(person.popularity, 0) > 0 ? { popularity: asNumber(person.popularity, 0) } : {}),
       order: asNumber(person.order ?? person.castOrder ?? person.cast_order, index),
     } satisfies CatalogPerson];
-  }).sort((a, b) => {
-    const roleDifference = (a.role === 'director' ? 0 : 1) - (b.role === 'director' ? 0 : 1);
-    return roleDifference || (a.order || 0) - (b.order || 0);
-  }).slice(0, 30);
+  });
+
+  const merged = new Map<string, CatalogPerson>();
+  const nameKeys = new Map<string, string>();
+
+  for (const candidate of candidates) {
+    const normalizedName = asString(candidate.name || candidate.nameFa)
+      .toLowerCase()
+      .normalize('NFKC')
+      .replace(/[يى]/g, 'ی')
+      .replace(/ك/g, 'ک')
+      .replace(/[^a-z0-9\u0600-\u06ff]+/g, ' ')
+      .trim();
+    const byTmdb = candidate.tmdbId ? `${candidate.role}:tmdb:${candidate.tmdbId}` : '';
+    const byName = normalizedName ? `${candidate.role}:name:${normalizedName}` : '';
+    const key = (byTmdb && merged.has(byTmdb))
+      ? byTmdb
+      : (byName && nameKeys.get(byName))
+        ? nameKeys.get(byName)!
+        : byTmdb || byName || candidate.id;
+
+    const current = merged.get(key);
+    if (!current) {
+      merged.set(key, candidate);
+      if (byName) nameKeys.set(byName, key);
+      continue;
+    }
+
+    const candidateHasImage = Boolean(candidate.image);
+    const currentHasImage = Boolean(current.image);
+    const candidateIsTmdb = candidate.source === 'tmdb' || Boolean(candidate.tmdbId);
+    const currentIsTmdb = current.source === 'tmdb' || Boolean(current.tmdbId);
+    const preferCandidate =
+      Number(candidateHasImage) * 100 + Number(candidateIsTmdb) * 20 + Number(candidate.popularity || 0)
+      >
+      Number(currentHasImage) * 100 + Number(currentIsTmdb) * 20 + Number(current.popularity || 0);
+
+    const preferred = preferCandidate ? candidate : current;
+    const secondary = preferCandidate ? current : candidate;
+    merged.set(key, {
+      ...secondary,
+      ...preferred,
+      id: preferred.id || secondary.id,
+      nameFa: preferred.nameFa || secondary.nameFa,
+      name: preferred.name || secondary.name,
+      image: preferred.image || secondary.image,
+      tmdbId: preferred.tmdbId || secondary.tmdbId,
+      character: secondary.character || preferred.character,
+      roleLabel: preferred.roleLabel || secondary.roleLabel,
+      order: Math.min(Number(current.order || 0), Number(candidate.order || 0)),
+    });
+    if (byName) nameKeys.set(byName, key);
+  }
+
+  return [...merged.values()]
+    .sort((a, b) => {
+      const roleDifference = (a.role === 'director' ? 0 : 1) - (b.role === 'director' ? 0 : 1);
+      return roleDifference || (a.order || 0) - (b.order || 0) || Number(Boolean(b.image)) - Number(Boolean(a.image));
+    })
+    .slice(0, 30);
 };
 
 const itemTimestamp = (item: CatalogItem) => {

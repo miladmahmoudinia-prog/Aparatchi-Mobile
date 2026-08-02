@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import * as FileSystem from 'expo-file-system/legacy';
 import { WebView } from 'react-native-webview';
 import {
   ActivityIndicator,
@@ -136,6 +137,10 @@ const isSafeHttpUrl = (url?: string) => Boolean(url && /^https?:\/\//i.test(url)
 
 const isPlaceholderUrl = (url?: string) =>
   Boolean(url && (/example\.com/i.test(url) || /replace-with/i.test(url)));
+
+const INITIAL_ASSETS_MARKER = FileSystem.documentDirectory
+  ? `${FileSystem.documentDirectory}aparatchi-initial-images-v1.ready`
+  : '';
 
 const optimizedImageUrl = (
   value?: string,
@@ -1009,24 +1014,24 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
 
 function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
   const original = String(person.image || '').trim().replace(/^http:\/\//i, 'https://');
-  const relativePath = original && !/^https?:\/\//i.test(original)
-    ? `https://image.tmdb.org/t/p/w342/${original.replace(/^\/+/, '')}`
-    : '';
-  const tmdbCandidates = /^https:\/\/image\.tmdb\.org\/t\/p\//i.test(original)
-    ? ['w342', 'w185', 'w500', 'original'].map((size) => original.replace(
-        /(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)/i,
-        `$1${size}`,
-      ))
-    : [];
-  const imageCandidates = useMemo(
-    () => [...new Set([
-      optimizedImageUrl(original, 'person'),
-      ...tmdbCandidates,
-      relativePath,
-      original,
-    ].filter((url) => isSafeHttpUrl(url)))],
-    [original, relativePath, ...tmdbCandidates],
-  );
+  const imageCandidates = useMemo(() => {
+    if (!original) return [] as string[];
+
+    const normalized = /^https?:\/\//i.test(original)
+      ? original
+      : `https://image.tmdb.org/t/p/w342/${original.replace(/^\/+/, '')}`;
+
+    if (/^https:\/\/image\.tmdb\.org\/t\/p\//i.test(normalized)) {
+      return [...new Set(['w342', 'w500', 'w185', 'original'].map((size) =>
+        normalized.replace(
+          /(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)/i,
+          `$1${size}`,
+        ),
+      ).filter(isSafeHttpUrl))];
+    }
+
+    return isSafeHttpUrl(normalized) ? [normalized] : [];
+  }, [original]);
   const [imageIndex, setImageIndex] = useState(0);
 
   useEffect(() => {
@@ -1034,21 +1039,40 @@ function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) 
   }, [person.id, person.tmdbId, original]);
 
   const image = imageCandidates[imageIndex] || '';
+  const initials = personName(person)
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
 
-  return image ? (
+  if (!image) {
+    return (
+      <View style={[style, styles.personImageFallback]}>
+        {initials ? (
+          <Text style={styles.personImageFallbackText}>{initials}</Text>
+        ) : (
+          <Ionicons name="person-outline" color={COLORS.gold} size={26} />
+        )}
+      </View>
+    );
+  }
+
+  return (
     <Image
+      key={`${person.id}:${imageIndex}:${image}`}
       source={{ uri: image }}
       style={style}
       contentFit="cover"
       cachePolicy="memory-disk"
-      transition={100}
-      recyclingKey={`${person.id}:${image}`}
-      onError={() => setImageIndex((current) => current + 1)}
+      transition={90}
+      onError={() => {
+        setImageIndex((current) =>
+          current + 1 < imageCandidates.length ? current + 1 : imageCandidates.length,
+        );
+      }}
     />
-  ) : (
-    <View style={[style, styles.personImageFallback]}>
-      <Ionicons name="person-outline" color={COLORS.gold} size={28} />
-    </View>
   );
 }
 
@@ -3994,6 +4018,8 @@ function VideoPlayerModal({
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const [firstFrameReady, setFirstFrameReady] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [timelineWidth, setTimelineWidth] = useState(0);
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
@@ -4069,6 +4095,10 @@ function VideoPlayerModal({
     }
   });
 
+  useEventListener(player, 'playingChange', ({ isPlaying: nextIsPlaying }) => {
+    setIsPlaying(Boolean(nextIsPlaying));
+  });
+
   useEventListener(player, 'timeUpdate', ({ currentTime: nextCurrentTime }) => {
     const position = Math.max(0, Number(nextCurrentTime || 0));
     const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
@@ -4124,6 +4154,37 @@ function VideoPlayerModal({
       return;
     }
     closePlayer();
+  };
+
+  const togglePlayback = () => {
+    if (isPlaying) player.pause();
+    else player.play();
+    revealControls();
+  };
+
+  const seekBy = (seconds: number) => {
+    player.seekBy(seconds);
+    const maximum = Number(player.duration || latestDurationRef.current || 0);
+    const nextTime = Math.max(
+      0,
+      Math.min(
+        maximum > 0 ? maximum : Number.MAX_SAFE_INTEGER,
+        Number(player.currentTime || latestTimeRef.current || 0) + seconds,
+      ),
+    );
+    latestTimeRef.current = nextTime;
+    setCurrentTime(nextTime);
+    revealControls();
+  };
+
+  const seekFromTimeline = (locationX: number) => {
+    if (!timelineWidth || !duration) return;
+    const ratio = Math.max(0, Math.min(1, locationX / timelineWidth));
+    const nextTime = ratio * duration;
+    player.currentTime = nextTime;
+    latestTimeRef.current = nextTime;
+    setCurrentTime(nextTime);
+    revealControls();
   };
 
   const switchQuality = async (nextSource: PlaybackSource) => {
@@ -4194,17 +4255,7 @@ function VideoPlayerModal({
           <VideoView
             player={player}
             style={[styles.videoView, !firstFrameReady && styles.videoViewPreparing]}
-            nativeControls={firstFrameReady && !switchingQuality && !settingsOpen}
-            buttonOptions={{
-              showBottomBar: true,
-              showPlayPause: true,
-              showSeekBackward: true,
-              showSeekForward: true,
-              showNext: false,
-              showPrevious: false,
-              showSettings: false,
-              showSubtitles: false,
-            }}
+            nativeControls={false}
             contentFit={displayMode === 'fill' ? 'cover' : 'contain'}
             allowsPictureInPicture
             allowsFullscreen={false}
@@ -4216,47 +4267,114 @@ function VideoPlayerModal({
             }}
           />
 
-          {chromeVisible ? (
-            <View
-              pointerEvents="box-none"
-              style={[
-                styles.nativePlayerTopBar,
-                {
-                  top: landscape ? Math.max(8, insets.top + 4) : 8,
-                  left: landscapeLeftInset,
-                  right: landscapeRightInset,
-                },
-              ]}
-            >
-              <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
-                <Ionicons name="close" color="#fff" size={21} />
-              </Pressable>
-              <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
-              <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
-                <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
-              </Pressable>
-            </View>
-          ) : null}
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={revealControls}
+            accessibilityLabel="نمایش کنترل‌های پخش"
+          />
 
           {chromeVisible && firstFrameReady && !switchingQuality ? (
-            <Pressable
-              onPress={() => {
-                clearControlsTimer();
-                setControlsVisible(true);
-                setSettingsSection('speed');
-                setSettingsOpen(true);
-              }}
-              style={[
-                styles.playerBottomSettingsButton,
-                {
-                  right: landscapeRightInset,
-                  bottom: landscape ? Math.max(8, insets.bottom + 4) : 8,
-                },
-              ]}
-              accessibilityLabel="تنظیمات سرعت و کیفیت"
-            >
-              <Ionicons name="settings-outline" color="#fff" size={20} />
-            </Pressable>
+            <View style={styles.playerControlsLayer} pointerEvents="box-none">
+              <LinearGradient
+                colors={['rgba(0,0,0,0.72)', 'rgba(0,0,0,0)']}
+                style={styles.playerTopGradient}
+                pointerEvents="none"
+              />
+              <LinearGradient
+                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.82)']}
+                style={styles.playerBottomGradient}
+                pointerEvents="none"
+              />
+
+              <View
+                pointerEvents="box-none"
+                style={[
+                  styles.nativePlayerTopBar,
+                  {
+                    top: landscape ? Math.max(8, insets.top + 4) : 8,
+                    left: landscapeLeftInset,
+                    right: landscapeRightInset,
+                  },
+                ]}
+              >
+                <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
+                  <Ionicons name="close" color="#fff" size={21} />
+                </Pressable>
+                <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
+                <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
+                  <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
+                </Pressable>
+              </View>
+
+              <View style={styles.playerCenterZone} pointerEvents="box-none">
+                <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
+                  <Pressable onPress={() => seekBy(-5)} style={styles.playerRoundButton} accessibilityLabel="پنج ثانیه عقب">
+                    <Ionicons name="play-back-outline" color="#fff" size={27} />
+                    <Text style={styles.playerSkipText}>۵</Text>
+                  </Pressable>
+                  <Pressable onPress={togglePlayback} style={styles.playerPrimaryButton} accessibilityLabel={isPlaying ? 'توقف' : 'پخش'}>
+                    <Ionicons name={isPlaying ? 'pause' : 'play'} color="#090B0F" size={31} />
+                  </Pressable>
+                  <Pressable onPress={() => seekBy(15)} style={styles.playerRoundButton} accessibilityLabel="پانزده ثانیه جلو">
+                    <Ionicons name="play-forward-outline" color="#fff" size={27} />
+                    <Text style={styles.playerSkipText}>۱۵</Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View
+                style={[
+                  styles.playerBottomPanel,
+                  landscape && styles.playerBottomPanelLandscape,
+                  {
+                    left: landscape ? landscapeLeftInset : 10,
+                    right: landscape ? landscapeRightInset : 10,
+                    bottom: landscape ? Math.max(8, insets.bottom + 4) : 6,
+                  },
+                ]}
+              >
+                <Pressable
+                  style={styles.playerTimelineWrap}
+                  onLayout={(event) => setTimelineWidth(event.nativeEvent.layout.width)}
+                  onPress={(event) => seekFromTimeline(event.nativeEvent.locationX)}
+                >
+                  <View style={styles.playerTimelineTrack}>
+                    <View style={styles.playerTimelineRail} />
+                    <View
+                      style={[
+                        styles.playerTimelineFill,
+                        { width: `${duration > 0 ? Math.min(100, Math.max(0, currentTime / duration * 100)) : 0}%` },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.playerTimelineThumb,
+                        { left: `${duration > 0 ? Math.min(100, Math.max(0, currentTime / duration * 100)) : 0}%` },
+                      ]}
+                    />
+                  </View>
+                </Pressable>
+                <View style={styles.playerTimeRow}>
+                  <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
+                  <Text numberOfLines={1} style={styles.playerVersionText}>{activeSource.quality || request.title}</Text>
+                  <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
+                </View>
+                <View style={styles.playerBottomTools}>
+                  <Pressable
+                    onPress={() => {
+                      clearControlsTimer();
+                      setControlsVisible(true);
+                      setSettingsSection('speed');
+                      setSettingsOpen(true);
+                    }}
+                    style={styles.nativePlayerTopButton}
+                    accessibilityLabel="تنظیمات سرعت و کیفیت"
+                  >
+                    <Ionicons name="settings-outline" color="#fff" size={22} />
+                  </Pressable>
+                </View>
+              </View>
+            </View>
           ) : null}
         </View>
 
@@ -4708,6 +4826,8 @@ function AppContent() {
   const [contentLoading, setContentLoading] = useState(true);
   const [initialAssetsReady, setInitialAssetsReady] = useState(false);
   const [initialAssetsProgress, setInitialAssetsProgress] = useState(0);
+  const [initialAssetsCheckComplete, setInitialAssetsCheckComplete] = useState(false);
+  const [needsInitialAssetPreparation, setNeedsInitialAssetPreparation] = useState(false);
   const initialAssetsStartedRef = useRef(false);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
@@ -4841,7 +4961,36 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    if (!content || initialAssetsStartedRef.current) return;
+    let cancelled = false;
+    const checkInitialPreparation = async () => {
+      if (!INITIAL_ASSETS_MARKER) {
+        if (!cancelled) {
+          setNeedsInitialAssetPreparation(true);
+          setInitialAssetsCheckComplete(true);
+        }
+        return;
+      }
+      try {
+        const marker = await FileSystem.getInfoAsync(INITIAL_ASSETS_MARKER);
+        if (cancelled) return;
+        if (marker.exists) {
+          setInitialAssetsReady(true);
+          setNeedsInitialAssetPreparation(false);
+        } else {
+          setNeedsInitialAssetPreparation(true);
+        }
+      } catch {
+        if (!cancelled) setNeedsInitialAssetPreparation(true);
+      } finally {
+        if (!cancelled) setInitialAssetsCheckComplete(true);
+      }
+    };
+    void checkInitialPreparation();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!content || !initialAssetsCheckComplete || !needsInitialAssetPreparation || initialAssetsStartedRef.current) return;
     initialAssetsStartedRef.current = true;
     let cancelled = false;
 
@@ -4866,20 +5015,33 @@ function AppContent() {
       ...homePosterItems.map((item) => optimizedImageUrl(item.poster || item.posterFallback || item.backdrop, 'poster')),
       ...(content.weeklySchedule || []).slice(0, 12).map((entry) => optimizedImageUrl(entry.poster, 'poster')),
       ...(content.featuredPeople || []).slice(0, 24).map((person) => optimizedImageUrl(person.image, 'person')),
-    ].filter((url) => isSafeHttpUrl(url) && !isPlaceholderUrl(url)))].slice(0, 150);
+      ...newest.slice(0, 16).flatMap((item) =>
+        (item.people || []).slice(0, 5).map((person) => optimizedImageUrl(person.image, 'person')),
+      ),
+    ].filter((url) => isSafeHttpUrl(url) && !isPlaceholderUrl(url)))].slice(0, 60);
 
     const prepare = async () => {
       if (!essentialUrls.length) {
-        if (!cancelled) setInitialAssetsReady(true);
+        if (INITIAL_ASSETS_MARKER) {
+          await FileSystem.writeAsStringAsync(
+            INITIAL_ASSETS_MARKER,
+            JSON.stringify({ preparedAt: new Date().toISOString(), version: 1 }),
+          ).catch(() => undefined);
+        }
+        if (!cancelled) {
+          setInitialAssetsProgress(100);
+          setInitialAssetsReady(true);
+          setNeedsInitialAssetPreparation(false);
+        }
         return;
       }
       let completed = 0;
-      const workers = Array.from({ length: Math.min(4, essentialUrls.length) }, async (_, workerIndex) => {
-        for (let index = workerIndex; index < essentialUrls.length; index += Math.min(4, essentialUrls.length)) {
+      const workers = Array.from({ length: Math.min(6, essentialUrls.length) }, async (_, workerIndex) => {
+        for (let index = workerIndex; index < essentialUrls.length; index += Math.min(6, essentialUrls.length)) {
           try {
             await Promise.race([
               Image.prefetch(essentialUrls[index]),
-              new Promise((resolve) => setTimeout(resolve, 2800)),
+              new Promise((resolve) => setTimeout(resolve, 1500)),
             ]);
           } catch {
             // A broken image must not block app startup.
@@ -4890,14 +5052,24 @@ function AppContent() {
       });
       await Promise.race([
         Promise.allSettled(workers),
-        new Promise((resolve) => setTimeout(resolve, 24000)),
+        new Promise((resolve) => setTimeout(resolve, 11000)),
       ]);
-      if (!cancelled) setInitialAssetsReady(true);
+      if (INITIAL_ASSETS_MARKER) {
+        await FileSystem.writeAsStringAsync(
+          INITIAL_ASSETS_MARKER,
+          JSON.stringify({ preparedAt: new Date().toISOString(), version: 1 }),
+        ).catch(() => undefined);
+      }
+      if (!cancelled) {
+        setInitialAssetsProgress(100);
+        setInitialAssetsReady(true);
+        setNeedsInitialAssetPreparation(false);
+      }
     };
 
     void prepare();
     return () => { cancelled = true; };
-  }, [content]);
+  }, [content, initialAssetsCheckComplete, needsInitialAssetPreparation]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -5682,7 +5854,7 @@ function AppContent() {
     );
   };
 
-  if (!content || !initialAssetsReady) {
+  if (!content || !initialAssetsCheckComplete || !initialAssetsReady) {
     return (
       <SafeAreaView
         style={styles.initialLoading}
@@ -5694,9 +5866,11 @@ function AppContent() {
         <Text style={styles.initialLoadingText}>
           {!content
             ? 'در حال دریافت تازه‌ترین فیلم‌ها و سریال‌ها…'
-            : `در حال آماده‌سازی تصاویر صفحه اصلی… ${toPersianDigits(initialAssetsProgress)}٪`}
+            : !initialAssetsCheckComplete
+              ? 'در حال بررسی تصاویر ذخیره‌شده…'
+              : `در حال آماده‌سازی تصاویر صفحه اصلی… ${toPersianDigits(initialAssetsProgress)}٪`}
         </Text>
-        {content ? (
+        {content && initialAssetsCheckComplete && needsInitialAssetPreparation ? (
           <View style={styles.initialLoadingTrack}>
             <View style={[styles.initialLoadingFill, { width: `${Math.max(4, initialAssetsProgress)}%` }]} />
           </View>
