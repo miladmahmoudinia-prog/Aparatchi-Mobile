@@ -162,19 +162,19 @@ const normalizePersonImage = (value: unknown, source: 'tmdb' | 'upera' = 'upera'
     return source === 'tmdb'
       ? httpsUrl.replace(
           /(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)/i,
-          '$1w185',
+          '$1w342',
         )
       : httpsUrl;
   }
   if (/^\/\//.test(raw)) return `https:${raw}`;
   if (raw.startsWith('/')) {
-    if (source === 'tmdb') return `https://image.tmdb.org/t/p/w185${raw}`;
+    if (source === 'tmdb') return `https://image.tmdb.org/t/p/w342${raw}`;
     if (/^\/(?:s3|uploads?|images?|storage|media)\//i.test(raw)) return `https://thumb.upera.tv${raw}`;
     return `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
   }
   if (/\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(raw)) {
     return source === 'tmdb'
-      ? `https://image.tmdb.org/t/p/w185/${raw.replace(/^\/+/, '')}`
+      ? `https://image.tmdb.org/t/p/w342/${raw.replace(/^\/+/, '')}`
       : `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
   }
   return '';

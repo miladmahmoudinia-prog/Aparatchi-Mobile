@@ -1008,17 +1008,30 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
 };
 
 function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
-  const optimized = optimizedImageUrl(person.image, 'person');
   const original = String(person.image || '').trim().replace(/^http:\/\//i, 'https://');
+  const relativePath = original && !/^https?:\/\//i.test(original)
+    ? `https://image.tmdb.org/t/p/w342/${original.replace(/^\/+/, '')}`
+    : '';
+  const tmdbCandidates = /^https:\/\/image\.tmdb\.org\/t\/p\//i.test(original)
+    ? ['w342', 'w185', 'w500', 'original'].map((size) => original.replace(
+        /(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)/i,
+        `$1${size}`,
+      ))
+    : [];
   const imageCandidates = useMemo(
-    () => [...new Set([optimized, original].filter((url) => isSafeHttpUrl(url)))],
-    [optimized, original],
+    () => [...new Set([
+      optimizedImageUrl(original, 'person'),
+      ...tmdbCandidates,
+      relativePath,
+      original,
+    ].filter((url) => isSafeHttpUrl(url)))],
+    [original, relativePath, ...tmdbCandidates],
   );
   const [imageIndex, setImageIndex] = useState(0);
 
   useEffect(() => {
     setImageIndex(0);
-  }, [person.id, person.tmdbId, optimized, original]);
+  }, [person.id, person.tmdbId, original]);
 
   const image = imageCandidates[imageIndex] || '';
 
@@ -1028,13 +1041,13 @@ function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) 
       style={style}
       contentFit="cover"
       cachePolicy="memory-disk"
-      transition={120}
+      transition={100}
       recyclingKey={`${person.id}:${image}`}
       onError={() => setImageIndex((current) => current + 1)}
     />
   ) : (
     <View style={[style, styles.personImageFallback]}>
-      <Ionicons name="person-outline" color={COLORS.gold} size={Math.max(22, Number(style?.width || 52) * 0.42)} />
+      <Ionicons name="person-outline" color={COLORS.gold} size={28} />
     </View>
   );
 }
@@ -1801,12 +1814,12 @@ function PeopleSection({
             <View style={styles.personAvatarWrap}>
               <PersonAvatar person={person} style={styles.personAvatar} />
             </View>
-            <Text numberOfLines={2} style={styles.personCardName}>{personName(person)}</Text>
+            <Text numberOfLines={2} ellipsizeMode="tail" style={styles.personCardName}>{personName(person)}</Text>
             <Text numberOfLines={1} style={styles.personCardRole}>{personRoleTitle(person)}</Text>
             {person.character ? (
-              <View style={styles.personCardCharacterRow}>
-                <Text style={styles.personCardCharacterLabel}>نقش:</Text>
-                <Text numberOfLines={1} style={styles.personCardCharacter}>{person.character}</Text>
+              <View style={styles.personCardCharacterWrap}>
+                <Text style={styles.personCardCharacterLabel}>نقش</Text>
+                <Text numberOfLines={2} ellipsizeMode="tail" style={styles.personCardCharacter}>{person.character}</Text>
               </View>
             ) : null}
           </Pressable>
@@ -2478,13 +2491,118 @@ function CatalogListScreen({
   );
 }
 
+function SimpleSearchScreen({
+  catalog,
+  onOpen,
+}: {
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const deferredQuery = normalizeComparableText(useDebouncedText(query, 340));
+  const { width: screenWidth } = useWindowDimensions();
+  const columnCount = screenWidth >= 720 ? 4 : screenWidth >= 520 ? 3 : 2;
+  const gap = 12;
+  const cardWidth = Math.floor((screenWidth - 32 - gap * (columnCount - 1)) / columnCount);
+  const searchIndex = useMemo(
+    () => catalog
+      .filter(itemHasUsableContent)
+      .map((item) => ({
+        item,
+        text: normalizeComparableText([
+          item.nameFa,
+          item.name,
+          ...(item.genres || []),
+          ...(item.countryLabels || []),
+          ...(item.countryNames || []),
+          ...(item.people || []).flatMap((person) => [person.nameFa, person.name || '']),
+        ].join(' ')),
+      })),
+    [catalog],
+  );
+  const results = useMemo(() => {
+    if (!deferredQuery) return [];
+    const matched: CatalogItem[] = [];
+    for (const entry of searchIndex) {
+      if (!entry.text.includes(deferredQuery)) continue;
+      matched.push(entry.item);
+      if (matched.length >= 48) break;
+    }
+    return sortForCatalogFilter(matched, 'latest');
+  }, [deferredQuery, searchIndex]);
+
+  return (
+    <View style={styles.screen}>
+      <View style={styles.simpleSearchHeader}>
+        <Logo />
+        <Text style={styles.simpleHeaderTitle}>جست‌وجو</Text>
+      </View>
+      <View style={styles.simpleSearchBoxWrap}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search-outline" color={COLORS.muted} size={21} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="نام فیلم، سریال یا بازیگر…"
+            placeholderTextColor="#646A74"
+            style={styles.searchInput}
+            textAlign="right"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {query ? (
+            <Pressable onPress={() => setQuery('')} hitSlop={12}>
+              <Ionicons name="close-circle" color={COLORS.muted} size={20} />
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+      {!deferredQuery ? (
+        <View style={styles.searchEmptyState}>
+          <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
+          <Text style={styles.largeEmptyTitle}>نام فیلم یا سریال را بنویسید</Text>
+          <Text style={styles.largeEmptyText}>جست‌وجو بدون فیلتر و با نمایش سبک نتایج انجام می‌شود.</Text>
+        </View>
+      ) : results.length ? (
+        <FlatList
+          key={columnCount}
+          data={results}
+          numColumns={columnCount}
+          keyExtractor={(item) => `${item.type}:${item.id}`}
+          contentContainerStyle={styles.simpleSearchResults}
+          columnWrapperStyle={columnCount > 1 ? { gap } : undefined}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          initialNumToRender={8}
+          maxToRenderPerBatch={6}
+          updateCellsBatchingPeriod={45}
+          windowSize={5}
+          removeClippedSubviews
+          renderItem={({ item }) => (
+            <View style={{ width: cardWidth, marginBottom: 19 }}>
+              <PosterCard item={item} width={cardWidth} onOpen={() => onOpen(item)} />
+            </View>
+          )}
+          ListHeaderComponent={<Text style={styles.simpleSearchResultCount}>{toPersianDigits(results.length)} نتیجه</Text>}
+        />
+      ) : (
+        <View style={styles.searchEmptyState}>
+          <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
+          <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
+          <Text style={styles.largeEmptyText}>املای نام را بررسی کنید.</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 function SearchScreen(props: {
   catalog: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
   initialFilter: SearchFilter;
 }) {
   return props.initialFilter === 'all'
-    ? <AdvancedSearchScreen {...props} />
+    ? <SimpleSearchScreen catalog={props.catalog} onOpen={props.onOpen} />
     : <CatalogListScreen {...props} />;
 }
 
@@ -3870,6 +3988,8 @@ function VideoPlayerModal({
   const initialSource = orderedSources.find((source) => source.id === request.initialSourceId) || orderedSources[0];
   const [activeSource, setActiveSource] = useState(initialSource);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<'speed' | 'quality' | null>('speed');
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [displayMode] = useState<PlayerDisplayMode>('fit');
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const [firstFrameReady, setFirstFrameReady] = useState(false);
@@ -3904,8 +4024,16 @@ function VideoPlayerModal({
 
   const player = useVideoPlayer(initialSource.url, (instance) => {
     instance.timeUpdateEventInterval = 0.75;
+    instance.playbackRate = 1;
+    instance.preservesPitch = true;
     instance.play();
   });
+
+  const changePlaybackRate = (rate: number) => {
+    player.playbackRate = rate;
+    player.preservesPitch = true;
+    setPlaybackRate(rate);
+  };
 
   const clearControlsTimer = useCallback(() => {
     if (controlsTimerRef.current) {
@@ -4074,6 +4202,8 @@ function VideoPlayerModal({
               showSeekForward: true,
               showNext: false,
               showPrevious: false,
+              showSettings: false,
+              showSubtitles: false,
             }}
             contentFit={displayMode === 'fill' ? 'cover' : 'contain'}
             allowsPictureInPicture
@@ -4102,23 +4232,31 @@ function VideoPlayerModal({
                 <Ionicons name="close" color="#fff" size={21} />
               </Pressable>
               <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
-              {qualitySources.length > 1 ? (
-                <Pressable
-                  onPress={() => {
-                    clearControlsTimer();
-                    setControlsVisible(true);
-                    setSettingsOpen(true);
-                  }}
-                  style={styles.nativePlayerTopButton}
-                  accessibilityLabel="تنظیمات پخش"
-                >
-                  <Ionicons name="settings-outline" color="#fff" size={20} />
-                </Pressable>
-              ) : null}
               <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
                 <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
               </Pressable>
             </View>
+          ) : null}
+
+          {chromeVisible && firstFrameReady && !switchingQuality ? (
+            <Pressable
+              onPress={() => {
+                clearControlsTimer();
+                setControlsVisible(true);
+                setSettingsSection('speed');
+                setSettingsOpen(true);
+              }}
+              style={[
+                styles.playerBottomSettingsButton,
+                {
+                  right: landscapeRightInset,
+                  bottom: landscape ? Math.max(8, insets.bottom + 4) : 8,
+                },
+              ]}
+              accessibilityLabel="تنظیمات سرعت و کیفیت"
+            >
+              <Ionicons name="settings-outline" color="#fff" size={20} />
+            </Pressable>
           ) : null}
         </View>
 
@@ -4136,7 +4274,7 @@ function VideoPlayerModal({
             }} />
             <View style={[styles.playerSettingsCard, landscape && styles.playerSettingsCardLandscape]}>
               <View style={styles.playerSettingsHeader}>
-                <Text style={styles.playerSettingsTitle}>کیفیت پخش</Text>
+                <Text style={styles.playerSettingsTitle}>تنظیمات پخش</Text>
                 <Pressable onPress={() => {
                   setSettingsOpen(false);
                   revealControls();
@@ -4144,27 +4282,69 @@ function VideoPlayerModal({
                   <Ionicons name="close" color="#fff" size={18} />
                 </Pressable>
               </View>
-              {qualitySources.length ? (
+
+              <Pressable
+                onPress={() => setSettingsSection((current) => current === 'speed' ? null : 'speed')}
+                style={styles.playerSettingsRow}
+              >
+                <View style={styles.playerSettingsRowMain}>
+                  <Text style={styles.playerSettingsRowTitle}>سرعت ویدئو</Text>
+                  <Text style={styles.playerSettingsRowValue}>{playbackRate === 1 ? 'عادی' : `${playbackRate}x`}</Text>
+                </View>
+                <Ionicons name={settingsSection === 'speed' ? 'chevron-up' : 'chevron-down'} color={COLORS.muted} size={17} />
+              </Pressable>
+              {settingsSection === 'speed' ? (
                 <View style={styles.playerSettingsOptions}>
-                  {qualitySources.map((source) => {
-                    const activeQuality = String(activeSource.quality || '').match(/(\d{3,4})\s*p/i)?.[1];
-                    const selected = source.id === activeSource.id || activeQuality === String(source.quality).replace(/\D/g, '');
+                  {[0.5, 1, 1.25, 1.5, 2].map((rate) => {
+                    const selected = playbackRate === rate;
                     return (
                       <Pressable
-                        key={source.id}
-                        onPress={() => void switchQuality(source)}
+                        key={rate}
+                        onPress={() => changePlaybackRate(rate)}
                         style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
                       >
                         <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>
-                          {source.quality}
+                          {rate === 1 ? 'عادی' : `${rate}x`}
                         </Text>
                       </Pressable>
                     );
                   })}
                 </View>
-              ) : (
-                <Text style={styles.playerSettingsEmpty}>برای این ویدئو کیفیت جداگانه‌ای ثبت نشده است.</Text>
-              )}
+              ) : null}
+
+              {qualitySources.length > 1 ? (
+                <>
+                  <Pressable
+                    onPress={() => setSettingsSection((current) => current === 'quality' ? null : 'quality')}
+                    style={styles.playerSettingsRow}
+                  >
+                    <View style={styles.playerSettingsRowMain}>
+                      <Text style={styles.playerSettingsRowTitle}>کیفیت ویدئو</Text>
+                      <Text style={styles.playerSettingsRowValue}>{activeSource.quality || 'خودکار'}</Text>
+                    </View>
+                    <Ionicons name={settingsSection === 'quality' ? 'chevron-up' : 'chevron-down'} color={COLORS.muted} size={17} />
+                  </Pressable>
+                  {settingsSection === 'quality' ? (
+                    <View style={styles.playerSettingsOptions}>
+                      {qualitySources.map((source) => {
+                        const activeQuality = String(activeSource.quality || '').match(/(\d{3,4})\s*p/i)?.[1];
+                        const selected = source.id === activeSource.id || activeQuality === String(source.quality).replace(/\D/g, '');
+                        return (
+                          <Pressable
+                            key={source.id}
+                            onPress={() => void switchQuality(source)}
+                            style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
+                          >
+                            <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>
+                              {source.quality}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </>
+              ) : null}
               <Text style={styles.nativePlayerStatusText}>
                 {`${formatPlaybackTime(currentTime)} از ${formatPlaybackTime(duration)}`}
               </Text>
@@ -4526,6 +4706,9 @@ function AppContent() {
   const [episodeAlertBusyId, setEpisodeAlertBusyId] = useState<string | null>(null);
   const [content, setContent] = useState<LoadedContent | null>(null);
   const [contentLoading, setContentLoading] = useState(true);
+  const [initialAssetsReady, setInitialAssetsReady] = useState(false);
+  const [initialAssetsProgress, setInitialAssetsProgress] = useState(0);
+  const initialAssetsStartedRef = useRef(false);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
@@ -4656,6 +4839,65 @@ function AppContent() {
 
     return () => { clearTimeout(vpnRetryTimer); subscription.remove(); };
   }, []);
+
+  useEffect(() => {
+    if (!content || initialAssetsStartedRef.current) return;
+    initialAssetsStartedRef.current = true;
+    let cancelled = false;
+
+    const newest = sortForCatalogFilter(
+      content.items.filter(itemHasUsableContent),
+      'latest',
+    );
+    const homeFilters: SearchFilter[] = [
+      'latest', 'updated', 'mobile-operator', 'iranian-movies', 'foreign-movies',
+      'iranian-series', 'foreign-series', 'korean-movies', 'korean-series',
+      'indian-movies', 'japanese-movies', 'anime-movies', 'anime-series',
+      'animation-movies', 'animation-series', 'programs', 'documentaries',
+    ];
+    const homePosterItems = homeFilters.flatMap((filter) =>
+      (filter === 'latest' ? newest : catalogItemsForFilter(content.items, filter)).slice(0, 7),
+    );
+    const essentialUrls = [...new Set([
+      ...newest.slice(0, 5).flatMap((item) => [
+        optimizedImageUrl(item.backdrop || item.backdropFallback || item.poster, 'backdrop'),
+        optimizedImageUrl(item.poster || item.posterFallback || item.backdrop, 'poster'),
+      ]),
+      ...homePosterItems.map((item) => optimizedImageUrl(item.poster || item.posterFallback || item.backdrop, 'poster')),
+      ...(content.weeklySchedule || []).slice(0, 12).map((entry) => optimizedImageUrl(entry.poster, 'poster')),
+      ...(content.featuredPeople || []).slice(0, 24).map((person) => optimizedImageUrl(person.image, 'person')),
+    ].filter((url) => isSafeHttpUrl(url) && !isPlaceholderUrl(url)))].slice(0, 150);
+
+    const prepare = async () => {
+      if (!essentialUrls.length) {
+        if (!cancelled) setInitialAssetsReady(true);
+        return;
+      }
+      let completed = 0;
+      const workers = Array.from({ length: Math.min(4, essentialUrls.length) }, async (_, workerIndex) => {
+        for (let index = workerIndex; index < essentialUrls.length; index += Math.min(4, essentialUrls.length)) {
+          try {
+            await Promise.race([
+              Image.prefetch(essentialUrls[index]),
+              new Promise((resolve) => setTimeout(resolve, 2800)),
+            ]);
+          } catch {
+            // A broken image must not block app startup.
+          }
+          completed += 1;
+          if (!cancelled) setInitialAssetsProgress(Math.round((completed / essentialUrls.length) * 100));
+        }
+      });
+      await Promise.race([
+        Promise.allSettled(workers),
+        new Promise((resolve) => setTimeout(resolve, 24000)),
+      ]);
+      if (!cancelled) setInitialAssetsReady(true);
+    };
+
+    void prepare();
+    return () => { cancelled = true; };
+  }, [content]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -5440,7 +5682,7 @@ function AppContent() {
     );
   };
 
-  if (!content) {
+  if (!content || !initialAssetsReady) {
     return (
       <SafeAreaView
         style={styles.initialLoading}
@@ -5449,7 +5691,16 @@ function AppContent() {
         <StatusBar style="light" />
         <ActivityIndicator color={COLORS.gold} size="large" />
         <Text style={styles.initialLoadingTitle}>در حال آماده‌سازی آپاراتچی…</Text>
-        <Text style={styles.initialLoadingText}>در حال دریافت تازه‌ترین فیلم‌ها و سریال‌ها…</Text>
+        <Text style={styles.initialLoadingText}>
+          {!content
+            ? 'در حال دریافت تازه‌ترین فیلم‌ها و سریال‌ها…'
+            : `در حال آماده‌سازی تصاویر صفحه اصلی… ${toPersianDigits(initialAssetsProgress)}٪`}
+        </Text>
+        {content ? (
+          <View style={styles.initialLoadingTrack}>
+            <View style={[styles.initialLoadingFill, { width: `${Math.max(4, initialAssetsProgress)}%` }]} />
+          </View>
+        ) : null}
       </SafeAreaView>
     );
   }
@@ -5637,6 +5888,8 @@ const styles = StyleSheet.create({
   initialLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30, backgroundColor: COLORS.background },
   initialLoadingTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 16 },
   initialLoadingText: { ...rtlText, color: COLORS.muted, fontSize: 10, lineHeight: 18, textAlign: 'center', marginTop: 7 },
+  initialLoadingTrack: { width: 190, height: 5, marginTop: 15, borderRadius: 4, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.10)' },
+  initialLoadingFill: { height: '100%', borderRadius: 4, backgroundColor: COLORS.gold },
   refreshIndicator: { position: 'absolute', top: 14, left: 14, width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(16,19,25,0.94)', borderWidth: 1, borderColor: COLORS.border },
   contentUnavailable: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 25 },
   retryButton: { marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12, backgroundColor: COLORS.red },
@@ -5818,6 +6071,10 @@ const styles = StyleSheet.create({
   posterEnglish: { color: '#777D87', fontSize: 8.5, lineHeight: 14, marginTop: 1, width: '100%', textAlign: 'right' },
   simpleHeader: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 },
   simpleHeaderTitle: { ...rtlText, color: COLORS.text, fontSize: 18, lineHeight: 27, fontWeight: '900', letterSpacing: -0.35 },
+  simpleSearchHeader: { minHeight: 82, paddingHorizontal: 20, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
+  simpleSearchBoxWrap: { paddingHorizontal: 16, paddingBottom: 8 },
+  simpleSearchResults: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 34 },
+  simpleSearchResultCount: { ...rtlText, width: '100%', color: COLORS.muted, fontSize: 9, marginBottom: 13, textAlign: 'right' },
   searchBox: { height: 52, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, paddingHorizontal: 15, borderRadius: 14, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   searchInput: { flex: 1, color: COLORS.text, fontSize: 13, writingDirection: 'rtl' },
   searchFilters: { flexDirection: 'row-reverse', gap: 8, paddingTop: 13, paddingBottom: 2 },
@@ -6038,9 +6295,9 @@ const styles = StyleSheet.create({
   personAvatarInitials: { color: COLORS.gold, fontSize: 18, fontWeight: '900' },
   personCardName: { ...rtlText, width: '100%', minHeight: 31, color: COLORS.text, fontSize: 9.5, lineHeight: 15, fontWeight: '900', textAlign: 'center', marginTop: 8 },
   personCardRole: { color: COLORS.gold, fontSize: 7.5, fontWeight: '800', marginTop: 2 },
-  personCardCharacterRow: { width: '100%', minHeight: 14, marginTop: 3, paddingHorizontal: 2, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 3 },
-  personCardCharacterLabel: { color: COLORS.muted, fontSize: 6.8, fontWeight: '800' },
-  personCardCharacter: { minWidth: 0, flexShrink: 1, color: COLORS.muted, fontSize: 6.8, textAlign: 'left', writingDirection: 'ltr' },
+  personCardCharacterWrap: { width: '100%', minHeight: 29, marginTop: 3, paddingHorizontal: 2, alignItems: 'center' },
+  personCardCharacterLabel: { color: COLORS.gold, fontSize: 6.6, lineHeight: 10, fontWeight: '800', textAlign: 'center' },
+  personCardCharacter: { width: '100%', color: COLORS.muted, fontSize: 6.8, lineHeight: 10.5, textAlign: 'center', writingDirection: 'ltr' },
   personProfileScreen: { flex: 1, backgroundColor: COLORS.background },
   personProfileTopBar: { minHeight: 62, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: COLORS.border, backgroundColor: '#080A0E' },
   personProfileTopTitle: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 14, fontWeight: '900', textAlign: 'center' },
@@ -6072,6 +6329,7 @@ const styles = StyleSheet.create({
   playerPreparingText: { ...rtlText, color: '#fff', fontSize: 9.5, fontWeight: '800', marginTop: 9 },
   nativePlayerTopBar: { position: 'absolute', zIndex: 30, left: 8, right: 8, minHeight: 42, paddingHorizontal: 2, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(0,0,0,0.18)', borderRadius: 14 },
   nativePlayerTopButton: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.78)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  playerBottomSettingsButton: { position: 'absolute', zIndex: 46, width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   nativePlayerTitle: { ...rtlText, minWidth: 0, flex: 1, color: '#fff', fontSize: 10.5, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   nativePlayerStatusText: { ...rtlText, color: 'rgba(255,255,255,0.66)', fontSize: 8.5, textAlign: 'center', marginTop: 13 },
   playerScreenCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
@@ -6185,6 +6443,10 @@ const styles = StyleSheet.create({
   playerSettingsCardLandscape: { width: 236, maxWidth: '40%', maxHeight: '70%' },
   playerSettingsHeader: { minHeight: 30, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   playerSettingsTitle: { ...rtlText, color: '#fff', fontSize: 12, fontWeight: '900' },
+  playerSettingsRow: { minHeight: 42, marginTop: 7, paddingHorizontal: 10, borderRadius: 10, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(255,255,255,0.055)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
+  playerSettingsRowMain: { minWidth: 0, flex: 1, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  playerSettingsRowTitle: { ...rtlText, color: '#fff', fontSize: 9.2, fontWeight: '900' },
+  playerSettingsRowValue: { color: COLORS.gold, fontSize: 8.5, fontWeight: '900', writingDirection: 'ltr' },
   playerSettingsClose: { width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
   playerSettingsLabel: { ...rtlText, color: COLORS.muted, fontSize: 8.5, fontWeight: '800', marginTop: 9, marginBottom: 6 },
   playerSettingsOptions: { marginTop: 7, flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 5 },
