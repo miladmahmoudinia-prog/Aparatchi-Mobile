@@ -49,6 +49,31 @@ const asString = (value: unknown, fallback = '') =>
     ? String(value).trim()
     : fallback;
 
+const REMOTE_ASSET_BASE = (() => {
+  const remote = REMOTE_CONTENT_URL.trim();
+  if (!remote) return '';
+  try {
+    return new URL('.', remote).toString();
+  } catch {
+    return '';
+  }
+})();
+
+const resolveCatalogAsset = (value: unknown) => {
+  const raw = asString(value).trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw.replace(/^http:\/\//i, 'https://');
+  if (/^\/\//.test(raw)) return `https:${raw}`;
+  if (/^(?:\.\/)?assets\//i.test(raw) && REMOTE_ASSET_BASE) {
+    try {
+      return new URL(raw.replace(/^\.\//, ''), REMOTE_ASSET_BASE).toString();
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+};
+
 
 const DAY_ALIASES: Record<string, DayId> = {
   saturday: 'saturday', شنبه: 'saturday',
@@ -155,10 +180,12 @@ const normalizePersonRole = (value: unknown, fallback: CatalogPerson['role'] | n
 };
 
 const normalizePersonImage = (value: unknown, source: 'tmdb' | 'upera' = 'upera') => {
-  const raw = asString(value).trim();
+  const resolved = resolveCatalogAsset(value);
+  const raw = resolved.trim();
   if (!raw || /default|placeholder|no[-_ ]?image/i.test(raw)) return '';
   if (/^https?:\/\//i.test(raw)) {
     const httpsUrl = raw.replace(/^http:\/\//i, 'https://');
+    if (/\/assets\/media\//i.test(httpsUrl)) return httpsUrl;
     return source === 'tmdb'
       ? httpsUrl.replace(
           /(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)/i,
@@ -647,10 +674,10 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const type = item.type === 'series' || item.type === 'movie' ? item.type : null;
   const nameFa = asString(item.nameFa ?? item.name_fa ?? item.name);
   const name = asString(item.name ?? item.nameFa ?? item.name_fa, nameFa);
-  const posterFallback = asString(item.posterFallback ?? item.poster_fallback);
-  const backdropFallback = asString(item.backdropFallback ?? item.backdrop_fallback);
-  const poster = asString(item.poster, posterFallback || backdropFallback);
-  const backdrop = asString(item.backdrop, backdropFallback || poster);
+  const posterFallback = resolveCatalogAsset(item.posterFallback ?? item.poster_fallback);
+  const backdropFallback = resolveCatalogAsset(item.backdropFallback ?? item.backdrop_fallback);
+  const poster = resolveCatalogAsset(item.poster) || posterFallback || backdropFallback;
+  const backdrop = resolveCatalogAsset(item.backdrop) || backdropFallback || poster;
   const countryMetadata = normalizeCountryMetadata(item);
   const iranian = asBoolean(item.ir) || countryMetadata.countryCodes.includes('IR');
   if (iranian && !countryMetadata.countryCodes.includes('IR')) {
@@ -865,7 +892,7 @@ const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | 
     id: asString(entry.id, `schedule-${itemId}-${day}-${index}`),
     itemId,
     nameFa: asString(entry.nameFa ?? entry.name_fa),
-    poster: asString(entry.poster),
+    poster: resolveCatalogAsset(entry.poster),
     day,
     ...(asString(entry.time) && !/نامشخص|اعلام\s*نشده|unknown|tbd/i.test(asString(entry.time))
       ? { time: asString(entry.time) }

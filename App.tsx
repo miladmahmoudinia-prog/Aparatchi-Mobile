@@ -1105,33 +1105,14 @@ function CatalogArtwork({
       ? fallbackCandidate
       : '';
   const [stage, setStage] = useState(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
-  const [retryToken, setRetryToken] = useState(0);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   useEffect(() => {
-    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-    retryTimerRef.current = null;
-    setRetryToken(0);
     setStage(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
-    return () => {
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-    };
   }, [primaryUrl, fallbackUrl]);
 
   const remoteUrl = stage === 0 ? primaryUrl : stage === 1 ? fallbackUrl : '';
 
   const handleRemoteError = () => {
-    setStage((current) => {
-      if (current === 0 && fallbackUrl) return 1;
-      if (retryToken < 1 && (primaryUrl || fallbackUrl)) {
-        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = setTimeout(() => {
-          setRetryToken((token) => token + 1);
-          setStage(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
-        }, 2800);
-      }
-      return 2;
-    });
+    setStage((current) => current === 0 && fallbackUrl ? 1 : 2);
   };
 
   return (
@@ -1152,13 +1133,13 @@ function CatalogArtwork({
 
       {remoteUrl ? (
         <Image
-          key={`${remoteUrl}:${retryToken}`}
+          key={remoteUrl}
           source={{ uri: remoteUrl }}
           style={StyleSheet.absoluteFill}
           contentFit={contentFit}
           cachePolicy="memory-disk"
           transition={transition}
-          recyclingKey={`${remoteUrl}:${retryToken}`}
+          recyclingKey={remoteUrl}
           onError={handleRemoteError}
         />
       ) : null}
@@ -1466,17 +1447,35 @@ function WeeklySchedule({
   iranianSchedule,
   weeklySchedule,
   onOpenItem,
+  isActive,
 }: {
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
   weeklySchedule: ScheduleEntry[];
   onOpenItem: (item: CatalogItem) => void;
+  isActive: boolean;
 }) {
   const [selectedDay, setSelectedDay] = useState<DayId>(() => localDayId());
   const [filter, setFilter] = useState<ScheduleFilter>('all');
   const [foreignEntries, setForeignEntries] = useState<ScheduleEntry[]>([]);
   const [loadingForeign, setLoadingForeign] = useState(true);
   const { width: scheduleViewportWidth } = useWindowDimensions();
+  const daysScrollRef = useRef<ScrollView>(null);
+
+  const selectTodayAndScroll = useCallback((animated = true) => {
+    const today = localDayId();
+    setSelectedDay(today);
+    const index = Math.max(0, DAYS.findIndex((day) => day.id === today));
+    const itemWidth = 83;
+    const contentWidth = DAYS.length * 76 + (DAYS.length - 1) * 7;
+    const visualIndexFromLeft = DAYS.length - 1 - index;
+    const itemCenter = visualIndexFromLeft * itemWidth + 38;
+    const target = Math.max(
+      0,
+      Math.min(contentWidth - scheduleViewportWidth, itemCenter - scheduleViewportWidth / 2),
+    );
+    requestAnimationFrame(() => daysScrollRef.current?.scrollTo({ x: target, animated }));
+  }, [scheduleViewportWidth]);
 
   useEffect(() => {
     let mounted = true;
@@ -1546,7 +1545,13 @@ function WeeklySchedule({
   }, [catalogById, catalogByName, foreignEntries, inferredEntries, iranianSchedule, weeklySchedule]);
 
   useEffect(() => {
-    const syncToday = () => setSelectedDay((current) => current === localDayId() ? current : localDayId());
+    if (isActive) selectTodayAndScroll(false);
+  }, [isActive, selectTodayAndScroll]);
+
+  useEffect(() => {
+    const syncToday = () => {
+      if (isActive) selectTodayAndScroll(true);
+    };
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') syncToday();
     });
@@ -1555,7 +1560,7 @@ function WeeklySchedule({
       clearInterval(timer);
       subscription.remove();
     };
-  }, []);
+  }, [isActive, selectTodayAndScroll]);
 
   const dayEntries = allEntries.filter(
     (entry) =>
@@ -1574,6 +1579,7 @@ function WeeklySchedule({
       </View>
 
       <ScrollView
+        ref={daysScrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.daysRow}
@@ -2116,6 +2122,7 @@ function HomeScreen({
   onMenu,
   initialScrollOffset,
   onScrollOffset,
+  isActive,
 }: {
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
@@ -2130,6 +2137,7 @@ function HomeScreen({
   onMenu: () => void;
   initialScrollOffset: number;
   onScrollOffset: (offset: number) => void;
+  isActive: boolean;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const newest = useMemo(() => catalogItemsForFilter(catalog, 'latest'), [catalog]);
@@ -2200,7 +2208,7 @@ function HomeScreen({
       >
         <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} />
         <ContinueWatchingSection records={watchProgress} catalog={catalog} onResume={onResume} onRemove={onRemoveProgress} />
-        <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} weeklySchedule={weeklySchedule} onOpenItem={onOpen} />
+        <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} weeklySchedule={weeklySchedule} onOpenItem={onOpen} isActive={isActive} />
         {rows.slice(0, mountedRowCount).map((row) => row.items.length ? (
           <View key={row.filter}>
             <View style={styles.catalogSection}>
@@ -2233,8 +2241,8 @@ const CATEGORY_ART_PALETTES: [string, string, string][] = [
 const CATEGORY_FALLBACK_ART: Record<string, number> = {
   movie: require('./assets/category-art/movies.jpg'),
   series: require('./assets/category-art/series.jpg'),
-  'anime-movies': require('./assets/category-art/animation-movies.jpg'),
-  'anime-series': require('./assets/category-art/animation-series.jpg'),
+  'anime-movies': require('./assets/category-art/anime-movies.jpg'),
+  'anime-series': require('./assets/category-art/anime-series.jpg'),
   'animation-movies': require('./assets/category-art/animation-movies.jpg'),
   'animation-series': require('./assets/category-art/animation-series.jpg'),
   'iranian-movies': require('./assets/category-art/iranian-movies.jpg'),
@@ -2248,7 +2256,7 @@ const CATEGORY_FALLBACK_ART: Record<string, number> = {
   'korean-movies': require('./assets/category-art/korean.jpg'),
   'korean-series': require('./assets/category-art/korean.jpg'),
   'indian-movies': require('./assets/category-art/indian.jpg'),
-  'japanese-movies': require('./assets/category-art/foreign-movies.jpg'),
+  'japanese-movies': require('./assets/category-art/japanese.jpg'),
   collections: require('./assets/category-art/collections.jpg'),
   documentaries: require('./assets/category-art/documentaries.jpg'),
   programs: require('./assets/category-art/programs.jpg'),
@@ -2326,21 +2334,7 @@ function CategoriesScreen({
     ).slice(0, 40);
   }, [catalog, deferredQuery]);
 
-  const categoryPreviews = useMemo(() => {
-    const map = new Map<SearchFilter, CatalogItem>();
-    const used = new Set<string>();
-    for (const card of cards) {
-      const candidates = catalogItemsForFilter(catalog, card.filter)
-        .filter((item) => Boolean(item.backdrop || item.poster || item.backdropFallback || item.posterFallback))
-        .sort((a, b) => categoryPreviewScore(b) - categoryPreviewScore(a));
-      const preview = candidates.find((item) => !used.has(item.id)) || candidates[0];
-      if (preview) {
-        map.set(card.filter, preview);
-        used.add(preview.id);
-      }
-    }
-    return map;
-  }, [catalog]);
+
 
   const topGenres = useMemo(() => [...new Set(catalog.flatMap((item) => item.genres || []))].filter(Boolean).slice(0, 14), [catalog]);
   const topCountries = useMemo(() => [...new Set(catalog.flatMap((item) => item.countryCodes || []))].slice(0, 12), [catalog]);
@@ -2378,20 +2372,18 @@ function CategoriesScreen({
         <>
           <View style={[styles.categoryGrid, { gap: gridGap }]}>
             {cards.map((card, cardIndex) => {
-              const preview = categoryPreviews.get(card.filter);
               return (
                 <Pressable
                   key={card.filter}
                   onPress={() => onBrowse(card.filter)}
                   style={[styles.categoryCard, { width: categoryWidth }]}
                 >
-                  {preview || CATEGORY_FALLBACK_ART[card.filter] ? (
-                    <CatalogArtwork
-                      primary={preview?.backdrop || preview?.poster}
-                      fallback={preview?.backdropFallback || preview?.posterFallback || preview?.poster}
-                      localFallback={CATEGORY_FALLBACK_ART[card.filter]}
+                  {CATEGORY_FALLBACK_ART[card.filter] ? (
+                    <Image
+                      source={CATEGORY_FALLBACK_ART[card.filter]}
                       style={StyleSheet.absoluteFill}
                       contentFit="cover"
+                      cachePolicy="memory-disk"
                       transition={90}
                     />
                   ) : (
@@ -4018,8 +4010,6 @@ function VideoPlayerModal({
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const [firstFrameReady, setFirstFrameReady] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [timelineWidth, setTimelineWidth] = useState(0);
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
@@ -4095,10 +4085,6 @@ function VideoPlayerModal({
     }
   });
 
-  useEventListener(player, 'playingChange', ({ isPlaying: nextIsPlaying }) => {
-    setIsPlaying(Boolean(nextIsPlaying));
-  });
-
   useEventListener(player, 'timeUpdate', ({ currentTime: nextCurrentTime }) => {
     const position = Math.max(0, Number(nextCurrentTime || 0));
     const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
@@ -4154,37 +4140,6 @@ function VideoPlayerModal({
       return;
     }
     closePlayer();
-  };
-
-  const togglePlayback = () => {
-    if (isPlaying) player.pause();
-    else player.play();
-    revealControls();
-  };
-
-  const seekBy = (seconds: number) => {
-    player.seekBy(seconds);
-    const maximum = Number(player.duration || latestDurationRef.current || 0);
-    const nextTime = Math.max(
-      0,
-      Math.min(
-        maximum > 0 ? maximum : Number.MAX_SAFE_INTEGER,
-        Number(player.currentTime || latestTimeRef.current || 0) + seconds,
-      ),
-    );
-    latestTimeRef.current = nextTime;
-    setCurrentTime(nextTime);
-    revealControls();
-  };
-
-  const seekFromTimeline = (locationX: number) => {
-    if (!timelineWidth || !duration) return;
-    const ratio = Math.max(0, Math.min(1, locationX / timelineWidth));
-    const nextTime = ratio * duration;
-    player.currentTime = nextTime;
-    latestTimeRef.current = nextTime;
-    setCurrentTime(nextTime);
-    revealControls();
   };
 
   const switchQuality = async (nextSource: PlaybackSource) => {
@@ -4255,7 +4210,17 @@ function VideoPlayerModal({
           <VideoView
             player={player}
             style={[styles.videoView, !firstFrameReady && styles.videoViewPreparing]}
-            nativeControls={false}
+            nativeControls={firstFrameReady && !switchingQuality && !settingsOpen}
+            buttonOptions={{
+              showBottomBar: true,
+              showPlayPause: true,
+              showSeekBackward: true,
+              showSeekForward: true,
+              showNext: false,
+              showPrevious: false,
+              showSettings: false,
+              showSubtitles: false,
+            }}
             contentFit={displayMode === 'fill' ? 'cover' : 'contain'}
             allowsPictureInPicture
             allowsFullscreen={false}
@@ -4267,114 +4232,47 @@ function VideoPlayerModal({
             }}
           />
 
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={revealControls}
-            accessibilityLabel="نمایش کنترل‌های پخش"
-          />
+          {chromeVisible ? (
+            <View
+              pointerEvents="box-none"
+              style={[
+                styles.nativePlayerTopBar,
+                {
+                  top: landscape ? Math.max(8, insets.top + 4) : 8,
+                  left: landscapeLeftInset,
+                  right: landscapeRightInset,
+                },
+              ]}
+            >
+              <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
+                <Ionicons name="close" color="#fff" size={21} />
+              </Pressable>
+              <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
+              <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
+                <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
+              </Pressable>
+            </View>
+          ) : null}
 
           {chromeVisible && firstFrameReady && !switchingQuality ? (
-            <View style={styles.playerControlsLayer} pointerEvents="box-none">
-              <LinearGradient
-                colors={['rgba(0,0,0,0.72)', 'rgba(0,0,0,0)']}
-                style={styles.playerTopGradient}
-                pointerEvents="none"
-              />
-              <LinearGradient
-                colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.82)']}
-                style={styles.playerBottomGradient}
-                pointerEvents="none"
-              />
-
-              <View
-                pointerEvents="box-none"
-                style={[
-                  styles.nativePlayerTopBar,
-                  {
-                    top: landscape ? Math.max(8, insets.top + 4) : 8,
-                    left: landscapeLeftInset,
-                    right: landscapeRightInset,
-                  },
-                ]}
-              >
-                <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
-                  <Ionicons name="close" color="#fff" size={21} />
-                </Pressable>
-                <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
-                <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
-                  <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
-                </Pressable>
-              </View>
-
-              <View style={styles.playerCenterZone} pointerEvents="box-none">
-                <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
-                  <Pressable onPress={() => seekBy(-5)} style={styles.playerRoundButton} accessibilityLabel="پنج ثانیه عقب">
-                    <Ionicons name="play-back-outline" color="#fff" size={27} />
-                    <Text style={styles.playerSkipText}>۵</Text>
-                  </Pressable>
-                  <Pressable onPress={togglePlayback} style={styles.playerPrimaryButton} accessibilityLabel={isPlaying ? 'توقف' : 'پخش'}>
-                    <Ionicons name={isPlaying ? 'pause' : 'play'} color="#090B0F" size={31} />
-                  </Pressable>
-                  <Pressable onPress={() => seekBy(15)} style={styles.playerRoundButton} accessibilityLabel="پانزده ثانیه جلو">
-                    <Ionicons name="play-forward-outline" color="#fff" size={27} />
-                    <Text style={styles.playerSkipText}>۱۵</Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              <View
-                style={[
-                  styles.playerBottomPanel,
-                  landscape && styles.playerBottomPanelLandscape,
-                  {
-                    left: landscape ? landscapeLeftInset : 10,
-                    right: landscape ? landscapeRightInset : 10,
-                    bottom: landscape ? Math.max(8, insets.bottom + 4) : 6,
-                  },
-                ]}
-              >
-                <Pressable
-                  style={styles.playerTimelineWrap}
-                  onLayout={(event) => setTimelineWidth(event.nativeEvent.layout.width)}
-                  onPress={(event) => seekFromTimeline(event.nativeEvent.locationX)}
-                >
-                  <View style={styles.playerTimelineTrack}>
-                    <View style={styles.playerTimelineRail} />
-                    <View
-                      style={[
-                        styles.playerTimelineFill,
-                        { width: `${duration > 0 ? Math.min(100, Math.max(0, currentTime / duration * 100)) : 0}%` },
-                      ]}
-                    />
-                    <View
-                      style={[
-                        styles.playerTimelineThumb,
-                        { left: `${duration > 0 ? Math.min(100, Math.max(0, currentTime / duration * 100)) : 0}%` },
-                      ]}
-                    />
-                  </View>
-                </Pressable>
-                <View style={styles.playerTimeRow}>
-                  <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
-                  <Text numberOfLines={1} style={styles.playerVersionText}>{activeSource.quality || request.title}</Text>
-                  <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
-                </View>
-                <View style={styles.playerBottomTools}>
-                  <Pressable
-                    onPress={() => {
-                      clearControlsTimer();
-                      setControlsVisible(true);
-                      setSettingsSection('speed');
-                      setSettingsOpen(true);
-                    }}
-                    style={styles.nativePlayerTopButton}
-                    accessibilityLabel="تنظیمات سرعت و کیفیت"
-                  >
-                    <Ionicons name="settings-outline" color="#fff" size={22} />
-                  </Pressable>
-                </View>
-              </View>
-            </View>
+            <Pressable
+              onPress={() => {
+                clearControlsTimer();
+                setControlsVisible(true);
+                setSettingsSection('speed');
+                setSettingsOpen(true);
+              }}
+              style={[
+                styles.playerBottomSettingsButton,
+                {
+                  left: landscapeLeftInset,
+                  bottom: landscape ? Math.max(62, insets.bottom + 22) : 68,
+                },
+              ]}
+              accessibilityLabel="تنظیمات سرعت و کیفیت"
+            >
+              <Ionicons name="settings-outline" color="#fff" size={20} />
+            </Pressable>
           ) : null}
         </View>
 
@@ -4938,9 +4836,23 @@ function AppContent() {
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
       .then((library) => {
+        const isLegacyDemoRecord = (record: WatchProgressRecord | WatchHistoryRecord) =>
+          /دو\s*جهان\s*یک\s*آرزو/i.test(normalizeComparableText(record.title || ''));
+        const watchProgress = library.watchProgress.filter((record) => !isLegacyDemoRecord(record));
+        const watchHistory = library.watchHistory.filter((record) => !isLegacyDemoRecord(record));
         setFavorites(library.favorites);
-        setWatchProgress(library.watchProgress);
-        setWatchHistory(library.watchHistory);
+        setWatchProgress(watchProgress);
+        setWatchHistory(watchHistory);
+        if (
+          watchProgress.length !== library.watchProgress.length ||
+          watchHistory.length !== library.watchHistory.length
+        ) {
+          void saveLibraryState({
+            favorites: library.favorites,
+            watchProgress,
+            watchHistory,
+          });
+        }
       })
       .finally(() => setLibraryLoaded(true));
     initializeEpisodeAlertSystem()
@@ -5018,7 +4930,7 @@ function AppContent() {
       ...newest.slice(0, 16).flatMap((item) =>
         (item.people || []).slice(0, 5).map((person) => optimizedImageUrl(person.image, 'person')),
       ),
-    ].filter((url) => isSafeHttpUrl(url) && !isPlaceholderUrl(url)))].slice(0, 60);
+    ].filter((url) => isSafeHttpUrl(url) && !isPlaceholderUrl(url)))].slice(0, 36);
 
     const prepare = async () => {
       if (!essentialUrls.length) {
@@ -5041,7 +4953,7 @@ function AppContent() {
           try {
             await Promise.race([
               Image.prefetch(essentialUrls[index]),
-              new Promise((resolve) => setTimeout(resolve, 1500)),
+              new Promise((resolve) => setTimeout(resolve, 900)),
             ]);
           } catch {
             // A broken image must not block app startup.
@@ -5052,7 +4964,7 @@ function AppContent() {
       });
       await Promise.race([
         Promise.allSettled(workers),
-        new Promise((resolve) => setTimeout(resolve, 11000)),
+        new Promise((resolve) => setTimeout(resolve, 6500)),
       ]);
       if (INITIAL_ASSETS_MARKER) {
         await FileSystem.writeAsStringAsync(
@@ -5902,6 +5814,7 @@ function AppContent() {
               onMenu={() => setMenuOpen(true)}
               initialScrollOffset={homeScrollOffset}
               onScrollOffset={setHomeScrollOffset}
+              isActive={activeTab === 'home'}
             />
           </View>
         ) : null}
