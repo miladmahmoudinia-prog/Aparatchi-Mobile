@@ -118,6 +118,16 @@ export type CatalogItem = {
   nextEpisodeSeasonNumber?: number;
   nextEpisodeNumber?: number;
   isAiring?: boolean;
+  /** وضعیت انتشار آرشیو سریال در اپ. */
+  publicationStatus?: 'published' | 'building-archive';
+  /** آیا تمام قسمت‌های کشف‌شده دارای لینک قابل‌استفاده‌اند. */
+  archiveComplete?: boolean;
+  /** تعداد قسمت‌هایی که هنوز باید به آرشیو اضافه شوند. */
+  archivePendingEpisodeCount?: number;
+  /** تعداد قسمت‌هایی که منبع برای این سریال گزارش کرده است. */
+  sourceEpisodeCount?: number;
+  /** وضعیت بررسی کامل آرشیو قدیمی. */
+  archiveAuditStatus?: 'pending' | 'checked';
   updateLabel?: string;
   meaningfulUpdatedAt?: string;
   categoryKeys?: string[];

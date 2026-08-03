@@ -156,6 +156,29 @@ const scheduleTimeValue = (value?: string) => {
   return text;
 };
 
+
+type CatalogPublicationMetadata = {
+  publicationStatus?: 'published' | 'building-archive' | string;
+  archiveComplete?: boolean;
+  archivePendingEpisodeCount?: number;
+  sourceEpisodeCount?: number;
+};
+
+const catalogPublicationMetadata = (item: CatalogItem) =>
+  item as CatalogItem & CatalogPublicationMetadata;
+
+const isSeriesPublished = (item: CatalogItem) =>
+  item.type !== 'series' ||
+  catalogPublicationMetadata(item).publicationStatus !== 'building-archive';
+
+const isCurrentScheduleSeries = (item?: CatalogItem | null) => {
+  if (!item || item.type !== 'series' || !isSeriesPublished(item)) return false;
+  if (item.isAiring === true) return true;
+  const nextEpisodeTimestamp = Date.parse(String(item.nextEpisodeAirDate || ''));
+  return Number.isFinite(nextEpisodeTimestamp) &&
+    nextEpisodeTimestamp >= Date.now() - 2 * 24 * 60 * 60 * 1000;
+};
+
 const isDirectMediaUrl = (url: string) =>
   /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
 
@@ -222,24 +245,18 @@ const dayFromDateValue = (value?: string): DayId | null => {
   return localDayId(new Date(timestamp));
 };
 
-const inferredScheduleFromCatalog = (catalog: CatalogItem[]): ScheduleEntry[] => {
-  const now = Date.now();
-  return catalog.flatMap((item) => {
-    if (item.type !== 'series') return [];
+const inferredScheduleFromCatalog = (catalog: CatalogItem[]): ScheduleEntry[] =>
+  catalog.flatMap((item) => {
+    if (!isCurrentScheduleSeries(item)) return [];
 
     const overrideDay = SCHEDULE_DAY_OVERRIDES.find(({ pattern }) =>
       pattern.test(normalizeComparableText(item.nameFa)),
     )?.day;
     const explicitDay = item.airDays?.find((day) => DAY_INDEX.includes(day));
     const nextEpisodeDay = dayFromDateValue(item.nextEpisodeAirDate);
-    const recentTimestampValue =
-      item.meaningfulUpdatedAt || item.sourceUpdatedAt || item.updatedAt || item.sourceCreatedAt || item.createdAt;
-    const recentTimestamp = Date.parse(String(recentTimestampValue || ''));
-    const recentlyUpdated = Number.isFinite(recentTimestamp) && now - recentTimestamp <= 45 * 24 * 60 * 60 * 1000;
-    const recentDay = recentlyUpdated ? DAY_INDEX[new Date(recentTimestamp).getDay()] : null;
-    const day = overrideDay || explicitDay || nextEpisodeDay || recentDay;
+    const day = overrideDay || explicitDay || nextEpisodeDay;
 
-    if (!day || (!item.isAiring && !item.nextEpisodeAirDate && !recentlyUpdated && !overrideDay)) return [];
+    if (!day) return [];
 
     return [{
       id: `catalog-schedule-${item.id}-${day}`,
@@ -251,11 +268,10 @@ const inferredScheduleFromCatalog = (catalog: CatalogItem[]): ScheduleEntry[] =>
       ...(item.nextEpisodeSeasonNumber ? { season: item.nextEpisodeSeasonNumber } : {}),
       ...(item.nextEpisodeNumber ? { episode: item.nextEpisodeNumber } : {}),
       region: isIranianItem(item) ? 'iranian' : 'foreign',
-      sourceLabel: item.nextEpisodeAirDate ? 'برنامه رسمی پخش' : 'بر اساس آخرین به‌روزرسانی',
-      verifiedAt: item.nextEpisodeAirDate || String(recentTimestampValue || ''),
+      sourceLabel: item.nextEpisodeAirDate ? 'برنامه رسمی پخش' : 'برنامه ثبت‌شده',
+      verifiedAt: item.nextEpisodeAirDate || item.updatedAt || '',
     } satisfies ScheduleEntry];
   });
-};
 
 const downloadModeFor = (file: DownloadFile): NonNullable<DownloadFile['mode']> =>
   file.mode || 'download';
@@ -790,6 +806,7 @@ const mediaKindLabel = (item: CatalogItem) => {
 };
 
 const itemHasUsableContent = (item: CatalogItem) => {
+  if (!isSeriesPublished(item)) return false;
   const files = (item.downloads || []).flatMap((section) => section.files || []);
   const hasOperator = files.some((file) =>
     isOperatorFile(file) && isSafeHttpUrl(file.url) && isOperatorPortalUrl(file.url),
@@ -1447,6 +1464,7 @@ function WeeklySchedule({
   const [loadingForeign, setLoadingForeign] = useState(true);
   const { width: scheduleViewportWidth } = useWindowDimensions();
   const daysScrollRef = useRef<ScrollView>(null);
+  const [schedulePage, setSchedulePage] = useState(0);
 
   const selectTodayAndScroll = useCallback((animated = true) => {
     const today = localDayId();
@@ -1497,18 +1515,17 @@ function WeeklySchedule({
 
     const addEntry = (entry: ScheduleEntry) => {
       const item = catalogById.get(String(entry.itemId)) || catalogByName.get(normalizeComparableText(entry.nameFa));
-      const normalized: ScheduleEntry = item?.type === 'series'
-        ? {
-            ...entry,
-            itemId: String(item.id),
-            nameFa: item.nameFa || entry.nameFa,
-            poster: item.poster || entry.poster,
-            region: isIranianItem(item) ? 'iranian' : 'foreign',
-          }
-        : {
-            ...entry,
-            itemId: String(entry.itemId || entry.id),
-          };
+      // Weekly schedule must only contain real, currently airing catalog
+      // series. Stale static entries and completed shows are ignored.
+      if (!item || !isCurrentScheduleSeries(item)) return;
+
+      const normalized: ScheduleEntry = {
+        ...entry,
+        itemId: String(item.id),
+        nameFa: item.nameFa || entry.nameFa,
+        poster: item.poster || entry.poster,
+        region: isIranianItem(item) ? 'iranian' : 'foreign',
+      };
 
       // Later, more authoritative sources replace fallback entries even when
       // the fallback guessed a different weekday. Keeping the day in the key
@@ -1553,6 +1570,22 @@ function WeeklySchedule({
       entry.day === selectedDay && (filter === 'all' || entry.region === filter),
   );
   const scheduleLoading = loadingForeign && filter !== 'iranian';
+  const schedulePageSize = 2;
+  const schedulePageCount = Math.max(1, Math.ceil(dayEntries.length / schedulePageSize));
+  const visibleScheduleEntries = dayEntries.slice(
+    schedulePage * schedulePageSize,
+    schedulePage * schedulePageSize + schedulePageSize,
+  );
+
+  useEffect(() => {
+    setSchedulePage(0);
+  }, [selectedDay, filter, dayEntries.length]);
+
+  useEffect(() => {
+    if (schedulePage >= schedulePageCount) {
+      setSchedulePage(Math.max(0, schedulePageCount - 1));
+    }
+  }, [schedulePage, schedulePageCount]);
 
   return (
     <View style={styles.scheduleSection}>
@@ -1612,31 +1645,61 @@ function WeeklySchedule({
       ) : null}
 
       {dayEntries.length ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.scheduleHorizontalList}
-          style={styles.scheduleHorizontalViewport}
-          decelerationRate="fast"
-        >
-          {dayEntries.map((entry) => {
-            const item = catalog.find((candidate) => String(candidate.id) === String(entry.itemId)) || catalogByName.get(normalizeComparableText(entry.nameFa));
-            const availableWidth = Math.max(270, scheduleViewportWidth - 52);
-            const compact = dayEntries.length > 1;
-            const cardWidth = compact
-              ? Math.max(148, Math.min(196, (availableWidth - 8) / 2))
-              : availableWidth;
-            return (
-              <ScheduleCard
-                key={`${entry.id}:${entry.day}`}
-                entry={entry}
-                compact={compact}
-                width={cardWidth}
-                onOpen={() => item ? onOpenItem(item) : Alert.alert('برنامه هفتگی', 'صفحه این سریال هنوز در کاتالوگ پیدا نشده است.')}
-              />
-            );
-          })}
-        </ScrollView>
+        <>
+          <View style={styles.schedulePagerMeta}>
+            <Text style={styles.schedulePagerCount}>
+              {toPersianDigits(schedulePage + 1)} از {toPersianDigits(schedulePageCount)}
+            </Text>
+            <Text style={styles.schedulePagerHint}>
+              {toPersianDigits(dayEntries.length)} عنوان برای این روز
+            </Text>
+          </View>
+          <View style={styles.schedulePagerRow}>
+            <Pressable
+              accessibilityLabel="صفحه قبلی برنامه هفتگی"
+              disabled={schedulePage <= 0}
+              onPress={() => setSchedulePage((page) => Math.max(0, page - 1))}
+              style={[
+                styles.scheduleArrowButton,
+                schedulePage <= 0 && styles.scheduleArrowButtonDisabled,
+              ]}
+            >
+              <Ionicons name="chevron-forward" color={COLORS.gold} size={22} />
+            </Pressable>
+
+            <View style={styles.schedulePageCards}>
+              {visibleScheduleEntries.map((entry) => {
+                const item = catalogById.get(String(entry.itemId)) || catalogByName.get(normalizeComparableText(entry.nameFa));
+                const availableWidth = Math.max(236, scheduleViewportWidth - 126);
+                const compact = dayEntries.length > 1;
+                const cardWidth = visibleScheduleEntries.length > 1
+                  ? Math.max(132, Math.min(188, (availableWidth - 8) / 2))
+                  : availableWidth;
+                return (
+                  <ScheduleCard
+                    key={`${entry.id}:${entry.day}`}
+                    entry={entry}
+                    compact={compact}
+                    width={cardWidth}
+                    onOpen={() => item ? onOpenItem(item) : Alert.alert('برنامه هفتگی', 'صفحه این سریال هنوز در کاتالوگ پیدا نشده است.')}
+                  />
+                );
+              })}
+            </View>
+
+            <Pressable
+              accessibilityLabel="صفحه بعدی برنامه هفتگی"
+              disabled={schedulePage >= schedulePageCount - 1}
+              onPress={() => setSchedulePage((page) => Math.min(schedulePageCount - 1, page + 1))}
+              style={[
+                styles.scheduleArrowButton,
+                schedulePage >= schedulePageCount - 1 && styles.scheduleArrowButtonDisabled,
+              ]}
+            >
+              <Ionicons name="chevron-back" color={COLORS.gold} size={22} />
+            </Pressable>
+          </View>
+        </>
       ) : !scheduleLoading ? (
         <View style={styles.scheduleEmpty}>
           <Ionicons name="calendar-outline" color={COLORS.muted} size={28} />
@@ -2425,8 +2488,8 @@ function CategoriesScreen({
                     );
                   })()}
                   <LinearGradient
-                    colors={['rgba(6,8,11,0.00)', 'rgba(6,8,11,0.18)', 'rgba(6,8,11,0.92)']}
-                    locations={[0, 0.36, 1]}
+                    colors={['rgba(6,8,11,0.00)', 'rgba(6,8,11,0.08)', 'rgba(6,8,11,0.88)']}
+                    locations={[0, 0.42, 1]}
                     style={styles.categoryTextShade}
                   />
                   <View style={styles.categoryCardIcon}><Ionicons name={card.icon} color={COLORS.gold} size={22} /></View>
@@ -6121,6 +6184,13 @@ const styles = StyleSheet.create({
   scheduleGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', alignItems: 'stretch', justifyContent: 'space-between' },
   scheduleHorizontalViewport: { marginTop: 1, flexGrow: 0 },
   scheduleHorizontalList: { flexDirection: 'row-reverse', gap: 8, paddingVertical: 2, paddingHorizontal: 1 },
+  schedulePagerMeta: { marginTop: 7, marginBottom: 7, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
+  schedulePagerCount: { ...rtlText, color: COLORS.gold, fontSize: 9, fontWeight: '900' },
+  schedulePagerHint: { ...rtlText, color: COLORS.muted, fontSize: 8.5 },
+  schedulePagerRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  schedulePageCards: { flex: 1, minWidth: 0, flexDirection: 'row-reverse', justifyContent: 'center', alignItems: 'stretch', gap: 8 },
+  scheduleArrowButton: { width: 34, height: 72, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.10)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
+  scheduleArrowButtonDisabled: { opacity: 0.22 },
   scheduleCard: { minHeight: 72, flexDirection: 'row-reverse', alignItems: 'center', gap: 9, padding: 7, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   scheduleCardCompact: { height: 88, minHeight: 88, alignItems: 'center', padding: 7, gap: 7 },
   schedulePoster: { width: 48, height: 58, borderRadius: 8, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
@@ -6499,12 +6569,12 @@ const styles = StyleSheet.create({
   catalogListContent: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 112 },
   categoryGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', marginTop: 16, marginBottom: 24 },
   categoryCard: { minHeight: 176, padding: 13, borderRadius: 18, overflow: 'hidden', alignItems: 'flex-end', justifyContent: 'space-between', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.25)' },
-  categoryTextShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '52%' },
+  categoryTextShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '46%' },
   categoryFallbackArt: { flex: 1, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-8deg' }] },
   categoryCardIcon: { width: 39, height: 39, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(8,10,14,0.78)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
-  categoryCardTextWrap: { width: '100%', alignItems: 'flex-end' },
-  categoryCardTitle: { ...rtlText, color: COLORS.text, fontSize: 12.5, fontWeight: '900', width: '100%', textShadowColor: 'rgba(0,0,0,0.72)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
-  categoryCardSubtitle: { ...rtlText, color: '#CDD0D5', fontSize: 8.2, lineHeight: 15, marginTop: 5, width: '100%', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  categoryCardTextWrap: { width: '100%', alignItems: 'flex-end', paddingHorizontal: 9, paddingVertical: 8, borderRadius: 12, backgroundColor: 'rgba(5,7,10,0.74)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
+  categoryCardTitle: { ...rtlText, color: '#FFFFFF', fontSize: 12.5, fontWeight: '900', width: '100%', textShadowColor: 'rgba(0,0,0,0.98)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 7 },
+  categoryCardSubtitle: { ...rtlText, color: '#E1E4E8', fontSize: 8.2, lineHeight: 15, marginTop: 4, width: '100%', textShadowColor: 'rgba(0,0,0,0.98)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6 },
   dynamicChips: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginTop: 11, marginBottom: 22 },
   dynamicChip: { minHeight: 37, paddingHorizontal: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   dynamicChipText: { color: COLORS.text, fontSize: 9.5, fontWeight: '800' },
