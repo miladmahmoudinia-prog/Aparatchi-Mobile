@@ -1465,6 +1465,7 @@ function WeeklySchedule({
   const { width: scheduleViewportWidth } = useWindowDimensions();
   const daysScrollRef = useRef<ScrollView>(null);
   const [schedulePage, setSchedulePage] = useState(0);
+  const [scheduleCardsWidth, setScheduleCardsWidth] = useState(0);
 
   const selectTodayAndScroll = useCallback((animated = true) => {
     const today = localDayId();
@@ -1570,7 +1571,9 @@ function WeeklySchedule({
       entry.day === selectedDay && (filter === 'all' || entry.region === filter),
   );
   const scheduleLoading = loadingForeign && filter !== 'iranian';
-  const schedulePageSize = 2;
+  // On normal phones a single wider card is clearer and leaves a protected
+  // navigation gutter for the arrows. Wider screens can show two cards.
+  const schedulePageSize = scheduleViewportWidth < 430 ? 1 : 2;
   const schedulePageCount = Math.max(1, Math.ceil(dayEntries.length / schedulePageSize));
   const visibleScheduleEntries = dayEntries.slice(
     schedulePage * schedulePageSize,
@@ -1656,25 +1659,36 @@ function WeeklySchedule({
           </View>
           <View style={styles.schedulePagerRow}>
             <Pressable
-              accessibilityLabel="صفحه قبلی برنامه هفتگی"
-              disabled={schedulePage <= 0}
-              onPress={() => setSchedulePage((page) => Math.max(0, page - 1))}
-              style={[
+              accessibilityLabel="عناوین بعدی برنامه هفتگی"
+              disabled={schedulePage >= schedulePageCount - 1}
+              onPress={() => setSchedulePage((page) => Math.min(schedulePageCount - 1, page + 1))}
+              style={({ pressed }) => [
                 styles.scheduleArrowButton,
-                schedulePage <= 0 && styles.scheduleArrowButtonDisabled,
+                schedulePage >= schedulePageCount - 1 && styles.scheduleArrowButtonDisabled,
+                pressed && schedulePage < schedulePageCount - 1 && styles.scheduleArrowButtonPressed,
               ]}
             >
-              <Ionicons name="chevron-forward" color={COLORS.gold} size={22} />
+              <LinearGradient
+                colors={['rgba(216,180,90,0.28)', 'rgba(216,180,90,0.06)']}
+                style={styles.scheduleArrowGradient}
+              >
+                <Ionicons name="chevron-back" color={COLORS.gold} size={23} />
+              </LinearGradient>
             </Pressable>
 
-            <View style={styles.schedulePageCards}>
+            <View
+              style={styles.schedulePageCards}
+              onLayout={(event) => setScheduleCardsWidth(event.nativeEvent.layout.width)}
+            >
               {visibleScheduleEntries.map((entry) => {
                 const item = catalogById.get(String(entry.itemId)) || catalogByName.get(normalizeComparableText(entry.nameFa));
-                const availableWidth = Math.max(236, scheduleViewportWidth - 126);
-                const compact = dayEntries.length > 1;
+                const availableWidth = scheduleCardsWidth > 0
+                  ? scheduleCardsWidth
+                  : Math.max(190, scheduleViewportWidth - 150);
+                const compact = schedulePageSize > 1;
                 const cardWidth = visibleScheduleEntries.length > 1
-                  ? Math.max(132, Math.min(188, (availableWidth - 8) / 2))
-                  : availableWidth;
+                  ? Math.max(112, (availableWidth - 8) / 2)
+                  : Math.max(180, availableWidth);
                 return (
                   <ScheduleCard
                     key={`${entry.id}:${entry.day}`}
@@ -1688,15 +1702,21 @@ function WeeklySchedule({
             </View>
 
             <Pressable
-              accessibilityLabel="صفحه بعدی برنامه هفتگی"
-              disabled={schedulePage >= schedulePageCount - 1}
-              onPress={() => setSchedulePage((page) => Math.min(schedulePageCount - 1, page + 1))}
-              style={[
+              accessibilityLabel="عناوین قبلی برنامه هفتگی"
+              disabled={schedulePage <= 0}
+              onPress={() => setSchedulePage((page) => Math.max(0, page - 1))}
+              style={({ pressed }) => [
                 styles.scheduleArrowButton,
-                schedulePage >= schedulePageCount - 1 && styles.scheduleArrowButtonDisabled,
+                schedulePage <= 0 && styles.scheduleArrowButtonDisabled,
+                pressed && schedulePage > 0 && styles.scheduleArrowButtonPressed,
               ]}
             >
-              <Ionicons name="chevron-back" color={COLORS.gold} size={22} />
+              <LinearGradient
+                colors={['rgba(216,180,90,0.28)', 'rgba(216,180,90,0.06)']}
+                style={styles.scheduleArrowGradient}
+              >
+                <Ionicons name="chevron-forward" color={COLORS.gold} size={23} />
+              </LinearGradient>
             </Pressable>
           </View>
         </>
@@ -2179,7 +2199,7 @@ function HomeScreen({
   initialScrollOffset,
   onScrollOffset,
   isActive,
-  contentReady,
+  contentResolved,
 }: {
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
@@ -2195,7 +2215,7 @@ function HomeScreen({
   initialScrollOffset: number;
   onScrollOffset: (offset: number) => void;
   isActive: boolean;
-  contentReady: boolean;
+  contentResolved: boolean;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const newest = useMemo(() => catalogItemsForFilter(catalog, 'latest'), [catalog]);
@@ -2240,7 +2260,7 @@ function HomeScreen({
     <View style={styles.screen}>
       <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
       <View style={[styles.screen, styles.contentUnavailable]}>
-        {contentReady ? (
+        {contentResolved ? (
           <>
             <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={42} />
             <Text style={styles.largeEmptyTitle}>فهرست محتوا خالی است</Text>
@@ -4863,9 +4883,9 @@ function AppContent() {
   const [episodeAlertBusyId, setEpisodeAlertBusyId] = useState<string | null>(null);
   const [content, setContent] = useState<LoadedContent>(() => getBundledContent());
   const [contentReady, setContentReady] = useState(false);
+  const [contentResolved, setContentResolved] = useState(false);
   const [contentLoading, setContentLoading] = useState(false);
   const [startupVisible, setStartupVisible] = useState(true);
-  const [emptyStateAllowed, setEmptyStateAllowed] = useState(false);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
@@ -4980,43 +5000,63 @@ function AppContent() {
     if (!force && Date.now() - lastContentLoadRef.current < 5 * 60 * 1000) return;
     const initialLoad = lastContentLoadRef.current === 0;
     const showRefreshIndicator = force && !initialLoad;
-    if (showRefreshIndicator) {
-      setContentLoading(true);
-      setEmptyStateAllowed(false);
-    }
-    try {
-      // Startup only waits for the persisted/bundled catalog. Network refresh
-      // and image loading continue after the home screen has opened.
-      const nextContent = await loadContent(initialLoad);
+    const hadVisibleCatalog = content.items.length > 0;
+
+    if (showRefreshIndicator) setContentLoading(true);
+    if (!hadVisibleCatalog) setContentResolved(false);
+
+    const applyContent = (nextContent: LoadedContent) => {
+      if (!nextContent.items.length) return false;
       setContent(nextContent);
       lastContentLoadRef.current = Date.now();
-      const hasInitialItems = nextContent.items.length > 0;
-      if (hasInitialItems) {
-        setContentReady(true);
-        dismissStartup();
-      }
+      setContentReady(true);
+      setContentResolved(true);
       if (nextContent.source === 'remote') void syncEpisodeAlerts(nextContent.items, true);
+      return true;
+    };
 
-      if (initialLoad && nextContent.source !== 'remote') {
-        void loadContent(false).then((freshContent) => {
-          const hasFreshItems = freshContent.items.length > 0;
-          if (hasFreshItems) {
-            setContent(freshContent);
-            lastContentLoadRef.current = Date.now();
-            setContentReady(true);
-          }
-          if (freshContent.source === 'remote') void syncEpisodeAlerts(freshContent.items, true);
-          if (!hasFreshItems) setEmptyStateAllowed(true);
-          dismissStartup();
-        }).catch(() => {
-          setEmptyStateAllowed(true);
-          dismissStartup();
-        });
-      } else {
-        setContentReady(hasInitialItems);
-        if (!hasInitialItems) setEmptyStateAllowed(true);
+    try {
+      // First try the fast bundled/persisted catalog. When it is empty, keep
+      // the loading state visible until the remote attempt actually settles;
+      // this prevents the brief false "catalog is empty" screen at startup.
+      const firstContent = await loadContent(initialLoad);
+      const firstApplied = applyContent(firstContent);
+
+      if (firstApplied) {
         dismissStartup();
+        if (initialLoad && firstContent.source !== 'remote') {
+          void loadContent(false)
+            .then((freshContent) => { applyContent(freshContent); })
+            .catch(() => undefined);
+        }
+        return;
       }
+
+      if (initialLoad && firstContent.source !== 'remote') {
+        // The startup splash may close after its short hard limit, but Home
+        // continues to show its loading state—not the empty/error state—while
+        // this remote request is in flight.
+        dismissStartup();
+        try {
+          const freshContent = await loadContent(false);
+          if (!applyContent(freshContent)) {
+            setContentReady(false);
+            setContentResolved(true);
+          }
+        } catch {
+          setContentReady(false);
+          setContentResolved(true);
+        }
+        return;
+      }
+
+      setContentReady(false);
+      setContentResolved(true);
+      dismissStartup();
+    } catch {
+      setContentReady(false);
+      setContentResolved(true);
+      dismissStartup();
     } finally {
       if (showRefreshIndicator) setContentLoading(false);
     }
@@ -5024,7 +5064,6 @@ function AppContent() {
 
   useEffect(() => {
     const startupHardLimit = setTimeout(() => dismissStartup(), 1800);
-    const emptyStateTimer = setTimeout(() => setEmptyStateAllowed(true), 8000);
     reloadContent();
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
@@ -5065,7 +5104,6 @@ function AppContent() {
     return () => {
       clearTimeout(vpnRetryTimer);
       clearTimeout(startupHardLimit);
-      clearTimeout(emptyStateTimer);
       if (startupDismissTimerRef.current) clearTimeout(startupDismissTimerRef.current);
       subscription.remove();
     };
@@ -5893,7 +5931,7 @@ function AppContent() {
               initialScrollOffset={homeScrollOffset}
               onScrollOffset={setHomeScrollOffset}
               isActive={activeTab === 'home'}
-              contentReady={contentReady || emptyStateAllowed}
+              contentResolved={contentResolved}
             />
           </View>
         ) : null}
@@ -6187,11 +6225,13 @@ const styles = StyleSheet.create({
   schedulePagerMeta: { marginTop: 7, marginBottom: 7, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   schedulePagerCount: { ...rtlText, color: COLORS.gold, fontSize: 9, fontWeight: '900' },
   schedulePagerHint: { ...rtlText, color: COLORS.muted, fontSize: 8.5 },
-  schedulePagerRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  schedulePageCards: { flex: 1, minWidth: 0, flexDirection: 'row-reverse', justifyContent: 'center', alignItems: 'stretch', gap: 8 },
-  scheduleArrowButton: { width: 34, height: 72, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.10)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
-  scheduleArrowButtonDisabled: { opacity: 0.22 },
-  scheduleCard: { minHeight: 72, flexDirection: 'row-reverse', alignItems: 'center', gap: 9, padding: 7, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  schedulePagerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  schedulePageCards: { flex: 1, minWidth: 0, overflow: 'hidden', flexDirection: 'row-reverse', justifyContent: 'center', alignItems: 'stretch', gap: 8, paddingHorizontal: 1 },
+  scheduleArrowButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(216,180,90,0.46)', backgroundColor: '#11151B', shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 8, elevation: 4, zIndex: 3 },
+  scheduleArrowGradient: { width: '100%', height: '100%', borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  scheduleArrowButtonPressed: { transform: [{ scale: 0.94 }], opacity: 0.88 },
+  scheduleArrowButtonDisabled: { opacity: 0.20, elevation: 0 },
+  scheduleCard: { minHeight: 72, flexShrink: 1, overflow: 'hidden', flexDirection: 'row-reverse', alignItems: 'center', gap: 9, padding: 7, borderRadius: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   scheduleCardCompact: { height: 88, minHeight: 88, alignItems: 'center', padding: 7, gap: 7 },
   schedulePoster: { width: 48, height: 58, borderRadius: 8, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
   schedulePosterCompact: { width: 43, height: 58, borderRadius: 8 },
