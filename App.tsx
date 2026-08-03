@@ -13,6 +13,7 @@ import {
   AppState,
   BackHandler,
   FlatList,
+  InteractionManager,
   Linking,
   Modal,
   Pressable,
@@ -281,7 +282,7 @@ const isOperatorPortalUrl = (url?: string) => {
   if (!url || !isTrustedOperatorHostUrl(url)) return false;
   try {
     const parsed = new URL(url);
-    if (/(^|\.)redl\.ink$/i.test(parsed.hostname)) return true;
+    if (/(^|\.)redl\.ink$/i.test(parsed.hostname)) return Boolean(parsed.pathname && parsed.pathname !== '/');
     const decodedPath = decodeURIComponent(parsed.pathname || '');
     return /\/(?:stream|watch|play|download)(?:\/|$)/i.test(decodedPath) &&
       /\/(?:movie|series|episode)(?:\/|$)/i.test(decodedPath);
@@ -294,13 +295,7 @@ const operatorFilesFor = (files: DownloadFile[]) =>
   files.filter((file) => isOperatorFile(file) && isOperatorPortalUrl(file.url));
 
 const itemHasOperatorAccess = (item: CatalogItem) =>
-  Boolean(
-    item.operatorOnly ||
-    item.operatorAccess ||
-    item.access === 'operator' ||
-    item.categoryKeys?.includes('mobile-operator') ||
-    (item.downloads || []).some((section) => operatorFilesFor(section.files).length > 0),
-  );
+  (item.downloads || []).some((section) => operatorFilesFor(section.files).length > 0);
 
 const LANGUAGE_ORDER: MediaLanguage[] = ['dubbed', 'subtitled'];
 
@@ -654,6 +649,32 @@ const compareEpisodeGroupsNewestFirst = (a: DownloadSection, b: DownloadSection)
   const seasonDifference = Number(b.seasonNumber || 0) - Number(a.seasonNumber || 0);
   if (seasonDifference) return seasonDifference;
   return Number(b.episodeNumber || 0) - Number(a.episodeNumber || 0);
+};
+
+const sortableEpisodeNumber = (value: unknown) => {
+  const normalized = String(value ?? '')
+    .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)));
+  const match = normalized.match(/\d+/);
+  const number = match ? Number(match[0]) : 0;
+  return Number.isFinite(number) && number > 0 ? number : Number.POSITIVE_INFINITY;
+};
+
+const compareSortableEpisodeNumber = (left: unknown, right: unknown) => {
+  const a = sortableEpisodeNumber(left);
+  const b = sortableEpisodeNumber(right);
+  if (a === b) return 0;
+  if (!Number.isFinite(a)) return 1;
+  if (!Number.isFinite(b)) return -1;
+  return a - b;
+};
+
+const compareEpisodeGroupsOldestFirst = (a: DownloadSection, b: DownloadSection) => {
+  const seasonDifference = compareSortableEpisodeNumber(a.seasonNumber, b.seasonNumber);
+  if (seasonDifference) return seasonDifference;
+  const episodeDifference = compareSortableEpisodeNumber(a.episodeNumber, b.episodeNumber);
+  if (episodeDifference) return episodeDifference;
+  return String(a.title || '').localeCompare(String(b.title || ''), 'fa', { numeric: true });
 };
 
 const newestEpisodeGroup = (item?: CatalogItem | null) =>
@@ -1916,7 +1937,12 @@ function HomeStarsSection({
   const location = selected.nationality || selected.placeOfBirth || '';
 
   return (
-    <View style={styles.starsSection}>
+    <LinearGradient
+      colors={['rgba(18,27,45,0.98)', 'rgba(35,17,31,0.96)', 'rgba(11,15,24,0.98)']}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.starsSection}
+    >
       <View style={styles.starsHeader}>
         <View style={styles.starsHeaderIcon}>
           <Ionicons name="sparkles-outline" color={COLORS.gold} size={17} />
@@ -1992,7 +2018,7 @@ function HomeStarsSection({
           </Pressable>
         )}
       />
-    </View>
+    </LinearGradient>
   );
 }
 
@@ -2090,6 +2116,7 @@ function HomeScreen({
   initialScrollOffset,
   onScrollOffset,
   isActive,
+  contentReady,
 }: {
   catalog: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
@@ -2105,6 +2132,7 @@ function HomeScreen({
   initialScrollOffset: number;
   onScrollOffset: (offset: number) => void;
   isActive: boolean;
+  contentReady: boolean;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const newest = useMemo(() => catalogItemsForFilter(catalog, 'latest'), [catalog]);
@@ -2146,10 +2174,23 @@ function HomeScreen({
 
 
   if (!newest.length) return (
-    <View style={[styles.screen, styles.contentUnavailable]}>
-      <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={42} />
-      <Text style={styles.largeEmptyTitle}>فهرست محتوا خالی است</Text>
-      <Pressable onPress={onReloadContent} style={styles.retryButton}><Text style={styles.retryButtonText}>تلاش دوباره</Text></Pressable>
+    <View style={styles.screen}>
+      <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
+      <View style={[styles.screen, styles.contentUnavailable]}>
+        {contentReady ? (
+          <>
+            <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={42} />
+            <Text style={styles.largeEmptyTitle}>فهرست محتوا خالی است</Text>
+            <Pressable onPress={onReloadContent} style={styles.retryButton}><Text style={styles.retryButtonText}>تلاش دوباره</Text></Pressable>
+          </>
+        ) : (
+          <>
+            <ActivityIndicator color={COLORS.gold} size="small" />
+            <Text style={styles.initialLoadingTitle}>در حال بازکردن فهرست…</Text>
+            <Text style={styles.initialLoadingText}>نسخه ذخیره‌شده و فهرست تازه در پس‌زمینه بررسی می‌شوند.</Text>
+          </>
+        )}
+      </View>
     </View>
   );
 
@@ -2278,19 +2319,32 @@ function CategoriesScreen({
   const categoryPreviewItems = useMemo(() => {
     const result = new Map<SearchFilter, CatalogItem>();
     const usableCatalog = catalog.filter(itemHasUsableContent);
+    const usedItems = new Set<string>();
+    const usedArtwork = new Set<string>();
+    const artworkKey = (item: CatalogItem) =>
+      optimizedImageUrl(item.poster || item.backdrop || item.posterFallback || item.backdropFallback, 'poster');
     const sortedBest = (items: CatalogItem[]) => [...items]
       .filter(hasFastCategoryArtwork)
       .sort((a, b) => categoryPreviewScore(b) - categoryPreviewScore(a));
+    const pickUnused = (items: CatalogItem[]) => sortedBest(items).find((item) => {
+      const artwork = artworkKey(item);
+      return !usedItems.has(item.id) && Boolean(artwork) && !usedArtwork.has(artwork);
+    });
 
     for (const card of cards) {
       const candidates = [card.filter, ...relatedCategoryFilters(card.filter)];
       let selected: CatalogItem | undefined;
       for (const filter of candidates) {
-        selected = sortedBest(catalogItemsForFilter(usableCatalog, filter))[0];
+        selected = pickUnused(catalogItemsForFilter(usableCatalog, filter));
         if (selected) break;
       }
-      if (!selected) selected = sortedBest(usableCatalog)[0];
-      if (selected) result.set(card.filter, selected);
+      if (!selected) selected = pickUnused(usableCatalog);
+      if (selected) {
+        result.set(card.filter, selected);
+        usedItems.add(selected.id);
+        const artwork = artworkKey(selected);
+        if (artwork) usedArtwork.add(artwork);
+      }
     }
     return result;
   }, [catalog]);
@@ -2371,9 +2425,9 @@ function CategoriesScreen({
                     );
                   })()}
                   <LinearGradient
-                    colors={['rgba(6,8,11,0.12)', 'rgba(6,8,11,0.72)', 'rgba(6,8,11,0.98)']}
-                    locations={[0, 0.55, 1]}
-                    style={StyleSheet.absoluteFill}
+                    colors={['rgba(6,8,11,0.00)', 'rgba(6,8,11,0.18)', 'rgba(6,8,11,0.92)']}
+                    locations={[0, 0.36, 1]}
+                    style={styles.categoryTextShade}
                   />
                   <View style={styles.categoryCardIcon}><Ionicons name={card.icon} color={COLORS.gold} size={22} /></View>
                   <View style={styles.categoryCardTextWrap}>
@@ -3654,7 +3708,7 @@ function SeriesEpisodeList({
         operatorFilesFor(group.files).length > 0
       ),
     )
-    .sort(compareEpisodeGroupsNewestFirst);
+    .sort(compareEpisodeGroupsOldestFirst);
 
   const seasons = episodeGroups.reduce<Record<number, DownloadSection[]>>((result, group) => {
     const seasonNumber = Number(group.seasonNumber || 1);
@@ -4205,7 +4259,7 @@ function VideoPlayerModal({
   return (
     <Modal
       visible
-      animationType="fade"
+      animationType="none"
       presentationStyle="fullScreen"
       onRequestClose={handleBack}
       supportedOrientations={['portrait', 'landscape']}
@@ -4262,8 +4316,8 @@ function VideoPlayerModal({
                 <Ionicons name="close" color="#fff" size={22} />
               </Pressable>
               <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
-              <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'حالت عمودی' : 'حالت افقی'}>
-                <Ionicons name={landscape ? 'phone-portrait-outline' : 'phone-landscape-outline'} color="#fff" size={20} />
+              <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'کوچک‌نمایی و بازگشت به حالت عمودی' : 'بزرگ‌نمایی و ورود به حالت افقی'}>
+                <Ionicons name={landscape ? 'contract-outline' : 'expand-outline'} color="#fff" size={21} />
               </Pressable>
             </View>
 
@@ -4722,12 +4776,39 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
   );
 }
 
+const BOTTOM_TABS: { id: MainTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { id: 'home', label: 'خانه', icon: 'home-outline' },
+  { id: 'categories', label: 'دسته‌بندی', icon: 'grid-outline' },
+  { id: 'favorites', label: 'کتابخانه', icon: 'bookmark-outline' },
+  { id: 'downloads', label: 'دریافت‌ها', icon: 'download-outline' },
+];
+
 function BottomNavigation({ active, onChange }: { active: MainTab; onChange: (tab: MainTab) => void }) {
-  const tabs: { id: MainTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-    { id: 'home', label: 'خانه', icon: 'home-outline' }, { id: 'categories', label: 'دسته‌بندی', icon: 'grid-outline' },
-    { id: 'favorites', label: 'کتابخانه', icon: 'bookmark-outline' }, { id: 'downloads', label: 'دریافت‌ها', icon: 'download-outline' },
-  ];
-  return <View style={styles.bottomNavigation}>{tabs.map((tab) => { const selected = active === tab.id; return <Pressable key={tab.id} onPress={() => onChange(tab.id)} style={styles.bottomTab}><View style={[styles.bottomIconWrap, selected && styles.bottomIconWrapActive]}><Ionicons name={selected ? (String(tab.icon).replace('-outline','') as keyof typeof Ionicons.glyphMap) : tab.icon} color={selected ? COLORS.text : COLORS.muted} size={20} /></View><Text style={[styles.bottomLabel, selected && styles.bottomLabelActive]}>{tab.label}</Text></Pressable>; })}</View>;
+  return (
+    <View style={styles.bottomNavigation}>
+      {BOTTOM_TABS.map((tab) => {
+        const selected = active === tab.id;
+        return (
+          <Pressable
+            key={tab.id}
+            disabled={selected}
+            onPressIn={() => onChange(tab.id)}
+            hitSlop={5}
+            style={({ pressed }) => [styles.bottomTab, pressed && !selected && styles.bottomTabPressed]}
+          >
+            <View style={[styles.bottomIconWrap, selected && styles.bottomIconWrapActive]}>
+              <Ionicons
+                name={selected ? (String(tab.icon).replace('-outline','') as keyof typeof Ionicons.glyphMap) : tab.icon}
+                color={selected ? COLORS.text : COLORS.muted}
+                size={20}
+              />
+            </View>
+            <Text style={[styles.bottomLabel, selected && styles.bottomLabelActive]}>{tab.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
 }
 
 function AppContent() {
@@ -4742,6 +4823,7 @@ function AppContent() {
   const [episodeAlertSeriesIds, setEpisodeAlertSeriesIds] = useState<string[]>([]);
   const [episodeAlertBusyId, setEpisodeAlertBusyId] = useState<string | null>(null);
   const [content, setContent] = useState<LoadedContent>(() => getBundledContent());
+  const [contentReady, setContentReady] = useState(false);
   const [contentLoading, setContentLoading] = useState(false);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
@@ -4794,16 +4876,35 @@ function AppContent() {
   };
 
   const navigateToTab = useCallback((tab: MainTab, recordHistory = true) => {
-    setMountedTabs((current) => current.includes(tab) ? current : [...current, tab]);
     const currentTab = activeTabRef.current;
     if (currentTab === tab) return;
+    activeTabRef.current = tab;
+    setActiveTab(tab);
+    setMountedTabs((current) => current.includes(tab) ? current : [...current, tab]);
     if (recordHistory) {
       const history = tabHistoryRef.current;
       if (history[history.length - 1] !== tab) tabHistoryRef.current = [...history, tab].slice(-12);
     }
-    activeTabRef.current = tab;
-    setActiveTab(tab);
   }, []);
+
+  useEffect(() => {
+    if (!contentReady) return undefined;
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const task = InteractionManager.runAfterInteractions(() => {
+      (['categories', 'favorites', 'downloads', 'search'] as MainTab[]).forEach((tab, index) => {
+        timers.push(setTimeout(() => {
+          if (cancelled) return;
+          setMountedTabs((current) => current.includes(tab) ? current : [...current, tab]);
+        }, index * 110));
+      });
+    });
+    return () => {
+      cancelled = true;
+      task.cancel();
+      timers.forEach(clearTimeout);
+    };
+  }, [contentReady]);
 
   const refreshVpnState = async (showProgress = false) => {
     const sequence = ++vpnCheckSequenceRef.current;
@@ -4833,15 +4934,20 @@ function AppContent() {
       const nextContent = await loadContent(initialLoad);
       setContent(nextContent);
       lastContentLoadRef.current = Date.now();
+      if (nextContent.items.length > 0) setContentReady(true);
       if (nextContent.source === 'remote') void syncEpisodeAlerts(nextContent.items, true);
 
       if (initialLoad && nextContent.source !== 'remote') {
         void loadContent(false).then((freshContent) => {
-          if (freshContent.source !== 'remote') return;
-          setContent(freshContent);
-          lastContentLoadRef.current = Date.now();
-          void syncEpisodeAlerts(freshContent.items, true);
-        }).catch(() => undefined);
+          if (freshContent.items.length > 0) {
+            setContent(freshContent);
+            lastContentLoadRef.current = Date.now();
+          }
+          if (freshContent.source === 'remote') void syncEpisodeAlerts(freshContent.items, true);
+          setContentReady(true);
+        }).catch(() => setContentReady(true));
+      } else {
+        setContentReady(true);
       }
     } finally {
       if (showRefreshIndicator) setContentLoading(false);
@@ -5697,6 +5803,7 @@ function AppContent() {
               initialScrollOffset={homeScrollOffset}
               onScrollOffset={setHomeScrollOffset}
               isActive={activeTab === 'home'}
+              contentReady={contentReady}
             />
           </View>
         ) : null}
@@ -5754,14 +5861,15 @@ function AppContent() {
         <BottomNavigation
           active={activeTab}
           onChange={(tab) => {
+            navigateToTab(tab);
             setSelectedItem(null);
             setSelectedPerson(null);
             setMenuOpen(false);
             setSearchReturnItem(null);
-            navigateToTab(tab);
           }}
         />
       </SafeAreaView>
+      {videoRequest ? <View pointerEvents="none" style={styles.playerRouteBackdrop} /> : null}
       <VpnBlockModal
         visible={vpnWarningVisible}
         checking={vpnChecking}
@@ -5851,6 +5959,7 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   tabScene: { flex: 1 },
   tabSceneHidden: { display: 'none' },
+  playerRouteBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 900, elevation: 1000, backgroundColor: '#000' },
   globalMenuButton: { position: 'absolute', top: 10, right: 14, zIndex: 30, width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,21,28,0.96)', borderWidth: 1, borderColor: COLORS.border },
   bottomNavigationSafeArea: { backgroundColor: COLORS.background, paddingHorizontal: 10, paddingTop: 6 },
   screen: { flex: 1, backgroundColor: COLORS.background },
@@ -5878,7 +5987,7 @@ const styles = StyleSheet.create({
   continueMeta: { ...rtlText, width: '100%', color: '#D4D7DB', fontSize: 8.5, marginTop: 5 },
   continueProgressTrack: { width: '100%', height: 5, backgroundColor: '#090B0F' },
   continueProgressFill: { height: '100%', backgroundColor: COLORS.red },
-  starsSection: { marginTop: 22, marginBottom: 5, paddingTop: 13, paddingBottom: 13, borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(216,180,90,0.15)', backgroundColor: 'rgba(12,15,20,0.72)' },
+  starsSection: { marginTop: 22, marginBottom: 9, marginHorizontal: 10, paddingTop: 15, paddingBottom: 15, borderWidth: 1, borderRadius: 22, overflow: 'hidden', borderColor: 'rgba(226,188,102,0.44)', shadowColor: '#7C3754', shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 }, elevation: 5 },
   starsHeader: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
   starsHeaderIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.09)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
   starsHeaderText: { flex: 1, alignItems: 'flex-end' },
@@ -6168,6 +6277,7 @@ const styles = StyleSheet.create({
   noDownloadsText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 17, textAlign: 'center', marginTop: 6 },
   bottomNavigation: { height: 69, marginBottom: 9, paddingHorizontal: 5, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-around', borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.11)', backgroundColor: 'rgba(16,19,25,0.98)', shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 18, elevation: 12 },
   bottomTab: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  bottomTabPressed: { opacity: 0.62, transform: [{ scale: 0.97 }] },
   bottomIconWrap: { width: 37, height: 29, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   bottomIconWrapActive: { backgroundColor: 'rgba(222,35,66,0.16)' },
   bottomLabel: { color: COLORS.muted, fontSize: 8.5, fontWeight: '700', marginTop: 3 },
@@ -6359,6 +6469,7 @@ const styles = StyleSheet.create({
   catalogListContent: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 112 },
   categoryGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', marginTop: 16, marginBottom: 24 },
   categoryCard: { minHeight: 176, padding: 13, borderRadius: 18, overflow: 'hidden', alignItems: 'flex-end', justifyContent: 'space-between', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.25)' },
+  categoryTextShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '52%' },
   categoryFallbackArt: { flex: 1, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-8deg' }] },
   categoryCardIcon: { width: 39, height: 39, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(8,10,14,0.78)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
   categoryCardTextWrap: { width: '100%', alignItems: 'flex-end' },

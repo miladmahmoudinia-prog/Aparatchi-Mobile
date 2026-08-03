@@ -49,6 +49,15 @@ const asString = (value: unknown, fallback = '') =>
     ? String(value).trim()
     : fallback;
 
+const normalizeIdentityText = (value: unknown) =>
+  asString(value)
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/[يى]/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[^a-z0-9؀-ۿ]+/g, ' ')
+    .trim();
+
 const REMOTE_ASSET_BASE = (() => {
   const remote = REMOTE_CONTENT_URL.trim();
   if (!remote) return '';
@@ -395,9 +404,13 @@ const isOperatorMode = (mode?: DownloadFile['mode']) =>
 const isOperatorPortalUrl = (url: string) => {
   try {
     const parsed = new URL(url);
-    const trustedHost = /(^|\.)upera\.tv$/i.test(parsed.hostname);
-    const trustedPath = /^\/(?:stream|download)\/(?:movie|series|episode)\//i.test(parsed.pathname);
-    return trustedHost && trustedPath;
+    if (parsed.protocol !== 'https:') return false;
+    const path = decodeURIComponent(parsed.pathname || '');
+    const hasAction = /\/(?:stream|watch|play|download)(?:\/|$)/i.test(path);
+    const hasMedia = /\/(?:movie|series|episode)(?:\/|$)/i.test(path);
+    if (/(^|\.)upera\.tv$/i.test(parsed.hostname)) return hasAction && hasMedia;
+    if (/(^|\.)redl\.ink$/i.test(parsed.hostname)) return path.length > 1;
+    return false;
   } catch {
     return false;
   }
@@ -697,12 +710,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const directFiles = downloads.flatMap((section) =>
     section.files.filter((file) => !isOperatorMode(file.mode)),
   );
-  const derivedOperatorAccess = operatorAccessFromFiles(operatorFiles);
-  const rawOperatorAccess = asString(item.operatorAccess);
-  const operatorAccess: OperatorAccessKind | null =
-    rawOperatorAccess === 'stream' || rawOperatorAccess === 'download' || rawOperatorAccess === 'both'
-      ? rawOperatorAccess
-      : derivedOperatorAccess;
+  const operatorAccess: OperatorAccessKind | null = operatorAccessFromFiles(operatorFiles);
   const rawAccess = asString(item.access);
   const rate = asNumber(item.rate, Number.NaN);
   const collectionId = asString(item.collectionId ?? item.collection_id);
@@ -720,12 +728,10 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const people = normalizePeople(item);
   const rawStreamUrl = asString(item.streamUrl);
   const streamUrl = rawStreamUrl && isPlayableUrl(rawStreamUrl) ? rawStreamUrl : '';
-  const operatorOnly = asBoolean(item.operatorOnly) || Boolean(
-    operatorFiles.length && !directFiles.length && !streamUrl,
-  );
+  const operatorOnly = Boolean(operatorFiles.length && !directFiles.length && !streamUrl);
   const access = rawAccess === 'paid'
     ? 'paid'
-    : rawAccess === 'operator' || operatorOnly
+    : operatorOnly
       ? 'operator'
       : 'free';
   const declaredLanguages = stringArray(item.availableLanguages)
@@ -737,14 +743,15 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     ),
   );
   const supportedOperators = [
-    ...new Set([
-      ...stringArray(item.supportedOperators),
-      ...operatorFiles.flatMap((file) => file.supportedOperators || []),
-    ]),
+    ...new Set(operatorFiles.flatMap((file) => file.supportedOperators || [])),
   ];
-  const categoryKeys = stringArray(item.categoryKeys);
-  if (operatorFiles.length && !categoryKeys.includes('mobile-operator')) {
+  const categoryKeys = stringArray(item.categoryKeys)
+    .filter((key) => key !== 'mobile-operator');
+  const categoryLabels = stringArray(item.categoryLabels)
+    .filter((label) => !/ویژه\s*(?:اینترنت\s*)?همراه|mobile\s*operator/i.test(label));
+  if (operatorFiles.length) {
     categoryKeys.push('mobile-operator');
+    categoryLabels.push('ویژه اینترنت همراه');
   }
 
   return {
@@ -815,7 +822,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     ...(asString(item.updateLabel) ? { updateLabel: asString(item.updateLabel) } : {}),
     ...(asString(item.meaningfulUpdatedAt) ? { meaningfulUpdatedAt: asString(item.meaningfulUpdatedAt) } : {}),
     categoryKeys,
-    categoryLabels: stringArray(item.categoryLabels),
+    categoryLabels,
     ...(asString(item.contentKind) ? { contentKind: asString(item.contentKind) } : {}),
     isAnimation: asBoolean(item.isAnimation),
     isAnime: asBoolean(item.isAnime),
@@ -873,6 +880,59 @@ const normalizeFeaturedPeople = (value: unknown): FeaturedPerson[] => {
   }).slice(0, 36);
 };
 
+const sharedPersonKeys = (person: CatalogPerson) => {
+  const keys: string[] = [];
+  if (person.tmdbId) keys.push(`tmdb:${person.tmdbId}`);
+  const names = [person.name, person.nameFa]
+    .map(normalizeIdentityText)
+    .filter(Boolean);
+  for (const name of names) keys.push(`name:${name}`);
+  return [...new Set(keys)];
+};
+
+const hydrateSharedPersonImages = (
+  items: CatalogItem[],
+  featuredPeople: FeaturedPerson[],
+) => {
+  const imageIndex = new Map<string, { image: string; tmdbId?: number }>();
+  const register = (person: CatalogPerson) => {
+    const image = asString(person.image);
+    if (!image) return;
+    const value = {
+      image,
+      ...(person.tmdbId ? { tmdbId: person.tmdbId } : {}),
+    };
+    for (const key of sharedPersonKeys(person)) {
+      if (!imageIndex.has(key)) imageIndex.set(key, value);
+    }
+  };
+
+  for (const person of featuredPeople) register(person);
+  for (const item of items) {
+    for (const person of item.people || []) register(person);
+  }
+
+  const fill = <T extends CatalogPerson>(person: T): T => {
+    if (person.image) return person;
+    const match = sharedPersonKeys(person)
+      .map((key) => imageIndex.get(key))
+      .find(Boolean);
+    if (!match?.image) return person;
+    return {
+      ...person,
+      image: match.image,
+      ...(person.tmdbId || !match.tmdbId ? {} : { tmdbId: match.tmdbId }),
+    };
+  };
+
+  return {
+    items: items.map((item) => item.people?.length
+      ? { ...item, people: item.people.map(fill) }
+      : item),
+    featuredPeople: featuredPeople.map(fill),
+  };
+};
+
 const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | null => {
   if (!value || typeof value !== 'object') return null;
   const entry = value as Record<string, unknown>;
@@ -918,13 +978,16 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
     .filter((item): item is CatalogItem => Boolean(item));
   if (!items.length) return null;
 
+  const featuredPeople = normalizeFeaturedPeople(payload.featuredPeople ?? payload.featured_people);
+  const hydrated = hydrateSharedPersonImages(newestFirst(items), featuredPeople);
+
   return {
     version: asString(payload.version, 'remote'),
     updatedAt: asString(payload.updatedAt, new Date().toISOString()),
-    items: newestFirst(items),
+    items: hydrated.items,
     iranianSchedule: normalizeSchedule(payload.iranianSchedule),
     weeklySchedule: normalizeSchedule(payload.weeklySchedule),
-    featuredPeople: normalizeFeaturedPeople(payload.featuredPeople ?? payload.featured_people),
+    featuredPeople: hydrated.featuredPeople,
   };
 };
 
@@ -932,10 +995,15 @@ const normalizedLocalPayload = (): CatalogPayload => {
   const items = LOCAL_PAYLOAD.items
     .map((item) => normalizeCatalogItem(item))
     .filter((item): item is CatalogItem => Boolean(item));
+  const hydrated = hydrateSharedPersonImages(
+    newestFirst(items),
+    normalizeFeaturedPeople(LOCAL_PAYLOAD.featuredPeople),
+  );
 
   return {
     ...LOCAL_PAYLOAD,
-    items: newestFirst(items),
+    items: hydrated.items,
+    featuredPeople: hydrated.featuredPeople,
   };
 };
 
