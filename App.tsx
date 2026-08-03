@@ -4030,8 +4030,6 @@ function VideoPlayerModal({
   const initialSource = orderedSources.find((source) => source.id === request.initialSourceId) || orderedSources[0];
   const [activeSource, setActiveSource] = useState(initialSource);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<'speed' | 'quality' | null>('speed');
-  const [playbackRate, setPlaybackRate] = useState(1);
   const [switchingQuality, setSwitchingQuality] = useState(false);
   const [firstFrameReady, setFirstFrameReady] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -4079,8 +4077,6 @@ function VideoPlayerModal({
 
   const player = useVideoPlayer(initialSource.url, (instance) => {
     instance.timeUpdateEventInterval = 0.5;
-    instance.playbackRate = 1;
-    instance.preservesPitch = true;
     instance.play();
   });
 
@@ -4202,32 +4198,32 @@ function VideoPlayerModal({
 
   const seekBy = (seconds: number) => seekTo(Number(player.currentTime || latestTimeRef.current || 0) + seconds);
 
-  const changePlaybackRate = (rate: number) => {
-    player.playbackRate = rate;
-    player.preservesPitch = true;
-    setPlaybackRate(rate);
-    revealControls();
-  };
-
   const switchQuality = async (nextSource: PlaybackSource) => {
-    if (nextSource.id === activeSource.id || switchingQuality) return;
+    if (nextSource.id === activeSource.id || nextSource.url === activeSource.url || switchingQuality) return;
     const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+    const wasPlaying = Boolean(player.playing);
     setSwitchingQuality(true);
     setFirstFrameReady(false);
     clearControlsTimer();
     try {
       player.pause();
       await player.replaceAsync(nextSource.url);
-      if (previousTime > 0) player.currentTime = previousTime;
+      if (previousTime > 0) {
+        player.currentTime = previousTime;
+        latestTimeRef.current = previousTime;
+        setCurrentTime(previousTime);
+      }
       setActiveSource(nextSource);
-      player.play();
+      if (wasPlaying) player.play();
+      else player.pause();
     } catch {
       Alert.alert('کیفیت پخش', 'تغییر کیفیت انجام نشد. دوباره تلاش کنید.');
-      player.play();
+      if (wasPlaying) player.play();
     } finally {
       setSwitchingQuality(false);
       setSettingsOpen(false);
       setControlsVisible(true);
+      scheduleControlsHide();
     }
   };
 
@@ -4362,7 +4358,6 @@ function VideoPlayerModal({
                   onPress={() => {
                     clearControlsTimer();
                     setControlsVisible(true);
-                    setSettingsSection('speed');
                     setSettingsOpen(true);
                   }}
                   style={styles.playerToolButton}
@@ -4392,53 +4387,34 @@ function VideoPlayerModal({
                 </Pressable>
               </View>
 
-              <Pressable
-                onPress={() => setSettingsSection((current) => current === 'speed' ? null : 'speed')}
-                style={styles.playerSettingsRow}
-              >
+              <View style={styles.playerSettingsRow}>
                 <View style={styles.playerSettingsRowMain}>
-                  <Text style={styles.playerSettingsRowTitle}>سرعت ویدئو</Text>
-                  <Text style={styles.playerSettingsRowValue}>{playbackRate === 1 ? 'عادی' : `${playbackRate}x`}</Text>
+                  <Text style={styles.playerSettingsRowTitle}>کیفیت ویدئو</Text>
+                  <Text style={styles.playerSettingsRowValue}>{activeSource.quality || 'خودکار'}</Text>
                 </View>
-                <Ionicons name={settingsSection === 'speed' ? 'chevron-up' : 'chevron-down'} color={COLORS.muted} size={17} />
-              </Pressable>
-              {settingsSection === 'speed' ? (
+                <Ionicons name="options-outline" color={COLORS.muted} size={17} />
+              </View>
+
+              {qualitySources.length > 1 ? (
                 <View style={styles.playerSettingsOptions}>
-                  {[0.5, 1, 1.25, 1.5, 2].map((rate) => {
-                    const selected = playbackRate === rate;
+                  {qualitySources.map((source) => {
+                    const activeQuality = String(activeSource.quality || '').match(/(\d{3,4})\s*p/i)?.[1];
+                    const selected = source.id === activeSource.id || source.url === activeSource.url || activeQuality === String(source.quality).replace(/\D/g, '');
                     return (
-                      <Pressable key={rate} onPress={() => changePlaybackRate(rate)} style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}>
-                        <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>{rate === 1 ? 'عادی' : `${rate}x`}</Text>
+                      <Pressable
+                        key={`${source.id}-${source.url}`}
+                        onPress={() => void switchQuality(source)}
+                        disabled={switchingQuality || selected}
+                        style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}
+                      >
+                        <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>{source.quality}</Text>
                       </Pressable>
                     );
                   })}
                 </View>
-              ) : null}
-
-              {qualitySources.length > 1 ? (
-                <>
-                  <Pressable onPress={() => setSettingsSection((current) => current === 'quality' ? null : 'quality')} style={styles.playerSettingsRow}>
-                    <View style={styles.playerSettingsRowMain}>
-                      <Text style={styles.playerSettingsRowTitle}>کیفیت ویدئو</Text>
-                      <Text style={styles.playerSettingsRowValue}>{activeSource.quality || 'خودکار'}</Text>
-                    </View>
-                    <Ionicons name={settingsSection === 'quality' ? 'chevron-up' : 'chevron-down'} color={COLORS.muted} size={17} />
-                  </Pressable>
-                  {settingsSection === 'quality' ? (
-                    <View style={styles.playerSettingsOptions}>
-                      {qualitySources.map((source) => {
-                        const activeQuality = String(activeSource.quality || '').match(/(\d{3,4})\s*p/i)?.[1];
-                        const selected = source.id === activeSource.id || activeQuality === String(source.quality).replace(/\D/g, '');
-                        return (
-                          <Pressable key={source.id} onPress={() => void switchQuality(source)} style={[styles.playerSettingChip, selected && styles.playerSettingChipActive]}>
-                            <Text style={[styles.playerSettingChipText, selected && styles.playerSettingChipTextActive]}>{source.quality}</Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  ) : null}
-                </>
-              ) : null}
+              ) : (
+                <Text style={styles.playerSingleQualityText}>برای این ویدئو فقط همین کیفیت پخش آنلاین موجود است.</Text>
+              )}
             </View>
           </View>
         ) : null}
@@ -4825,6 +4801,8 @@ function AppContent() {
   const [content, setContent] = useState<LoadedContent>(() => getBundledContent());
   const [contentReady, setContentReady] = useState(false);
   const [contentLoading, setContentLoading] = useState(false);
+  const [startupVisible, setStartupVisible] = useState(true);
+  const [emptyStateAllowed, setEmptyStateAllowed] = useState(false);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
@@ -4841,6 +4819,9 @@ function AppContent() {
   const [mountedTabs, setMountedTabs] = useState<MainTab[]>(['home']);
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
+  const startupStartedAtRef = useRef(Date.now());
+  const startupDismissedRef = useRef(false);
+  const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vpnCheckSequenceRef = useRef(0);
   const vpnPausingDownloadsRef = useRef(false);
   const activeTabRef = useRef<MainTab>('home');
@@ -4923,31 +4904,55 @@ function AppContent() {
     }
   };
 
+  const dismissStartup = useCallback(() => {
+    if (startupDismissedRef.current) return;
+    startupDismissedRef.current = true;
+    const minimumVisibleMs = 520;
+    const elapsed = Date.now() - startupStartedAtRef.current;
+    const delay = Math.max(0, minimumVisibleMs - elapsed);
+    startupDismissTimerRef.current = setTimeout(() => setStartupVisible(false), delay);
+  }, []);
+
   const reloadContent = async (force = true) => {
     if (!force && Date.now() - lastContentLoadRef.current < 5 * 60 * 1000) return;
     const initialLoad = lastContentLoadRef.current === 0;
     const showRefreshIndicator = force && !initialLoad;
-    if (showRefreshIndicator) setContentLoading(true);
+    if (showRefreshIndicator) {
+      setContentLoading(true);
+      setEmptyStateAllowed(false);
+    }
     try {
-      // The bundled catalog is already on screen. Read the persisted catalog first,
-      // then refresh GitHub in the background without blocking app startup.
+      // Startup only waits for the persisted/bundled catalog. Network refresh
+      // and image loading continue after the home screen has opened.
       const nextContent = await loadContent(initialLoad);
       setContent(nextContent);
       lastContentLoadRef.current = Date.now();
-      if (nextContent.items.length > 0) setContentReady(true);
+      const hasInitialItems = nextContent.items.length > 0;
+      if (hasInitialItems) {
+        setContentReady(true);
+        dismissStartup();
+      }
       if (nextContent.source === 'remote') void syncEpisodeAlerts(nextContent.items, true);
 
       if (initialLoad && nextContent.source !== 'remote') {
         void loadContent(false).then((freshContent) => {
-          if (freshContent.items.length > 0) {
+          const hasFreshItems = freshContent.items.length > 0;
+          if (hasFreshItems) {
             setContent(freshContent);
             lastContentLoadRef.current = Date.now();
+            setContentReady(true);
           }
           if (freshContent.source === 'remote') void syncEpisodeAlerts(freshContent.items, true);
-          setContentReady(true);
-        }).catch(() => setContentReady(true));
+          if (!hasFreshItems) setEmptyStateAllowed(true);
+          dismissStartup();
+        }).catch(() => {
+          setEmptyStateAllowed(true);
+          dismissStartup();
+        });
       } else {
-        setContentReady(true);
+        setContentReady(hasInitialItems);
+        if (!hasInitialItems) setEmptyStateAllowed(true);
+        dismissStartup();
       }
     } finally {
       if (showRefreshIndicator) setContentLoading(false);
@@ -4955,6 +4960,8 @@ function AppContent() {
   };
 
   useEffect(() => {
+    const startupHardLimit = setTimeout(() => dismissStartup(), 1800);
+    const emptyStateTimer = setTimeout(() => setEmptyStateAllowed(true), 8000);
     reloadContent();
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
@@ -4992,7 +4999,13 @@ function AppContent() {
       }
     });
 
-    return () => { clearTimeout(vpnRetryTimer); subscription.remove(); };
+    return () => {
+      clearTimeout(vpnRetryTimer);
+      clearTimeout(startupHardLimit);
+      clearTimeout(emptyStateTimer);
+      if (startupDismissTimerRef.current) clearTimeout(startupDismissTimerRef.current);
+      subscription.remove();
+    };
   }, []);
 
 
@@ -5779,6 +5792,20 @@ function AppContent() {
     );
   };
 
+  if (startupVisible) {
+    return (
+      <View style={styles.initialLoading}>
+        <StatusBar style="light" backgroundColor={COLORS.background} />
+        <View style={styles.startupLogoMark}>
+          <Ionicons name="film-outline" color={COLORS.gold} size={30} />
+        </View>
+        <Text style={styles.startupBrand}>آپاراتچی</Text>
+        <ActivityIndicator color={COLORS.gold} size="small" style={styles.startupSpinner} />
+        <Text style={styles.initialLoadingTitle}>در حال بارگذاری…</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.app}>
       <StatusBar style="light" />
@@ -5803,7 +5830,7 @@ function AppContent() {
               initialScrollOffset={homeScrollOffset}
               onScrollOffset={setHomeScrollOffset}
               isActive={activeTab === 'home'}
-              contentReady={contentReady}
+              contentReady={contentReady || emptyStateAllowed}
             />
           </View>
         ) : null}
@@ -5964,6 +5991,9 @@ const styles = StyleSheet.create({
   bottomNavigationSafeArea: { backgroundColor: COLORS.background, paddingHorizontal: 10, paddingTop: 6 },
   screen: { flex: 1, backgroundColor: COLORS.background },
   initialLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30, backgroundColor: COLORS.background },
+  startupLogoMark: { width: 72, height: 72, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(212,175,95,0.10)', borderWidth: 1, borderColor: 'rgba(212,175,95,0.32)' },
+  startupBrand: { ...rtlText, color: COLORS.text, fontSize: 27, lineHeight: 36, fontWeight: '900', marginTop: 15 },
+  startupSpinner: { marginTop: 18 },
   initialLoadingTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 16 },
   initialLoadingText: { ...rtlText, color: COLORS.muted, fontSize: 10, lineHeight: 18, textAlign: 'center', marginTop: 7 },
   initialLoadingTrack: { width: 190, height: 5, marginTop: 15, borderRadius: 4, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.10)' },
@@ -6532,7 +6562,8 @@ const styles = StyleSheet.create({
   playerSettingsRowValue: { color: COLORS.gold, fontSize: 8.5, fontWeight: '900', writingDirection: 'ltr' },
   playerSettingsClose: { width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
   playerSettingsLabel: { ...rtlText, color: COLORS.muted, fontSize: 8.5, fontWeight: '800', marginTop: 9, marginBottom: 6 },
-  playerSettingsOptions: { marginTop: 7, flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 5 },
+  playerSettingsOptions: { marginTop: 10, flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 7 },
+  playerSingleQualityText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 17, textAlign: 'center', marginTop: 10, marginBottom: 4 },
   playerSettingChip: { minHeight: 29, minWidth: 52, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   playerSettingChipActive: { backgroundColor: 'rgba(216,180,90,0.14)', borderColor: 'rgba(216,180,90,0.72)' },
   playerSettingChipText: { color: '#D2D5DA', fontSize: 9.5, fontWeight: '800' },
