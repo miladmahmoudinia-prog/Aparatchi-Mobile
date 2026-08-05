@@ -1,0 +1,22 @@
+فایل‌های تغییرکرده نسخه 0.10.0
+
+این فایل‌ها را با حفظ مسیر، جایگزین فایل‌های فعلی پروژه کنید:
+
+App.tsx
+app.json
+package.json
+package-lock.json
+src/contentService.ts
+src/downloadManager.ts
+CHANGELOG.md
+README.md
+
+فایل‌های اصلی و لازم برای اجرای تغییرات:
+- App.tsx
+- app.json
+- package.json
+- package-lock.json
+- src/contentService.ts
+- src/downloadManager.ts
+
+دو فایل README.md و CHANGELOG.md فقط مستندات نسخه هستند.
