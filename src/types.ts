@@ -130,6 +130,15 @@ export type CatalogItem = {
   archiveAuditStatus?: 'pending' | 'checked' | 'blocked';
   /** فهرست صریح قسمت‌های کشف‌شده‌ای که هنوز لینک ندارند. */
   archivePendingEpisodes?: Array<{ seasonNumber: number; episodeNumber: number }>;
+  /** قسمت‌هایی که پس از چند تلاش منبع برایشان فایل قابل‌استفاده نداده است. */
+  archiveUnavailableEpisodes?: Array<{
+    sourceEpisodeId?: string;
+    seasonNumber: number;
+    episodeNumber: number;
+    reason?: string;
+    attempts?: number;
+    markedAt?: string;
+  }>;
   /** آیا صفحه‌بندی قسمت‌ها بدون خطا تا انتها بررسی شده است. */
   archiveEpisodeDiscoveryComplete?: boolean;
   archiveEpisodePaginationPagesFetched?: number;

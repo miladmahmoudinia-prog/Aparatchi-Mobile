@@ -3,7 +3,7 @@
     "name": "آپاراتچی",
     "slug": "aparatchi-mobile",
     "scheme": "aparatchi",
-    "version": "0.10.1",
+    "version": "0.10.2",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -21,7 +21,7 @@
       "icon": "./assets/icon.png",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "versionCode": 14,
+      "versionCode": 15,
       "permissions": [
         "android.permission.ACCESS_NETWORK_STATE"
       ]

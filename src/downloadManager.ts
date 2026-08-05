@@ -28,6 +28,8 @@ export type DownloadRecord = {
   totalBytes?: number;
   status: DownloadStatus;
   error?: string;
+  responseStatus?: number;
+  mimeType?: string;
   createdAt: string;
 };
 
@@ -48,11 +50,26 @@ export type DownloadRunResult = {
   destinationUri?: string;
   resumeData?: string;
   error?: string;
+  unavailable?: boolean;
+  responseStatus?: number;
+  mimeType?: string;
 };
 
 const DOWNLOAD_DIRECTORY = `${FileSystem.documentDirectory}aparatchi-downloads/`;
 const DATABASE_FILE = `${FileSystem.documentDirectory}aparatchi-downloads.json`;
 const activeTasks = new Map<string, any>();
+const MIN_VALID_VIDEO_BYTES = 256 * 1024;
+const VIDEO_EXTENSION_RE = /\.(?:mp4|m4v|mov|webm|mkv)(?:$|[?#])/i;
+const INVALID_CONTENT_TYPE_RE = /(?:text\/html|text\/plain|application\/(?:json|xml)|text\/xml)/i;
+
+const responseMimeType = (result: any) => String(
+  result?.headers?.['content-type'] ||
+  result?.headers?.['Content-Type'] ||
+  result?.mimeType ||
+  '',
+).split(';')[0].trim().toLowerCase();
+
+const responseStatusCode = (result: any) => Number(result?.status || result?.statusCode || 0);
 
 const friendlyDownloadFailure = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error || '');
@@ -123,8 +140,9 @@ export async function loadDownloadRecords(): Promise<DownloadRecord[]> {
       const expectedSize = Math.max(0, Number(record.totalBytes || 0));
       const looksComplete = Boolean(
         fileInfo?.exists &&
-        actualSize > 0 &&
-        /\.(?:mp4|m4v|mov|webm)(?:$|[?#])/i.test(record.localUri) &&
+        actualSize >= MIN_VALID_VIDEO_BYTES &&
+        VIDEO_EXTENSION_RE.test(record.localUri) &&
+        !INVALID_CONTENT_TYPE_RE.test(String(record.mimeType || '')) &&
         (expectedSize <= 0 || actualSize >= expectedSize * 0.97),
       );
 
@@ -210,8 +228,38 @@ export async function runDownload({
     const info = await FileSystem.getInfoAsync(result.uri, { size: true });
     const actualSize = Number((info as any).size || 0);
     const expectedSize = Math.max(0, Number(record.totalBytes || 0));
-    if (!info.exists || actualSize <= 0 || (expectedSize > 0 && actualSize < expectedSize * 0.97)) {
-      return { paused: true, destinationUri: result.uri, error: 'فایل هنوز کامل نشده است؛ ادامه دانلود را بزنید.' };
+    const status = responseStatusCode(result);
+    const mimeType = responseMimeType(result);
+    const invalidHttpStatus = status > 0 && status !== 200 && status !== 206;
+    const invalidMimeType = Boolean(mimeType && INVALID_CONTENT_TYPE_RE.test(mimeType));
+    const invalidFile = Boolean(
+      !info.exists ||
+      actualSize < MIN_VALID_VIDEO_BYTES ||
+      !VIDEO_EXTENSION_RE.test(result.uri) ||
+      invalidHttpStatus ||
+      invalidMimeType,
+    );
+
+    if (invalidFile) {
+      await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => undefined);
+      return {
+        paused: false,
+        unavailable: true,
+        destinationUri: undefined,
+        responseStatus: status || undefined,
+        mimeType: mimeType || undefined,
+        error: 'فایل این کیفیت در دسترس نیست.',
+      };
+    }
+
+    if (expectedSize > 0 && actualSize < expectedSize * 0.97) {
+      return {
+        paused: true,
+        destinationUri: result.uri,
+        responseStatus: status || undefined,
+        mimeType: mimeType || undefined,
+        error: 'فایل هنوز کامل نشده است؛ ادامه دانلود را بزنید.',
+      };
     }
 
     const finalDestination = finalDestinationFor(record);
@@ -219,7 +267,7 @@ export async function runDownload({
       await FileSystem.deleteAsync(finalDestination, { idempotent: true }).catch(() => undefined);
       await FileSystem.moveAsync({ from: result.uri, to: finalDestination });
     }
-    return { localUri: finalDestination, destinationUri: finalDestination, paused: false };
+    return { localUri: finalDestination, destinationUri: finalDestination, paused: false, responseStatus: status || undefined, mimeType: mimeType || undefined };
   } catch (error) {
     const savable = typeof task.savable === 'function' ? task.savable() : null;
     return {
@@ -285,7 +333,7 @@ export async function saveDownloadedFileToGallery(localUri?: string) {
   }
 
   const info = await FileSystem.getInfoAsync(localUri, { size: true });
-  if (!info.exists || Number((info as any).size || 0) <= 0 || !/\.(?:mp4|m4v|mov|webm)(?:$|[?#])/i.test(localUri)) {
+  if (!info.exists || Number((info as any).size || 0) < MIN_VALID_VIDEO_BYTES || !VIDEO_EXTENSION_RE.test(localUri)) {
     throw new Error('فایل ویدئویی کامل و معتبر نیست.');
   }
 
