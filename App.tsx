@@ -15,6 +15,7 @@ import {
   AppState,
   BackHandler,
   FlatList,
+  InteractionManager,
   Linking,
   Modal,
   PanResponder,
@@ -33,7 +34,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
-import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
 import { getBundledContent, loadContent, LoadedContent } from './src/contentService';
@@ -264,19 +265,21 @@ const titleVisualScore = (value?: string) => {
 const adaptiveTitleStyle = (value: string, context: 'hero' | 'detail') => {
   const score = titleVisualScore(value);
   if (context === 'hero') {
-    if (score <= 20) return { fontSize: 32, lineHeight: 41, letterSpacing: -1.1 };
-    if (score <= 34) return { fontSize: 28, lineHeight: 36, letterSpacing: -0.95 };
-    if (score <= 50) return { fontSize: 24, lineHeight: 31, letterSpacing: -0.75 };
-    if (score <= 68) return { fontSize: 21, lineHeight: 28, letterSpacing: -0.55 };
-    return { fontSize: 19, lineHeight: 25, letterSpacing: -0.4 };
+    if (score <= 15) return { fontSize: 31, lineHeight: 39, letterSpacing: -1.05 };
+    if (score <= 24) return { fontSize: 27, lineHeight: 35, letterSpacing: -0.9 };
+    if (score <= 34) return { fontSize: 23, lineHeight: 30, letterSpacing: -0.72 };
+    if (score <= 48) return { fontSize: 20, lineHeight: 27, letterSpacing: -0.52 };
+    if (score <= 66) return { fontSize: 18, lineHeight: 24, letterSpacing: -0.4 };
+    return { fontSize: 16.5, lineHeight: 22, letterSpacing: -0.28 };
   }
-  if (score <= 22) return { fontSize: 26, lineHeight: 34, letterSpacing: -0.8 };
-  if (score <= 38) return { fontSize: 23, lineHeight: 30, letterSpacing: -0.65 };
-  if (score <= 56) return { fontSize: 20, lineHeight: 27, letterSpacing: -0.5 };
-  return { fontSize: 18, lineHeight: 24, letterSpacing: -0.35 };
+  if (score <= 17) return { fontSize: 27, lineHeight: 35, letterSpacing: -0.82 };
+  if (score <= 28) return { fontSize: 23, lineHeight: 30, letterSpacing: -0.64 };
+  if (score <= 42) return { fontSize: 20, lineHeight: 27, letterSpacing: -0.48 };
+  if (score <= 60) return { fontSize: 18, lineHeight: 24, letterSpacing: -0.34 };
+  return { fontSize: 16.5, lineHeight: 22, letterSpacing: -0.24 };
 };
 
-const adaptiveTitleLines = (value: string) => titleVisualScore(value) > 46 ? 3 : 2;
+const adaptiveTitleLines = (value: string) => titleVisualScore(value) > 38 ? 3 : 2;
 
 function useDebouncedText(value: string, delay = 240) {
   const [debounced, setDebounced] = useState(value);
@@ -1408,7 +1411,7 @@ function SectionTitle({
         <Text style={styles.sectionTitle}>{title}</Text>
       </View>
       {action ? (
-        <Pressable onPress={onAction} hitSlop={12} style={styles.sectionAction}>
+        <Pressable onPress={onAction} unstable_pressDelay={0} hitSlop={14} style={({ pressed }) => [styles.sectionAction, pressed && styles.sectionActionPressed]}>
           <Text style={styles.sectionActionText}>{action}</Text>
           <Ionicons name="chevron-back" color={COLORS.gold} size={15} />
         </Pressable>
@@ -1506,22 +1509,38 @@ function HeroSlide({
 function HeroSlider({
   items,
   onOpen,
+  isActive = true,
 }: {
   items: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
+  isActive?: boolean;
 }) {
   const safeItems = useMemo(() => items.slice(0, 5), [items]);
+  const loopItems = useMemo(() => {
+    if (safeItems.length <= 1) return safeItems;
+    return [safeItems[safeItems.length - 1], ...safeItems, safeItems[0]];
+  }, [safeItems]);
   const [activeIndex, setActiveIndex] = useState(0);
   const sliderRef = useRef<FlatList<CatalogItem>>(null);
+  const physicalIndexRef = useRef(safeItems.length > 1 ? 1 : 0);
+  const draggingRef = useRef(false);
   const { width: screenWidth } = useWindowDimensions();
   const sliderWidth = Math.max(1, screenWidth);
   const pauseUntilRef = useRef(0);
   const sliderKey = useMemo(() => safeItems.map((item) => `${item.type}:${item.id}`).join('|'), [safeItems]);
 
+  const jumpToPhysicalIndex = useCallback((index: number, animated: boolean) => {
+    physicalIndexRef.current = index;
+    sliderRef.current?.scrollToOffset({ offset: index * sliderWidth, animated });
+  }, [sliderWidth]);
+
   useEffect(() => {
+    const initialPhysicalIndex = safeItems.length > 1 ? 1 : 0;
     setActiveIndex(0);
-    requestAnimationFrame(() => sliderRef.current?.scrollToOffset({ offset: 0, animated: false }));
-  }, [sliderKey]);
+    physicalIndexRef.current = initialPhysicalIndex;
+    const frame = requestAnimationFrame(() => jumpToPhysicalIndex(initialPhysicalIndex, false));
+    return () => cancelAnimationFrame(frame);
+  }, [jumpToPhysicalIndex, sliderKey, safeItems.length]);
 
   useEffect(() => {
     const urls = safeItems
@@ -1531,16 +1550,40 @@ function HeroSlider({
     if (urls.length) void Image.prefetch(urls).catch(() => undefined);
   }, [safeItems]);
 
+  const settlePhysicalIndex = useCallback((rawIndex: number) => {
+    if (safeItems.length <= 1) {
+      physicalIndexRef.current = 0;
+      setActiveIndex(0);
+      return;
+    }
+
+    if (rawIndex <= 0) {
+      const lastRealPhysicalIndex = safeItems.length;
+      physicalIndexRef.current = lastRealPhysicalIndex;
+      setActiveIndex(safeItems.length - 1);
+      requestAnimationFrame(() => jumpToPhysicalIndex(lastRealPhysicalIndex, false));
+      return;
+    }
+
+    if (rawIndex >= safeItems.length + 1) {
+      physicalIndexRef.current = 1;
+      setActiveIndex(0);
+      requestAnimationFrame(() => jumpToPhysicalIndex(1, false));
+      return;
+    }
+
+    physicalIndexRef.current = rawIndex;
+    setActiveIndex(rawIndex - 1);
+  }, [jumpToPhysicalIndex, safeItems.length]);
+
   useEffect(() => {
     if (safeItems.length <= 1) return undefined;
     const timer = setInterval(() => {
-      if (Date.now() < pauseUntilRef.current) return;
-      const next = (activeIndex + 1) % safeItems.length;
-      sliderRef.current?.scrollToOffset({ offset: next * sliderWidth, animated: true });
-      setActiveIndex(next);
+      if (!isActive || draggingRef.current || Date.now() < pauseUntilRef.current) return;
+      jumpToPhysicalIndex(physicalIndexRef.current + 1, true);
     }, 5200);
     return () => clearInterval(timer);
-  }, [activeIndex, safeItems.length, sliderWidth]);
+  }, [isActive, jumpToPhysicalIndex, safeItems.length]);
 
   if (!safeItems.length) return null;
 
@@ -1548,18 +1591,27 @@ function HeroSlider({
     <View style={styles.heroSlider}>
       <FlatList
         ref={sliderRef}
-        data={safeItems}
+        data={loopItems}
+        initialScrollIndex={safeItems.length > 1 ? 1 : 0}
         horizontal
         pagingEnabled
         bounces={false}
         decelerationRate="fast"
         showsHorizontalScrollIndicator={false}
-        keyExtractor={(item) => `${item.type}:${item.id}`}
+        keyExtractor={(item, index) => `${index}:${item.type}:${item.id}`}
         getItemLayout={(_, index) => ({ length: sliderWidth, offset: sliderWidth * index, index })}
-        onScrollBeginDrag={() => { pauseUntilRef.current = Date.now() + 7000; }}
+        onScrollBeginDrag={() => {
+          draggingRef.current = true;
+          pauseUntilRef.current = Date.now() + 7000;
+        }}
+        onScrollEndDrag={() => { draggingRef.current = false; }}
         onMomentumScrollEnd={(event) => {
+          draggingRef.current = false;
           const index = Math.round(event.nativeEvent.contentOffset.x / sliderWidth);
-          setActiveIndex(Math.max(0, Math.min(safeItems.length - 1, index)));
+          settlePhysicalIndex(index);
+        }}
+        onScrollToIndexFailed={({ index }) => {
+          requestAnimationFrame(() => jumpToPhysicalIndex(index, false));
         }}
         renderItem={({ item }) => (
           <View style={[styles.heroSlide, { width: sliderWidth }]}>
@@ -1568,7 +1620,7 @@ function HeroSlider({
         )}
         removeClippedSubviews={false}
         windowSize={3}
-        initialNumToRender={2}
+        initialNumToRender={safeItems.length > 1 ? 3 : 1}
         maxToRenderPerBatch={2}
       />
       {safeItems.length > 1 ? (
@@ -1579,8 +1631,9 @@ function HeroSlider({
               onPress={() => {
                 pauseUntilRef.current = Date.now() + 7000;
                 setActiveIndex(index);
-                sliderRef.current?.scrollToOffset({ offset: index * sliderWidth, animated: true });
+                jumpToPhysicalIndex(index + 1, true);
               }}
+              hitSlop={8}
               style={[styles.heroDot, activeIndex === index && styles.heroDotActive]}
             />
           ))}
@@ -2489,7 +2542,7 @@ const HomeScreen = memo(function HomeScreen({
         onScroll={(event) => onScrollOffset(event.nativeEvent.contentOffset.y)}
         ListHeaderComponent={(
           <>
-            <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} />
+            <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} isActive={isActive} />
             <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} weeklySchedule={weeklySchedule} onOpenItem={onOpen} isActive={isActive} />
           </>
         )}
@@ -2606,6 +2659,10 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const deferredQuery = normalizeComparableText(useDebouncedText(query, 220));
   const { width: screenWidth } = useWindowDimensions();
   const usableCatalog = useMemo(() => catalog.filter(itemHasUsableContent), [catalog]);
+  const categoryPreviewPool = useMemo(
+    () => sortForCatalogFilter(usableCatalog, 'latest').slice(0, 220),
+    [usableCatalog],
+  );
 
   const categoryPreviewItems = useMemo(() => {
     const result = new Map<SearchFilter, CatalogItem>();
@@ -2617,7 +2674,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
     const pickBestUnused = (filter: SearchFilter) => {
       let best: CatalogItem | undefined;
       let bestScore = Number.NEGATIVE_INFINITY;
-      for (const item of usableCatalog) {
+      for (const item of categoryPreviewPool) {
         if (usedItems.has(item.id) || !matchesCatalogFilter(item, filter) || !hasFastCategoryArtwork(item)) continue;
         const artwork = artworkKey(item);
         if (!artwork || usedArtwork.has(artwork)) continue;
@@ -2633,7 +2690,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
     const pickAnyUnused = () => {
       let best: CatalogItem | undefined;
       let bestScore = Number.NEGATIVE_INFINITY;
-      for (const item of usableCatalog) {
+      for (const item of categoryPreviewPool) {
         if (usedItems.has(item.id) || !hasFastCategoryArtwork(item)) continue;
         const artwork = artworkKey(item);
         if (!artwork || usedArtwork.has(artwork)) continue;
@@ -2660,7 +2717,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
       if (artwork) usedArtwork.add(artwork);
     }
     return result;
-  }, [usableCatalog]);
+  }, [categoryPreviewPool]);
 
   const searchResults = useMemo(() => {
     if (!deferredQuery) return [];
@@ -2815,10 +2872,20 @@ function CatalogListScreen({
 }) {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(normalizeComparableText(query));
+  const [readyFilter, setReadyFilter] = useState<SearchFilter | null>(null);
   const { width: screenWidth } = useWindowDimensions();
+
+  useEffect(() => {
+    setReadyFilter(null);
+    const interaction = InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => setReadyFilter(initialFilter));
+    });
+    return () => interaction.cancel();
+  }, [initialFilter]);
+
   const baseItems = useMemo(
-    () => catalogItemsForFilter(catalog, initialFilter),
-    [catalog, initialFilter],
+    () => readyFilter ? catalogItemsForFilter(catalog, readyFilter) : [],
+    [catalog, readyFilter],
   );
   const results = useMemo(() => {
     if (!deferredQuery) return baseItems;
@@ -2853,7 +2920,7 @@ function CatalogListScreen({
         />
         {query ? <Pressable onPress={() => setQuery('')} hitSlop={8}><Ionicons name="close-circle" color={COLORS.muted} size={18} /></Pressable> : null}
       </View>
-      <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text>
+      <Text style={styles.resultCount}>{readyFilter ? `${toPersianDigits(results.length)} نتیجه` : 'در حال آماده‌سازی…'}</Text>
     </View>
   );
 
@@ -2868,11 +2935,16 @@ function CatalogListScreen({
       keyExtractor={(item) => item.id}
       columnWrapperStyle={columnCount > 1 ? { gap: gridGap, flexDirection: 'row-reverse' } : undefined}
       ListHeaderComponent={header}
-      ListEmptyComponent={(
+      ListEmptyComponent={readyFilter ? (
         <View style={styles.searchEmptyState}>
           <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
           <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
           <Text style={styles.largeEmptyText}>عبارت جست‌وجو را تغییر دهید.</Text>
+        </View>
+      ) : (
+        <View style={styles.searchPreparing}>
+          <ActivityIndicator color={COLORS.gold} size="small" />
+          <Text style={styles.searchPreparingText}>در حال آماده‌کردن فهرست…</Text>
         </View>
       )}
       renderItem={({ item }) => (
@@ -4197,11 +4269,27 @@ function DetailModal({
 }) {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [openLanguage, setOpenLanguage] = useState<string | null>(null);
+  const [detailBodyReady, setDetailBodyReady] = useState(false);
 
-  useEffect(() => { setOpenGroup(null); setOpenLanguage(null); }, [item?.id, visible]);
+  useEffect(() => {
+    setOpenGroup(null);
+    setOpenLanguage(null);
+    setDetailBodyReady(false);
+    if (!visible || !item) return undefined;
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => {
+      InteractionManager.runAfterInteractions(() => {
+        if (!cancelled) setDetailBodyReady(true);
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [item?.id, visible]);
   if (!item) return null;
 
-  const downloadGroups = item.downloads || [];
+  const downloadGroups = detailBodyReady ? item.downloads || [] : [];
   const directMovieFiles = downloadGroups
     .filter((group) => !isEpisodeSection(group))
     .flatMap((group) => group.files || [])
@@ -4211,8 +4299,8 @@ function DetailModal({
   const standaloneOperatorGroups = downloadGroups.filter((group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0);
   const standaloneOperatorPlayFile = standaloneOperatorGroups.flatMap((group) => operatorFilesFor(group.files)).find((file) => downloadModeFor(file) === 'operator-play');
   const hasDownloads = item.type === 'series' ? episodeGroups.length > 0 || standaloneOperatorGroups.length > 0 : movieDownloadGroups.length > 0 || standaloneOperatorGroups.length > 0;
-  const latestEpisode = newestEpisodeGroup(item);
-  const hasPlayableStream = playableVersionsFor(item).length > 0;
+  const latestEpisode = detailBodyReady ? newestEpisodeGroup(item) : null;
+  const hasPlayableStream = detailBodyReady ? playableVersionsFor(item).length > 0 : false;
 
   const browseAndClose = (filter: SearchFilter) => { onClose(); requestAnimationFrame(() => onBrowse(filter)); };
 
@@ -4225,10 +4313,10 @@ function DetailModal({
             <Image source={{ uri: item.backdrop || item.poster }} style={StyleSheet.absoluteFill} contentFit="cover" />
             <LinearGradient colors={['rgba(7,9,12,0.06)', COLORS.background]} style={StyleSheet.absoluteFill} />
             <View style={styles.detailTopBar}>
-              <Pressable onPress={onClose} style={styles.detailCircleButton}><Ionicons name="arrow-forward" color="#fff" size={21} /></Pressable>
+              <Pressable onPress={onClose} unstable_pressDelay={0} hitSlop={14} style={styles.detailCircleButton}><Ionicons name="arrow-forward" color="#fff" size={21} /></Pressable>
               <View style={styles.detailTopActions}>
-                {item.type === 'series' ? <Pressable disabled={episodeAlertBusy} onPress={onEpisodeAlert} style={[styles.detailCircleButton, episodeAlertBusy && styles.detailCircleButtonDisabled]}>{episodeAlertBusy ? <ActivityIndicator color={COLORS.gold} size="small" /> : <Ionicons name={episodeAlertEnabled ? 'notifications' : 'notifications-outline'} color={episodeAlertEnabled ? COLORS.gold : '#fff'} size={21} />}</Pressable> : null}
-                <Pressable onPress={onFavorite} style={styles.detailCircleButton}><Ionicons name={favorite ? 'bookmark' : 'bookmark-outline'} color={favorite ? COLORS.gold : '#fff'} size={21} /></Pressable>
+                {item.type === 'series' ? <Pressable disabled={episodeAlertBusy} onPress={onEpisodeAlert} unstable_pressDelay={0} hitSlop={12} style={[styles.detailCircleButton, episodeAlertBusy && styles.detailCircleButtonDisabled]}>{episodeAlertBusy ? <ActivityIndicator color={COLORS.gold} size="small" /> : <Ionicons name={episodeAlertEnabled ? 'notifications' : 'notifications-outline'} color={episodeAlertEnabled ? COLORS.gold : '#fff'} size={21} />}</Pressable> : null}
+                <Pressable onPress={onFavorite} unstable_pressDelay={0} hitSlop={12} style={styles.detailCircleButton}><Ionicons name={favorite ? 'bookmark' : 'bookmark-outline'} color={favorite ? COLORS.gold : '#fff'} size={21} /></Pressable>
               </View>
             </View>
             <View style={styles.detailIdentity}>
@@ -4254,6 +4342,13 @@ function DetailModal({
           </View>
 
           <View style={styles.detailBody}>
+            {!detailBodyReady ? (
+              <View style={styles.detailPreparing}>
+                <ActivityIndicator color={COLORS.gold} size="small" />
+                <Text style={styles.detailPreparingText}>در حال آماده‌کردن جزئیات…</Text>
+              </View>
+            ) : (
+              <>
             <View style={styles.detailActions}>
               {!vpnActive && item.type === 'movie' && (hasPlayableStream || standaloneOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : standaloneOperatorPlayFile && onOperatorOpen(item, standaloneOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
               <Pressable onPress={() => void shareCatalogItem(item)} style={styles.detailSecondaryButton}><Ionicons name="share-social-outline" color={COLORS.text} size={20} /></Pressable>
@@ -4297,6 +4392,8 @@ function DetailModal({
                 {movieDownloadGroups.map((group) => <DownloadGroup key={group.id} group={group} open={openGroup === group.id} onToggle={() => setOpenGroup((current) => current === group.id ? null : group.id)} onOpenFile={(file) => onDownload(item, file)} />)}
                 {standaloneOperatorGroups.map((group) => <OperatorAccessGroup key={`operator-${group.id}`} group={group} open={openGroup === `operator-${group.id}`} onToggle={() => setOpenGroup((current) => current === `operator-${group.id}` ? null : `operator-${group.id}`)} onOpenFile={(file) => onOperatorOpen(item, file)} />)}
               </View>
+            )}
+              </>
             )}
           </View>
         </ScrollView>
@@ -4705,13 +4802,17 @@ function VideoPlayerModal({
   };
 
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
-  const chromeVisible = !firstFrameReady || switchingQuality || settingsOpen || controlsVisible;
+  const chromeVisible = !settingsOpen && (!firstFrameReady || switchingQuality || controlsVisible);
   const topBarStyle = landscape
     ? { top: Math.max(8, insets.top + 4), left: safeLeft, right: safeRight }
     : { top: portraitGroupTop, left: 12, right: 12, height: portraitTopBarHeight };
   const bottomPanelStyle = landscape
     ? { left: safeLeft, right: safeRight, bottom: Math.max(8, insets.bottom + 8) }
     : { top: frameTop + portraitFrameHeight + 2, left: 12, right: 12, height: portraitBottomBarHeight };
+  const settingsOverlayStyle = landscape
+    ? frameRect
+    : { top: 0, left: 0, width: viewportWidth, height: viewportHeight, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12 };
+  const qualityListMaxHeight = landscape ? Math.min(190, viewportHeight * 0.46) : Math.min(176, viewportHeight * 0.30);
 
   return (
     <Modal
@@ -4788,7 +4889,7 @@ function VideoPlayerModal({
             ) : null}
 
             <View style={[styles.nativePlayerTopBar, !landscape && styles.playerDetachedBar, topBarStyle]}>
-              <Pressable onPress={closePlayer} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
+              <Pressable onPress={closePlayer} unstable_pressDelay={0} hitSlop={10} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
                 <Ionicons name="close" color="#fff" size={22} />
               </Pressable>
               <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
@@ -4830,7 +4931,7 @@ function VideoPlayerModal({
               </Pressable>
               <View style={styles.playerTimeRow}>
                 <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
-                <Text numberOfLines={1} style={styles.playerVersionText}>{activeSource.quality || request.title}</Text>
+                <View style={styles.playerTimeSpacer} />
                 <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
               </View>
               <View style={styles.playerBottomTools}>
@@ -4852,20 +4953,20 @@ function VideoPlayerModal({
         ) : null}
 
         {settingsOpen ? (
-          <View style={[styles.playerSettingsFrameOverlay, frameRect]}>
+          <View style={[styles.playerSettingsFrameOverlay, settingsOverlayStyle]}>
             <Pressable style={StyleSheet.absoluteFill} onPress={() => {
               setQualityExpanded(false);
               setSettingsOpen(false);
               revealControls();
             }} />
-            <View style={[styles.playerSettingsCard, landscape && styles.playerSettingsCardLandscape]}>
+            <View style={[styles.playerSettingsCard, !landscape && styles.playerSettingsCardPortrait, landscape && styles.playerSettingsCardLandscape]}>
               <View style={styles.playerSettingsHeader}>
                 <Text style={styles.playerSettingsTitle}>تنظیمات پخش</Text>
                 <Pressable onPress={() => {
                   setQualityExpanded(false);
                   setSettingsOpen(false);
                   revealControls();
-                }} style={styles.playerSettingsClose}>
+                }} unstable_pressDelay={0} hitSlop={10} style={styles.playerSettingsClose}>
                   <Ionicons name="close" color="#fff" size={18} />
                 </Pressable>
               </View>
@@ -4891,7 +4992,13 @@ function VideoPlayerModal({
               </Pressable>
 
               {qualitySources.length > 1 && qualityExpanded ? (
-                <View style={styles.playerSettingsQualityList}>
+                <ScrollView
+                  style={[styles.playerSettingsQualityScroll, { maxHeight: qualityListMaxHeight }]}
+                  contentContainerStyle={styles.playerSettingsQualityList}
+                  showsVerticalScrollIndicator={qualitySources.length > 4}
+                  nestedScrollEnabled
+                  overScrollMode="never"
+                >
                   {qualitySources.map((source) => {
                     const selected = source.id === activeSource.id || source.url === activeSource.url;
                     return (
@@ -4899,6 +5006,7 @@ function VideoPlayerModal({
                         key={`${source.id}-${source.url}`}
                         onPress={() => void switchQuality(source)}
                         disabled={switchingQuality || selected}
+                        hitSlop={4}
                         style={({ pressed }) => [
                           styles.playerSettingsQualityOption,
                           selected && styles.playerSettingsQualityOptionActive,
@@ -4922,7 +5030,7 @@ function VideoPlayerModal({
                       </Pressable>
                     );
                   })}
-                </View>
+                </ScrollView>
               ) : qualitySources.length <= 1 ? (
                 <Text style={styles.playerSingleQualityText}>برای این ویدئو فقط همین کیفیت پخش آنلاین موجود است.</Text>
               ) : null}
@@ -5342,7 +5450,6 @@ function AppContent() {
   const [searchReturnTab, setSearchReturnTab] = useState<MainTab>('home');
   const [searchReturnItem, setSearchReturnItem] = useState<CatalogItem | null>(null);
   const homeScrollOffsetRef = useRef(0);
-  const [mountedTabs, setMountedTabs] = useState<MainTab[]>(['home']);
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
   const startupStartedAtRef = useRef(Date.now());
@@ -5351,8 +5458,6 @@ function AppContent() {
   const vpnCheckSequenceRef = useRef(0);
   const vpnPausingDownloadsRef = useRef(false);
   const activeTabRef = useRef<MainTab>('home');
-  const tabHistoryRef = useRef<MainTab[]>(['home']);
-  const backNavigationLockedRef = useRef(false);
   const navigationStateRef = useRef({
     activeTab,
     menuOpen,
@@ -5382,16 +5487,10 @@ function AppContent() {
     vpnWarningVisible,
   };
 
-  const navigateToTab = useCallback((tab: MainTab, recordHistory = true) => {
-    const currentTab = activeTabRef.current;
-    if (currentTab === tab) return;
+  const navigateToTab = useCallback((tab: MainTab) => {
+    if (activeTabRef.current === tab) return;
     activeTabRef.current = tab;
     setActiveTab(tab);
-    setMountedTabs((current) => current.includes(tab) ? current : [...current, tab]);
-    if (recordHistory) {
-      const history = tabHistoryRef.current;
-      if (history[history.length - 1] !== tab) tabHistoryRef.current = [...history, tab].slice(-12);
-    }
   }, []);
 
   const refreshVpnState = async (showProgress = false) => {
@@ -5541,44 +5640,28 @@ function AppContent() {
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       const state = navigationStateRef.current;
-      if (backNavigationLockedRef.current) return true;
 
-      const runSmoothBack = (action: () => void) => {
-        backNavigationLockedRef.current = true;
-        requestAnimationFrame(action);
-        setTimeout(() => { backNavigationLockedRef.current = false; }, 220);
-      };
+      if (state.vpnWarningVisible) { setVpnWarningVisible(false); return true; }
+      if (state.menuOpen) { setMenuOpen(false); return true; }
+      if (state.operatorWebRequest) { setOperatorWebRequest(null); return true; }
+      if (state.operatorGateRequest) { setOperatorGateRequest(null); return true; }
+      if (state.selectedPerson) { setSelectedPerson(null); return true; }
+      if (state.videoRequest) { setVideoRequest(null); return true; }
+      if (state.selectedItem) { setSelectedItem(null); return true; }
 
-      if (state.vpnWarningVisible) { runSmoothBack(() => setVpnWarningVisible(false)); return true; }
-      if (state.menuOpen) { runSmoothBack(() => setMenuOpen(false)); return true; }
-      if (state.operatorWebRequest) { runSmoothBack(() => setOperatorWebRequest(null)); return true; }
-      if (state.operatorGateRequest) { runSmoothBack(() => setOperatorGateRequest(null)); return true; }
-      if (state.selectedPerson) { runSmoothBack(() => setSelectedPerson(null)); return true; }
-      if (state.videoRequest) { runSmoothBack(() => setVideoRequest(null)); return true; }
-      if (state.selectedItem) { runSmoothBack(() => setSelectedItem(null)); return true; }
       if (state.activeTab === 'search') {
-        runSmoothBack(() => {
-          if (tabHistoryRef.current[tabHistoryRef.current.length - 1] === 'search') {
-            tabHistoryRef.current = tabHistoryRef.current.slice(0, -1);
-          }
-          navigateToTab(state.searchReturnTab, false);
-          if (state.searchReturnItem) setSelectedItem(state.searchReturnItem);
-          setSearchReturnItem(null);
-        });
-        return true;
-      }
-
-      if (tabHistoryRef.current.length > 1) {
-        runSmoothBack(() => {
-          const history = tabHistoryRef.current.slice(0, -1);
-          tabHistoryRef.current = history;
-          navigateToTab(history[history.length - 1] || 'home', false);
-        });
+        const destination = state.searchReturnTab === 'search' ? 'home' : state.searchReturnTab;
+        navigateToTab(destination || 'home');
+        if (state.searchReturnItem) setSelectedItem(state.searchReturnItem);
+        setSearchReturnItem(null);
+        setSearchReturnTab('home');
         return true;
       }
 
       if (state.activeTab !== 'home') {
-        runSmoothBack(() => navigateToTab('home', false));
+        navigateToTab('home');
+        setSearchReturnItem(null);
+        setSearchReturnTab('home');
         return true;
       }
 
@@ -5648,7 +5731,7 @@ function AppContent() {
     if (linkedItem) {
       setSelectedPerson(null);
       setSelectedItem(linkedItem);
-      navigateToTab('home', false);
+      navigateToTab('home');
     } else {
       Alert.alert(
         'لینک آپاراتچی',
@@ -5915,10 +5998,10 @@ function AppContent() {
     const state = navigationStateRef.current;
     setSearchReturnTab(state.activeTab === 'search' ? 'categories' : state.activeTab);
     setSearchReturnItem(state.selectedItem);
+    setSearchFilter(filter);
     setSelectedItem(null);
     setSelectedPerson(null);
     navigateToTab('search');
-    startTransition(() => setSearchFilter(filter));
   }, [navigateToTab]);
 
   const rememberHomeScrollOffset = useCallback((offset: number) => {
@@ -5928,11 +6011,12 @@ function AppContent() {
   const openMainMenu = useCallback(() => setMenuOpen(true), []);
 
   const handleBottomTabChange = useCallback((tab: MainTab) => {
-    navigateToTab(tab);
     setSelectedItem(null);
     setSelectedPerson(null);
     setMenuOpen(false);
     setSearchReturnItem(null);
+    setSearchReturnTab('home');
+    navigateToTab(tab);
   }, [navigateToTab]);
 
   const openOperatorAccess = async (item: CatalogItem, file: DownloadFile) => {
@@ -6369,32 +6453,33 @@ function AppContent() {
         style={styles.safeArea}
         edges={['top', 'right', 'left']}
       >
-        {mountedTabs.includes('home') ? (
-          <View pointerEvents={activeTab === 'home' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'home' && styles.tabSceneHidden]}>
-            <HomeScreen
-              catalog={content.items}
-              iranianSchedule={content.iranianSchedule}
-              weeklySchedule={content.weeklySchedule || []}
-              featuredPeople={content.featuredPeople || []}
-              onReloadContent={reloadHomeContent}
-              onOpen={setSelectedItem}
-              onBrowse={openCatalogFilter}
-              onMenu={openMainMenu}
-              initialScrollOffset={homeScrollOffsetRef.current}
-              onScrollOffset={rememberHomeScrollOffset}
-              isActive={activeTab === 'home'}
-              contentResolved={contentResolved}
-              contentOffline={contentOffline}
-            />
-          </View>
-        ) : null}
-        {mountedTabs.includes('categories') ? (
-          <View pointerEvents={activeTab === 'categories' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}>
+        <View
+          pointerEvents={activeTab === 'home' ? 'auto' : 'none'}
+          style={[styles.tabScene, activeTab !== 'home' && styles.tabSceneHidden]}
+        >
+          <HomeScreen
+            catalog={content.items}
+            iranianSchedule={content.iranianSchedule}
+            weeklySchedule={content.weeklySchedule || []}
+            featuredPeople={content.featuredPeople || []}
+            onReloadContent={reloadHomeContent}
+            onOpen={setSelectedItem}
+            onBrowse={openCatalogFilter}
+            onMenu={openMainMenu}
+            initialScrollOffset={homeScrollOffsetRef.current}
+            onScrollOffset={rememberHomeScrollOffset}
+            isActive={activeTab === 'home'}
+            contentResolved={contentResolved}
+            contentOffline={contentOffline}
+          />
+        </View>
+        {activeTab === 'categories' ? (
+          <View style={styles.tabScene}>
             <CategoriesScreen catalog={content.items} onBrowse={openCatalogFilter} onOpen={setSelectedItem} />
           </View>
         ) : null}
-        {mountedTabs.includes('search') ? (
-          <View pointerEvents={activeTab === 'search' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'search' && styles.tabSceneHidden]}>
+        {activeTab === 'search' ? (
+          <View style={styles.tabScene}>
             <SearchScreen
               catalog={content.items}
               onOpen={setSelectedItem}
@@ -6402,8 +6487,8 @@ function AppContent() {
             />
           </View>
         ) : null}
-        {mountedTabs.includes('favorites') ? (
-          <View pointerEvents={activeTab === 'favorites' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'favorites' && styles.tabSceneHidden]}>
+        {activeTab === 'favorites' ? (
+          <View style={styles.tabScene}>
             <FavoritesScreen
               catalog={content.items}
               favorites={favorites}
@@ -6415,8 +6500,8 @@ function AppContent() {
             />
           </View>
         ) : null}
-        {mountedTabs.includes('downloads') ? (
-          <View pointerEvents={activeTab === 'downloads' ? 'auto' : 'none'} style={[styles.tabScene, activeTab !== 'downloads' && styles.tabSceneHidden]}>
+        {activeTab === 'downloads' ? (
+          <View style={styles.tabScene}>
             <DownloadsScreen
               downloads={downloads}
               catalog={content.items}
@@ -6457,8 +6542,8 @@ function AppContent() {
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
         onBrowse={openCatalogFilter}
-        onCategories={() => navigateToTab('categories')}
-        onHome={() => navigateToTab('home')}
+        onCategories={() => handleBottomTabChange('categories')}
+        onHome={() => handleBottomTabChange('home')}
       />
       <DetailModal
         item={selectedItem}
@@ -6568,23 +6653,23 @@ const styles = StyleSheet.create({
   continueMeta: { ...rtlText, width: '100%', color: '#D4D7DB', fontSize: 8.5, marginTop: 5 },
   continueProgressTrack: { width: '100%', height: 5, backgroundColor: '#090B0F' },
   continueProgressFill: { height: '100%', backgroundColor: COLORS.red },
-  starsSection: { minHeight: 470, marginTop: 22, marginBottom: 9, marginHorizontal: 10, paddingTop: 15, paddingBottom: 15, borderWidth: 1, borderRadius: 22, overflow: 'hidden', borderColor: 'rgba(226,188,102,0.44)', shadowColor: '#7C3754', shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 }, elevation: 5 },
+  starsSection: { marginTop: 22, marginBottom: 9, marginHorizontal: 10, paddingTop: 15, paddingBottom: 14, borderWidth: 1, borderRadius: 22, overflow: 'hidden', borderColor: 'rgba(226,188,102,0.44)', shadowColor: '#7C3754', shadowOpacity: 0.28, shadowRadius: 15, shadowOffset: { width: 0, height: 7 }, elevation: 5 },
   starsHeader: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
   starsHeaderIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.09)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
   starsHeaderText: { flex: 1, alignItems: 'flex-end' },
   starsTitle: { ...rtlText, color: COLORS.text, fontSize: 17, lineHeight: 23, fontWeight: '900', letterSpacing: -0.4 },
   starsSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8, lineHeight: 13, marginTop: 1 },
   starChooserRow: { marginTop: 11, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'center', gap: 9 },
-  starDetailsRow: { minHeight: 285, minHeight: 184, marginTop: 10, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 10 },
-  starMiniProfileCard: { minHeight: 228, width: 104, minHeight: 184, padding: 6, borderRadius: 15, overflow: 'hidden', alignItems: 'stretch', backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
-  starMiniProfileAvatarWrap: { width: '100%', height: 126, borderRadius: 11, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: 'rgba(216,180,90,0.42)' },
+  starDetailsRow: { height: 184, marginTop: 8, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 10 },
+  starMiniProfileCard: { width: 104, height: 184, padding: 6, borderRadius: 15, overflow: 'hidden', alignItems: 'stretch', backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
+  starMiniProfileAvatarWrap: { width: '100%', height: 108, borderRadius: 11, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: 'rgba(216,180,90,0.42)' },
   starMiniProfileAvatar: { width: '100%', height: '100%' },
   starMiniProfileInfo: { minWidth: 0, alignItems: 'flex-end', paddingHorizontal: 2, paddingTop: 6 },
   starMiniProfileName: { width: '100%', color: COLORS.text, fontSize: 10.5, lineHeight: 15, fontWeight: '900', textAlign: 'right', writingDirection: 'ltr' },
   starMiniFacts: { width: '100%', marginTop: 5, gap: 2 },
   starMiniFactText: { width: '100%', color: '#D4D7DD', fontSize: 7.3, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
   starMiniLocation: { width: '100%', color: COLORS.gold, fontSize: 7.1, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
-  starPeopleRail: { marginTop: 10, minWidth: 0 },
+  starPeopleRail: { height: 82, flexGrow: 0, marginTop: 10, minWidth: 0 },
   starsPeopleList: { gap: 8, paddingLeft: 14, paddingRight: 14, paddingVertical: 3 },
   starPersonCard: { width: 58, alignItems: 'center' },
   starPersonAvatarWrap: { width: 53, height: 53, borderRadius: 27, padding: 1.5, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1.2, borderColor: 'rgba(255,255,255,0.12)' },
@@ -6592,10 +6677,10 @@ const styles = StyleSheet.create({
   starPersonAvatar: { width: '100%', height: '100%', borderRadius: 25 },
   starPersonName: { width: '100%', minHeight: 21, color: COLORS.muted, fontSize: 7.1, lineHeight: 10, fontWeight: '800', textAlign: 'center', marginTop: 5, writingDirection: 'ltr' },
   starPersonNameActive: { color: COLORS.text },
-  starWorksRail: { flex: 1, minWidth: 0 },
+  starWorksRail: { flex: 1, height: 184, minWidth: 0 },
   starWorksList: { flexDirection: 'row-reverse', gap: 9, paddingHorizontal: 1, paddingTop: 0, paddingBottom: 1 },
   starWorkCard: { width: 104 },
-  starWorkPoster: { width: 104, height: 145, borderRadius: 13, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  starWorkPoster: { width: 104, height: 142, borderRadius: 13, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
   starWorkTitle: { ...rtlText, width: '100%', minHeight: 29, marginTop: 6, color: COLORS.text, fontSize: 8.2, lineHeight: 13, fontWeight: '800', textAlign: 'right' },
   tabScreenContent: { paddingHorizontal: 16, paddingBottom: 28, paddingTop: 18 },
   header: {
@@ -6708,6 +6793,7 @@ const styles = StyleSheet.create({
   catalogSection: { marginTop: 30 },
   sectionTitleRow: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'flex-end', justifyContent: 'space-between' },
   sectionAction: { minWidth: 88, minHeight: 44, paddingHorizontal: 8, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 3 },
+  sectionActionPressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
   sectionActionText: { color: COLORS.gold, fontSize: 10, fontWeight: '800' },
   collectionSection: { marginTop: 24, paddingTop: 18, borderTopWidth: 1, borderTopColor: COLORS.border, gap: 13 },
   collectionHeader: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10 },
@@ -6812,6 +6898,8 @@ const styles = StyleSheet.create({
   detailMeta: { flexDirection: 'row-reverse', gap: 7, marginTop: 11 },
   detailMetaText: { color: '#CFD1D4', fontSize: 9, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 7, borderWidth: 1, borderColor: COLORS.border, backgroundColor: 'rgba(7,9,12,0.55)' },
   detailBody: { paddingHorizontal: 18 },
+  detailPreparing: { minHeight: 220, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  detailPreparingText: { ...rtlText, color: COLORS.muted, fontSize: 9.5, fontWeight: '800' },
   detailActions: { flexDirection: 'row-reverse', gap: 10 },
   watchButton: { height: 50, flex: 1, borderRadius: 14, flexDirection: 'row-reverse', gap: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.red },
   watchButtonDisabled: { opacity: 0.48 },
@@ -7126,6 +7214,7 @@ const styles = StyleSheet.create({
   playerTimelineThumb: { position: 'absolute', width: 14, height: 14, marginLeft: -7, borderRadius: 7, backgroundColor: '#fff' },
   playerTimeRow: { marginTop: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 9 },
   playerTimeText: { color: '#fff', fontSize: 9.5, fontWeight: '800' },
+  playerTimeSpacer: { flex: 1 },
   playerVersionText: { ...rtlText, minWidth: 0, flex: 1, color: 'rgba(255,255,255,0.88)', fontSize: 8.5, textAlign: 'center' },
   playerBottomTools: { marginTop: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
   playerControlRow: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -7133,8 +7222,9 @@ const styles = StyleSheet.create({
   playerControlSpacer: { flex: 1 },
   playerTimeSeparator: { color: 'rgba(255,255,255,0.48)', fontSize: 9 },
   playerSettingsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.42)' },
-  playerSettingsFrameOverlay: { position: 'absolute', zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.58)' },
+  playerSettingsFrameOverlay: { position: 'absolute', zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'rgba(0,0,0,0.78)' },
   playerSettingsCard: { width: 270, maxWidth: '90%', maxHeight: '84%', padding: 9, borderRadius: 13, backgroundColor: 'rgba(16,19,25,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
+  playerSettingsCardPortrait: { width: '100%', maxWidth: 320, maxHeight: '56%' },
   playerSettingsCardLandscape: { width: 290, maxWidth: '52%', maxHeight: '82%' },
   playerSettingsHeader: { minHeight: 30, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   playerSettingsTitle: { ...rtlText, color: '#fff', fontSize: 12, fontWeight: '900' },
@@ -7147,7 +7237,8 @@ const styles = StyleSheet.create({
   playerSettingsClose: { width: 28, height: 28, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)' },
   playerSettingsLabel: { ...rtlText, color: COLORS.muted, fontSize: 8.5, fontWeight: '800', marginTop: 9, marginBottom: 6 },
   playerSettingsOptions: { marginTop: 10, flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 7 },
-  playerSettingsQualityList: { marginTop: 7, gap: 5 },
+  playerSettingsQualityScroll: { marginTop: 7, flexGrow: 0 },
+  playerSettingsQualityList: { gap: 5, paddingBottom: 1 },
   playerSettingsQualityOption: { minHeight: 38, paddingHorizontal: 11, borderRadius: 9, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(255,255,255,0.035)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   playerSettingsQualityOptionActive: { borderColor: 'rgba(216,180,90,0.65)', backgroundColor: 'rgba(216,180,90,0.12)' },
   playerSettingsQualityOptionPressed: { backgroundColor: 'rgba(255,255,255,0.08)' },
