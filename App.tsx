@@ -337,8 +337,7 @@ const downloadModeFor = (file: DownloadFile): NonNullable<DownloadFile['mode']> 
   file.mode || 'download';
 
 const isOperatorFile = (file: DownloadFile) =>
-  downloadModeFor(file) === 'operator-play' ||
-  downloadModeFor(file) === 'operator-download';
+  downloadModeFor(file) === 'operator-play';
 
 const isTrustedOperatorHostUrl = (url?: string) => {
   if (!url) return false;
@@ -358,10 +357,9 @@ const isOperatorPortalUrl = (url?: string) => {
   if (!url || !isTrustedOperatorHostUrl(url)) return false;
   try {
     const parsed = new URL(url);
-    if (/(^|\.)redl\.ink$/i.test(parsed.hostname)) return Boolean(parsed.pathname && parsed.pathname !== '/');
+    if (!/(^|\.)upera\.tv$/i.test(parsed.hostname)) return false;
     const decodedPath = decodeURIComponent(parsed.pathname || '');
-    return /\/(?:stream|watch|play|download)(?:\/|$)/i.test(decodedPath) &&
-      /\/(?:movie|series|episode)(?:\/|$)/i.test(decodedPath);
+    return /^\/stream\/(?:movie|episode)\/[^/?#]+\/?$/i.test(decodedPath);
   } catch {
     return false;
   }
@@ -405,16 +403,25 @@ const itemLanguages = (item: CatalogItem): MediaLanguage[] =>
     ),
   );
 
-const itemLanguageBadge = (item: CatalogItem) => {
-  if (itemHasOperatorAccess(item)) return 'ویژه همراه';
-  if (isIranianItem(item)) return '';
-  const languages = itemLanguages(item);
-  if (languages.includes('dubbed') && languages.includes('subtitled')) {
-    return 'دوبله + زیرنویس';
+const itemPosterBadges = (item: CatalogItem) => {
+  const badges: Array<{ id: string; label: string; kind: 'language' | 'operator' }> = [];
+
+  if (!isIranianItem(item)) {
+    const languages = itemLanguages(item);
+    if (languages.includes('dubbed') && languages.includes('subtitled')) {
+      badges.push({ id: 'language', label: 'دوبله + زیرنویس', kind: 'language' });
+    } else if (languages.includes('dubbed')) {
+      badges.push({ id: 'language', label: 'دوبله', kind: 'language' });
+    } else if (languages.includes('subtitled')) {
+      badges.push({ id: 'language', label: 'زیرنویس', kind: 'language' });
+    }
   }
-  if (languages.includes('dubbed')) return 'دوبله';
-  if (languages.includes('subtitled')) return 'زیرنویس';
-  return '';
+
+  if (itemHasOperatorAccess(item)) {
+    badges.push({ id: 'operator', label: 'ویژه همراه', kind: 'operator' });
+  }
+
+  return badges;
 };
 
 const COUNTRY_LABELS_FA: Record<string, string> = {
@@ -1961,7 +1968,7 @@ function PosterCard({
   onOpen: () => void;
   width?: number;
 }) {
-  const languageBadge = itemLanguageBadge(item);
+  const posterBadges = itemPosterBadges(item);
   const latestEpisode = item.type === 'series' ? newestEpisodeGroup(item) : null;
 
   return (
@@ -1976,9 +1983,26 @@ function PosterCard({
           transition={70}
         />
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
-        {languageBadge ? (
-          <View style={styles.posterAccess}>
-            <Text style={styles.posterAccessText}>{languageBadge}</Text>
+        {posterBadges.length ? (
+          <View pointerEvents="none" style={styles.posterAccessStack}>
+            {posterBadges.map((badge) => (
+              <View
+                key={badge.id}
+                style={[
+                  styles.posterAccess,
+                  badge.kind === 'operator' && styles.posterOperatorAccess,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.posterAccessText,
+                    badge.kind === 'operator' && styles.posterOperatorAccessText,
+                  ]}
+                >
+                  {badge.label}
+                </Text>
+              </View>
+            ))}
           </View>
         ) : null}
         {latestEpisode ? (
@@ -4927,28 +4951,29 @@ function OperatorGateModal({
   onRetry: () => void;
 }) {
   const isChecking = request.status === 'checking';
+  const subject = request.item.type === 'movie' ? 'این فیلم' : 'این قسمت';
   const content = request.status === 'wifi'
     ? {
         icon: 'wifi-outline' as const,
-        title: 'این محتوا فقط با اینترنت همراه باز می‌شود',
-        text: 'وای‌فای را خاموش کنید و اینترنت سیم‌کارت را روشن کنید، سپس «بررسی دوباره» را بزنید.',
+        title: 'پخش ویژه اینترنت همراه',
+        text: `${subject} فقط با اینترنت همراه اپراتورهای پشتیبانی‌شده قابل پخش است. وای‌فای را خاموش کنید، اینترنت سیم‌کارت را روشن کنید و دوباره تلاش کنید.`,
       }
     : request.status === 'vpn'
       ? {
           icon: 'shield-outline' as const,
           title: 'فیلترشکن را خاموش کنید',
-          text: 'برای تماشا یا دریافت این محتوا، فیلترشکن را خاموش کنید و با اینترنت سیم‌کارت دوباره تلاش کنید.',
+          text: `${subject} فقط با اینترنت همراه قابل پخش است. فیلترشکن را خاموش کنید و دوباره تلاش کنید.`,
         }
       : request.status === 'offline'
         ? {
             icon: 'cloud-offline-outline' as const,
             title: 'اتصال اینترنت برقرار نیست',
-            text: 'اینترنت سیم‌کارت را روشن کنید و دوباره بررسی کنید.',
+            text: 'اینترنت سیم‌کارت را روشن کنید و دوباره تلاش کنید.',
           }
         : {
             icon: 'phone-portrait-outline' as const,
-            title: 'نوع اتصال مشخص نشد',
-            text: 'وای‌فای و فیلترشکن را خاموش کنید، اینترنت سیم‌کارت را روشن کنید و دوباره بررسی کنید.',
+            title: 'پخش ویژه اینترنت همراه',
+            text: 'نوع اتصال مشخص نشد. وای‌فای و فیلترشکن را خاموش کنید، اینترنت سیم‌کارت را روشن کنید و دوباره تلاش کنید.',
           };
 
   return (
@@ -5911,8 +5936,8 @@ function AppContent() {
   }, [navigateToTab]);
 
   const openOperatorAccess = async (item: CatalogItem, file: DownloadFile) => {
-    if (!isOperatorFile(file) || !isOperatorPortalUrl(file.url)) {
-      Alert.alert('اینترنت همراه', 'این لینک فعلاً در دسترس نیست.');
+    if (downloadModeFor(file) !== 'operator-play' || !isOperatorPortalUrl(file.url)) {
+      Alert.alert('پخش ویژه اینترنت همراه', 'لینک پخش این عنوان فعلاً در دسترس نیست.');
       return;
     }
 
@@ -5928,7 +5953,7 @@ function AppContent() {
 
     setOperatorGateRequest(null);
     setOperatorWebRequest({
-      title: `${item.nameFa} — ${downloadModeFor(file) === 'operator-play' ? 'پخش آنلاین' : 'دریافت'}`,
+      title: `${item.nameFa} — پخش ویژه همراه`,
       url: file.url,
     });
   };
@@ -6711,8 +6736,11 @@ const styles = StyleSheet.create({
   catalogArtworkContainer: { overflow: 'hidden', backgroundColor: '#141820' },
   catalogArtworkFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#141820' },
   posterGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 65 },
-  posterAccess: { position: 'absolute', top: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.9)' },
+  posterAccessStack: { position: 'absolute', top: 8, right: 8, alignItems: 'flex-end', gap: 4, maxWidth: '88%' },
+  posterAccess: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.92)' },
   posterAccessText: { color: '#fff', fontSize: 8, fontWeight: '900' },
+  posterOperatorAccess: { backgroundColor: 'rgba(20,22,27,0.94)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.82)' },
+  posterOperatorAccessText: { color: COLORS.gold },
   posterEpisodeBadge: { position: 'absolute', bottom: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
   posterEpisodeText: { color: COLORS.text, fontSize: 8, fontWeight: '900' },
   posterRating: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.82)' },
