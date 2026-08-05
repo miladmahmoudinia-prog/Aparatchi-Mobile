@@ -11,6 +11,7 @@ import { WebView } from 'react-native-webview';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   AppState,
   BackHandler,
   FlatList,
@@ -146,6 +147,24 @@ const optimizedImageUrl = (
   _kind: 'poster' | 'backdrop' | 'person' = 'poster',
 ) => String(value || '').trim().replace(/^http:\/\//i, 'https://');
 
+const isTmdbImageUrl = (value?: string) =>
+  /^(?:https?:)?\/\/image\.tmdb\.org\//i.test(String(value || '').trim());
+
+const personImageCandidates = (value?: string) => {
+  const image = optimizedImageUrl(value, 'person');
+  if (!image) return [];
+
+  const candidates: string[] = [];
+  if (isTmdbImageUrl(image)) {
+    const sourceWithoutProtocol = image.replace(/^https?:\/\//i, '');
+    candidates.push(
+      `https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=500&output=webp`,
+    );
+  }
+  candidates.push(image);
+  return [...new Set(candidates)];
+};
+
 const internetIsReachable = async () => {
   try {
     const state = await Network.getNetworkStateAsync();
@@ -180,7 +199,10 @@ type CatalogPublicationMetadata = {
   publicationStatus?: 'published' | 'building-archive' | string;
   archiveComplete?: boolean;
   archivePendingEpisodeCount?: number;
+  archivePendingEpisodes?: unknown[];
   sourceEpisodeCount?: number;
+  archiveAuditStatus?: 'pending' | 'checked' | 'blocked' | string;
+  archiveEpisodeDiscoveryComplete?: boolean;
 };
 
 const catalogPublicationMetadata = (item: CatalogItem) =>
@@ -188,7 +210,25 @@ const catalogPublicationMetadata = (item: CatalogItem) =>
 
 const isSeriesPublished = (item: CatalogItem) => {
   if (item.type !== 'series') return true;
-  return catalogPublicationMetadata(item).publicationStatus === 'published';
+  const metadata = catalogPublicationMetadata(item);
+  if (metadata.publicationStatus === 'published' || metadata.archiveComplete === true) return true;
+
+  // Older catalogs sometimes kept a stale numeric pending count after a full,
+  // successful audit. An explicit empty pending list is the trustworthy result.
+  const explicitlyAuditedComplete = Boolean(
+    metadata.archiveAuditStatus === 'checked' &&
+    metadata.archiveEpisodeDiscoveryComplete !== false &&
+    Array.isArray(metadata.archivePendingEpisodes) &&
+    metadata.archivePendingEpisodes.length === 0 &&
+    (item.downloads || []).length > 0,
+  );
+  if (explicitlyAuditedComplete) return true;
+
+  return Boolean(
+    !metadata.publicationStatus &&
+    item.isAiring &&
+    (item.downloads || []).length > 0,
+  );
 };
 
 const isCurrentScheduleSeries = (item?: CatalogItem | null) => {
@@ -858,54 +898,103 @@ const visibleLoadedContent = (loaded: LoadedContent): LoadedContent => ({
   items: (loaded.items || []).filter(itemHasUsableContent),
 });
 
-const catalogClassificationText = (item: CatalogItem) => normalizeComparableText([
+const catalogTitleText = (item: CatalogItem) => normalizeComparableText([
   item.nameFa,
   item.name,
-  item.overview,
-  item.contentKind || '',
+].join(' '));
+
+const catalogGenreText = (item: CatalogItem) => normalizeComparableText([
   ...(item.genres || []),
+].join(' '));
+
+const catalogMetadataText = (item: CatalogItem) => normalizeComparableText([
+  item.contentKind || '',
   ...(item.categoryKeys || []),
   ...(item.categoryLabels || []),
 ].join(' '));
 
-const isReligiousItem = (item: CatalogItem) => {
-  const text = catalogClassificationText(item);
-  return Boolean(
-    item.contentKind === 'religious-program' ||
-    hasCategory(item, 'religious') ||
-    hasCategory(item, 'quran') ||
-    /قرآن|قرانی|قرآنی|ترتیل|تلاوت|ادعیه|دعا|مذهبی|مداحی|نوحه|زیارت|religious|quran|recitation/.test(text)
-  );
+const hasStandaloneTerm = (text: string, terms: string[]) => {
+  const padded = ` ${normalizeComparableText(text)} `;
+  return terms.some((term) => padded.includes(` ${normalizeComparableText(term)} `));
 };
 
-const isQuranItem = (item: CatalogItem) =>
-  /قرآن|قرانی|قرآنی|ترتیل|تلاوت|quran|recitation/.test(catalogClassificationText(item));
+const isReligiousItem = (item: CatalogItem) => {
+  const title = catalogTitleText(item);
+  const genres = catalogGenreText(item);
+  const metadata = catalogMetadataText(item);
+  const explicitKind = item.contentKind === 'religious-program' || item.contentKind === 'quran-program';
+  const strongTitle = hasStandaloneTerm(title, [
+    'قرآن', 'قرآنی', 'ترتیل', 'تلاوت', 'ادعیه', 'دعا', 'دعای', 'مذهبی',
+    'مداحی', 'نوحه', 'زیارت', 'عاشورا', 'کربلا', 'پیامبر', 'نبی', 'امام',
+    'quran', 'recitation', 'religious',
+  ]);
+  const strongGenre = hasStandaloneTerm(genres, ['مذهبی', 'religious']);
+  const explicitCategory = Boolean(
+    hasCategory(item, 'quran') ||
+    (hasCategory(item, 'religious') && (strongTitle || strongGenre)),
+  );
+  return explicitKind || explicitCategory || strongTitle || strongGenre ||
+    hasStandaloneTerm(metadata, ['quran-program', 'religious-program']);
+};
+
+const isQuranItem = (item: CatalogItem) => {
+  const text = `${catalogTitleText(item)} ${catalogGenreText(item)} ${catalogMetadataText(item)}`;
+  return hasCategory(item, 'quran') || hasStandaloneTerm(text, [
+    'قرآن', 'قرآنی', 'ترتیل', 'تلاوت', 'quran', 'recitation',
+  ]);
+};
 
 const isKidsItem = (item: CatalogItem) => {
-  const text = catalogClassificationText(item);
-  const explicit = Boolean(
-    item.contentKind === 'kids' ||
-    item.contentKind === 'children-program' ||
-    hasCategory(item, 'kids') ||
-    hasCategory(item, 'children') ||
-    /کودک|کودکان|بچه|خاله نسرین|خاله سوسکه|برنامه کودک|ترانه کودک|kids|children|nursery/.test(text)
+  const title = catalogTitleText(item);
+  const genres = catalogGenreText(item);
+  const metadata = catalogMetadataText(item);
+  const adultOrHeavy = hasStandaloneTerm(genres, [
+    'ترسناک', 'وحشت', 'جنگی', 'جنایی', 'هیجان انگیز', 'بزرگسال',
+    'horror', 'war', 'crime', 'thriller', 'adult',
+  ]);
+  const explicitKind = item.contentKind === 'kids' || item.contentKind === 'children-program';
+  const strongTitle = hasStandaloneTerm(title, [
+    'کودک', 'کودکان', 'کودکانه', 'بچه ها', 'برنامه کودک', 'ترانه کودک', 'خاله نسرین',
+    'خاله سوسکه', 'با بابام', 'بیا آشتی کنیم', 'بنیامین', 'ننه لالا',
+    'kids', 'children', 'nursery',
+  ]);
+  const strongGenre = hasStandaloneTerm(genres, ['کودک', 'کودکان', 'children', 'kids']);
+  const explicitCategory = Boolean(
+    (hasCategory(item, 'kids') || hasCategory(item, 'children')) && !adultOrHeavy,
   );
-  const animatedFamily = isAnimatedItem(item) && /خانوادگی|family/.test(text);
-  return explicit || animatedFamily;
+  const animatedFamily = Boolean(
+    isAnimatedItem(item) &&
+    hasStandaloneTerm(genres, ['خانوادگی', 'family']) &&
+    !adultOrHeavy,
+  );
+  return !adultOrHeavy && (explicitKind || explicitCategory || strongTitle || strongGenre || animatedFamily ||
+    hasStandaloneTerm(metadata, ['children-program']));
 };
 
 const isProgramItem = (item: CatalogItem) => {
-  const text = catalogClassificationText(item);
-  return Boolean(
+  const title = catalogTitleText(item);
+  const genres = catalogGenreText(item);
+  const metadata = catalogMetadataText(item);
+  const explicitKind = Boolean(
     item.isTalkShow ||
     item.contentKind === 'talk-show' ||
     item.contentKind === 'reality-competition' ||
-    item.contentKind === 'program' ||
-    hasCategory(item, 'talk-shows') ||
-    hasCategory(item, 'programs') ||
-    hasCategory(item, 'reality') ||
-    /تاک[‌\s-]*شو|talk[\s_-]*show|رئالیتی|reality|مسابقه|رقابت|گیم[‌\s-]*شو|game[\s_-]*show/.test(text)
+    item.contentKind === 'program',
   );
+  const explicitGenre = hasStandaloneTerm(genres, [
+    'تاک شو', 'رئالیتی شو', 'مسابقه تلویزیونی', 'talk show', 'reality', 'game show',
+  ]);
+  const strongSeriesTitle = item.type === 'series' && Boolean(
+    hasStandaloneTerm(title, [
+      'تاک شو', 'رئالیتی شو', 'مسابقه', 'گیم شو', 'سیزده شمالی',
+      'شب های مافیا', 'جوکر', 'talk show', 'reality', 'game show',
+    ]),
+  );
+  const explicitCategory = item.type === 'series' && Boolean(
+    (hasCategory(item, 'talk-shows') || hasCategory(item, 'programs') || hasCategory(item, 'reality')) &&
+    (explicitGenre || strongSeriesTitle || hasStandaloneTerm(metadata, ['talk-show', 'reality-competition'])),
+  );
+  return explicitKind || explicitGenre || strongSeriesTitle || explicitCategory;
 };
 
 const isDocumentaryItem = (item: CatalogItem) =>
@@ -1124,12 +1213,12 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
 };
 
 function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
-  const image = useMemo(() => optimizedImageUrl(person.image, 'person'), [person.image]);
-  const [retryCount, setRetryCount] = useState(0);
+  const candidates = useMemo(() => personImageCandidates(person.image), [person.image]);
+  const [candidateIndex, setCandidateIndex] = useState(0);
 
   useEffect(() => {
-    setRetryCount(0);
-  }, [person.id, person.tmdbId, image]);
+    setCandidateIndex(0);
+  }, [person.id, person.tmdbId, person.image]);
 
   const initials = personName(person)
     .split(/\s+/)
@@ -1138,8 +1227,9 @@ function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) 
     .map((part) => part[0])
     .join('')
     .toUpperCase();
+  const image = candidates[candidateIndex] || '';
 
-  if (!image || retryCount > 1) {
+  if (!image) {
     return (
       <View style={[style, styles.personImageFallback]}>
         {initials ? (
@@ -1151,20 +1241,16 @@ function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) 
     );
   }
 
-  const retryUrl = retryCount === 0
-    ? image
-    : `${image}${image.includes('?') ? '&' : '?'}aparatchi_retry=1`;
-
   return (
     <Image
-      key={`${person.tmdbId || person.id}:${retryCount}`}
-      source={{ uri: retryUrl }}
+      key={`${person.tmdbId || person.id}:${candidateIndex}:${image}`}
+      source={{ uri: image }}
       style={style}
       contentFit="cover"
       cachePolicy="memory-disk"
       transition={0}
-      recyclingKey={`person:${person.tmdbId || person.id}:${retryCount}`}
-      onError={() => setRetryCount((current) => current + 1)}
+      recyclingKey={`person:${person.tmdbId || person.id}:${candidateIndex}`}
+      onError={() => setCandidateIndex((current) => current + 1)}
     />
   );
 }
@@ -2077,7 +2163,7 @@ function HorizontalCatalog({
   );
 }
 
-function HomeStarsSection({
+function HomeStarsSectionBase({
   people,
   catalog,
   onOpen,
@@ -2117,6 +2203,8 @@ function HomeStarsSection({
       .slice(0, 32);
   }, [catalog, people]);
   const [selectedId, setSelectedId] = useState('');
+  const peopleRailRef = useRef<FlatList<FeaturedPerson>>(null);
+  const peopleRailOffsetRef = useRef(0);
 
   useEffect(() => {
     if (!resolvedPeople.length) return;
@@ -2132,6 +2220,24 @@ function HomeStarsSection({
       : personWorksFor(selected, catalog);
     return sortForCatalogFilter(matched, 'latest');
   }, [catalog, selected]);
+
+  const selectedIdForRender = selected?.id || '';
+  const selectPerson = useCallback((personId: string) => {
+    setSelectedId((current) => current === personId ? current : personId);
+  }, []);
+  const renderStarPerson = useCallback(({ item: person }: { item: FeaturedPerson }) => {
+    const active = person.id === selectedIdForRender;
+    return (
+      <Pressable onPress={() => selectPerson(person.id)} style={styles.starPersonCard} hitSlop={8}>
+        <View style={[styles.starPersonAvatarWrap, active && styles.starPersonAvatarActive]}>
+          <PersonAvatar person={person} style={styles.starPersonAvatar} />
+        </View>
+        <Text numberOfLines={1} style={[styles.starPersonName, active && styles.starPersonNameActive]}>
+          {personName(person)}
+        </Text>
+      </Pressable>
+    );
+  }, [selectPerson, selectedIdForRender]);
 
   if (!selected || !works.length) return null;
   const birthday = formatPersonBirthday(selected.birthday);
@@ -2156,28 +2262,25 @@ function HomeStarsSection({
       </View>
 
       <FlatList
+        ref={peopleRailRef}
         horizontal
+        inverted
         style={styles.starPeopleRail}
         data={resolvedPeople}
-        keyExtractor={(person) => person.id}
+        keyExtractor={(person) => person.tmdbId ? `tmdb:${person.tmdbId}` : person.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.starsPeopleList}
-        initialNumToRender={10}
-        maxToRenderPerBatch={10}
-        windowSize={4}
-        renderItem={({ item: person }) => {
-          const active = person.id === selected.id;
-          return (
-            <Pressable onPress={() => setSelectedId(person.id)} style={styles.starPersonCard} hitSlop={8}>
-              <View style={[styles.starPersonAvatarWrap, active && styles.starPersonAvatarActive]}>
-                <PersonAvatar person={person} style={styles.starPersonAvatar} />
-              </View>
-              <Text numberOfLines={1} style={[styles.starPersonName, active && styles.starPersonNameActive]}>
-                {personName(person)}
-              </Text>
-            </Pressable>
-          );
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        updateCellsBatchingPeriod={50}
+        windowSize={5}
+        removeClippedSubviews={false}
+        getItemLayout={(_, index) => ({ length: 66, offset: 66 * index, index })}
+        onScroll={(event) => {
+          peopleRailOffsetRef.current = event.nativeEvent.contentOffset.x;
         }}
+        scrollEventThrottle={16}
+        renderItem={renderStarPerson}
       />
 
       <View style={styles.starDetailsRow}>
@@ -2223,6 +2326,8 @@ function HomeStarsSection({
     </LinearGradient>
   );
 }
+
+const HomeStarsSection = memo(HomeStarsSectionBase);
 
 type HomeCatalogRow = {
   filter: SearchFilter;
@@ -4194,6 +4299,11 @@ function VideoPlayerModal({
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
   const [timelineWidth, setTimelineWidth] = useState(1);
+  const [orientationTransitioning, setOrientationTransitioning] = useState(false);
+  const orientationTransitionOpacity = useRef(new Animated.Value(0)).current;
+  const orientationTransitioningRef = useRef(false);
+  const requestedLandscapeRef = useRef<boolean | null>(null);
+  const orientationFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const landscape = viewportWidth > viewportHeight;
@@ -4284,6 +4394,32 @@ function VideoPlayerModal({
     }
   }, []);
 
+  const finishOrientationTransition = useCallback(() => {
+    if (orientationFallbackTimerRef.current) {
+      clearTimeout(orientationFallbackTimerRef.current);
+      orientationFallbackTimerRef.current = null;
+    }
+    Animated.timing(orientationTransitionOpacity, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start(() => {
+      orientationTransitioningRef.current = false;
+      requestedLandscapeRef.current = null;
+      setOrientationTransitioning(false);
+    });
+  }, [orientationTransitionOpacity]);
+
+  useEffect(() => {
+    if (!orientationTransitioningRef.current) return;
+    if (requestedLandscapeRef.current !== landscape) return;
+    const frame = requestAnimationFrame(() => {
+      if (orientationFallbackTimerRef.current) clearTimeout(orientationFallbackTimerRef.current);
+      orientationFallbackTimerRef.current = setTimeout(finishOrientationTransition, 90);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [finishOrientationTransition, landscape]);
+
   const scheduleControlsHide = useCallback(() => {
     clearControlsTimer();
     if (!firstFrameReady || settingsOpen) return;
@@ -4348,10 +4484,33 @@ function VideoPlayerModal({
   useEffect(
     () => () => {
       clearControlsTimer();
+      if (orientationFallbackTimerRef.current) clearTimeout(orientationFallbackTimerRef.current);
       void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
     },
     [clearControlsTimer],
   );
+
+  const changeOrientation = useCallback((targetLandscape: boolean) => {
+    if (orientationTransitioningRef.current || targetLandscape === landscape) return;
+    orientationTransitioningRef.current = true;
+    requestedLandscapeRef.current = targetLandscape;
+    setOrientationTransitioning(true);
+    orientationTransitionOpacity.stopAnimation();
+    orientationTransitionOpacity.setValue(1);
+    setSettingsOpen(false);
+    setControlsVisible(true);
+    clearControlsTimer();
+
+    requestAnimationFrame(() => {
+      void ScreenOrientation.lockAsync(
+        targetLandscape
+          ? ScreenOrientation.OrientationLock.LANDSCAPE
+          : ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      ).catch(() => finishOrientationTransition());
+    });
+
+    orientationFallbackTimerRef.current = setTimeout(finishOrientationTransition, 1500);
+  }, [clearControlsTimer, finishOrientationTransition, landscape, orientationTransitionOpacity]);
 
   const closePlayer = () => {
     const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
@@ -4370,7 +4529,7 @@ function VideoPlayerModal({
       return;
     }
     if (landscape) {
-      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
+      changeOrientation(false);
       revealControls();
       return;
     }
@@ -4429,14 +4588,7 @@ function VideoPlayerModal({
   };
 
   const toggleOrientation = () => {
-    setSettingsOpen(false);
-    setControlsVisible(true);
-    clearControlsTimer();
-    void ScreenOrientation.lockAsync(
-      landscape
-        ? ScreenOrientation.OrientationLock.PORTRAIT_UP
-        : ScreenOrientation.OrientationLock.LANDSCAPE,
-    ).catch(() => undefined);
+    changeOrientation(!landscape);
   };
 
   const toggleSurfaceControls = () => {
@@ -4464,7 +4616,7 @@ function VideoPlayerModal({
       navigationBarTranslucent={false}
     >
       <View style={styles.mediaModal}>
-        <StatusBar style="light" hidden={landscape} backgroundColor="#000000" />
+        <StatusBar style="light" hidden={landscape || orientationTransitioning} backgroundColor="#000000" />
 
         <View style={[styles.videoFrame, frameRect]}>
           {request.artwork && !firstFrameReady && optimizedImageUrl(request.artwork, 'backdrop') ? (
@@ -4636,6 +4788,12 @@ function VideoPlayerModal({
               )}
             </View>
           </View>
+        ) : null}
+        {orientationTransitioning ? (
+          <Animated.View
+            pointerEvents="auto"
+            style={[styles.playerOrientationCover, { opacity: orientationTransitionOpacity }]}
+          />
         ) : null}
       </View>
     </Modal>
@@ -6237,8 +6395,8 @@ const styles = StyleSheet.create({
   starsTitle: { ...rtlText, color: COLORS.text, fontSize: 17, lineHeight: 23, fontWeight: '900', letterSpacing: -0.4 },
   starsSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8, lineHeight: 13, marginTop: 1 },
   starChooserRow: { marginTop: 11, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'center', gap: 9 },
-  starDetailsRow: { marginTop: 10, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 10 },
-  starMiniProfileCard: { width: 104, padding: 6, borderRadius: 15, overflow: 'hidden', alignItems: 'stretch', backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
+  starDetailsRow: { minHeight: 184, marginTop: 10, paddingHorizontal: 14, flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 10 },
+  starMiniProfileCard: { width: 104, minHeight: 184, padding: 6, borderRadius: 15, overflow: 'hidden', alignItems: 'stretch', backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },
   starMiniProfileAvatarWrap: { width: '100%', height: 126, borderRadius: 11, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: 'rgba(216,180,90,0.42)' },
   starMiniProfileAvatar: { width: '100%', height: '100%' },
   starMiniProfileInfo: { minWidth: 0, alignItems: 'flex-end', paddingHorizontal: 2, paddingTop: 6 },
@@ -6247,7 +6405,7 @@ const styles = StyleSheet.create({
   starMiniFactText: { width: '100%', color: '#D4D7DD', fontSize: 7.3, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
   starMiniLocation: { width: '100%', color: COLORS.gold, fontSize: 7.1, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
   starPeopleRail: { marginTop: 10, minWidth: 0 },
-  starsPeopleList: { flexDirection: 'row-reverse', gap: 8, paddingLeft: 14, paddingRight: 14, paddingVertical: 3 },
+  starsPeopleList: { gap: 8, paddingLeft: 14, paddingRight: 14, paddingVertical: 3 },
   starPersonCard: { width: 58, alignItems: 'center' },
   starPersonAvatarWrap: { width: 53, height: 53, borderRadius: 27, padding: 1.5, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1.2, borderColor: 'rgba(255,255,255,0.12)' },
   starPersonAvatarActive: { borderWidth: 2.2, borderColor: COLORS.red, shadowColor: COLORS.red, shadowOpacity: 0.3, shadowRadius: 7, elevation: 4 },
@@ -6658,6 +6816,7 @@ const styles = StyleSheet.create({
   personWorksEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', textAlign: 'center', marginTop: 10 },
   personWorksEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 18, textAlign: 'center', marginTop: 6 },
   mediaModal: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#000' },
+  playerOrientationCover: { ...StyleSheet.absoluteFillObject, zIndex: 220, elevation: 220, backgroundColor: '#000' },
   detailCircleButtonPlaceholder: { width: 46, height: 46 },
   videoViewPreparing: { opacity: 0 },
   playerPreparingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },

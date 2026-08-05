@@ -127,7 +127,14 @@ export type CatalogItem = {
   /** تعداد قسمت‌هایی که منبع برای این سریال گزارش کرده است. */
   sourceEpisodeCount?: number;
   /** وضعیت بررسی کامل آرشیو قدیمی. */
-  archiveAuditStatus?: 'pending' | 'checked';
+  archiveAuditStatus?: 'pending' | 'checked' | 'blocked';
+  /** فهرست صریح قسمت‌های کشف‌شده‌ای که هنوز لینک ندارند. */
+  archivePendingEpisodes?: Array<{ seasonNumber: number; episodeNumber: number }>;
+  /** آیا صفحه‌بندی قسمت‌ها بدون خطا تا انتها بررسی شده است. */
+  archiveEpisodeDiscoveryComplete?: boolean;
+  archiveEpisodePaginationPagesFetched?: number;
+  archiveEpisodePaginationErrors?: number;
+  archiveDiscoveryCheckedAt?: string;
   updateLabel?: string;
   meaningfulUpdatedAt?: string;
   categoryKeys?: string[];

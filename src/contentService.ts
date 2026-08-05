@@ -820,6 +820,35 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     categoryLabels.push('ویژه اینترنت همراه');
   }
 
+  const rawArchivePendingEpisodes = item.archivePendingEpisodes ?? item.archive_pending_episodes;
+  const archivePendingEpisodes = Array.isArray(rawArchivePendingEpisodes)
+    ? rawArchivePendingEpisodes
+        .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object'))
+        .map((entry) => ({
+          seasonNumber: Math.max(1, asNumber(entry.seasonNumber ?? entry.season_number, 1)),
+          episodeNumber: Math.max(0, asNumber(entry.episodeNumber ?? entry.episode_number, 0)),
+        }))
+        .filter((entry) => entry.episodeNumber > 0)
+    : [];
+  const archiveEpisodeDiscoveryCompleteValue = item.archiveEpisodeDiscoveryComplete ?? item.archive_episode_discovery_complete;
+  const archiveAuditStatusValue = asString(item.archiveAuditStatus ?? item.archive_audit_status);
+  const archiveExplicitlyAuditedComplete = Boolean(
+    archiveAuditStatusValue === 'checked' &&
+    archiveEpisodeDiscoveryCompleteValue !== false &&
+    archiveEpisodeDiscoveryCompleteValue !== 'false' &&
+    Array.isArray(rawArchivePendingEpisodes) &&
+    archivePendingEpisodes.length === 0 &&
+    downloads.length > 0,
+  );
+  const normalizedPublicationStatus = (
+    asString(item.publicationStatus ?? item.publication_status) === 'published' ||
+    asBoolean(item.archiveComplete ?? item.archive_complete) ||
+    archiveExplicitlyAuditedComplete ||
+    (asBoolean(item.isAiring ?? item.is_airing) && episodeSections.length > 0)
+      ? 'published'
+      : 'building-archive'
+  ) as 'published' | 'building-archive';
+
   return {
     id,
     slug: asString(item.slug, `${type}-${id}`),
@@ -885,13 +914,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
       : {}),
     ...(type === 'series'
       ? {
-          publicationStatus: (
-            asString(item.publicationStatus ?? item.publication_status) === 'published'
-              ? 'published'
-              : asBoolean(item.isAiring ?? item.is_airing) && episodeSections.length > 0
-                ? 'published'
-                : 'building-archive'
-          ) as 'published' | 'building-archive',
+          publicationStatus: normalizedPublicationStatus,
           ...(item.archiveComplete !== undefined || item.archive_complete !== undefined
             ? { archiveComplete: asBoolean(item.archiveComplete ?? item.archive_complete) }
             : {}),
@@ -901,8 +924,23 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
           ...(asNumber(item.sourceEpisodeCount ?? item.source_episode_count, -1) >= 0
             ? { sourceEpisodeCount: asNumber(item.sourceEpisodeCount ?? item.source_episode_count, 0) }
             : {}),
-          ...(asString(item.archiveAuditStatus ?? item.archive_audit_status)
-            ? { archiveAuditStatus: asString(item.archiveAuditStatus ?? item.archive_audit_status) as 'pending' | 'checked' }
+          ...(archiveAuditStatusValue
+            ? { archiveAuditStatus: archiveAuditStatusValue as 'pending' | 'checked' | 'blocked' }
+            : {}),
+          ...(Array.isArray(rawArchivePendingEpisodes)
+            ? { archivePendingEpisodes }
+            : {}),
+          ...(archiveEpisodeDiscoveryCompleteValue !== undefined
+            ? { archiveEpisodeDiscoveryComplete: asBoolean(archiveEpisodeDiscoveryCompleteValue) }
+            : {}),
+          ...(asNumber(item.archiveEpisodePaginationPagesFetched ?? item.archive_episode_pagination_pages_fetched, -1) >= 0
+            ? { archiveEpisodePaginationPagesFetched: asNumber(item.archiveEpisodePaginationPagesFetched ?? item.archive_episode_pagination_pages_fetched, 0) }
+            : {}),
+          ...(asNumber(item.archiveEpisodePaginationErrors ?? item.archive_episode_pagination_errors, -1) >= 0
+            ? { archiveEpisodePaginationErrors: asNumber(item.archiveEpisodePaginationErrors ?? item.archive_episode_pagination_errors, 0) }
+            : {}),
+          ...(asString(item.archiveDiscoveryCheckedAt ?? item.archive_discovery_checked_at)
+            ? { archiveDiscoveryCheckedAt: asString(item.archiveDiscoveryCheckedAt ?? item.archive_discovery_checked_at) }
             : {}),
         }
       : {}),
