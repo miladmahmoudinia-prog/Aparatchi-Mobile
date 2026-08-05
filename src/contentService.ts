@@ -181,6 +181,61 @@ const normalizeCountryMetadata = (item: Record<string, unknown>) => {
   };
 };
 
+
+const correctedCountryMetadata = (
+  item: Record<string, unknown>,
+  metadata: ReturnType<typeof normalizeCountryMetadata>,
+  originalLanguage: string,
+  name: string,
+  nameFa: string,
+) => {
+  const normalizedTitle = normalizeIdentityText(`${name} ${nameFa}`);
+  let codes = [...metadata.countryCodes];
+  let countryNames = [...metadata.countryNames];
+
+  const languageCountry: Record<string, string> = {
+    fa: 'IR',
+    ko: 'KR',
+    hi: 'IN',
+    ja: 'JP',
+    tr: 'TR',
+    zh: 'CN',
+  };
+  const languageCode = languageCountry[originalLanguage];
+  if (languageCode && !codes.includes(languageCode)) codes = [languageCode, ...codes];
+
+  // Known bad legacy match: this American title was incorrectly tagged as Japan.
+  if (/wicked for good|شرور برای همیشه/.test(normalizedTitle)) {
+    codes = ['US'];
+    countryNames = ['United States'];
+  }
+
+  // Old enrichment occasionally left JP beside a clearly English US/UK title
+  // without any Japanese production-country evidence. Avoid leaking those items
+  // into the Japanese category while preserving real co-productions.
+  const namesText = normalizeIdentityText([
+    ...metadata.countryNames,
+    ...metadata.countryLabels,
+  ].join(' '));
+  if (
+    codes.includes('JP') &&
+    originalLanguage &&
+    originalLanguage !== 'ja' &&
+    (codes.includes('US') || codes.includes('GB')) &&
+    !/japan|ژاپن/.test(namesText)
+  ) {
+    codes = codes.filter((code) => code !== 'JP');
+    countryNames = countryNames.filter((value) => !/japan/i.test(value));
+  }
+
+  codes = [...new Set(codes)];
+  return {
+    countryCodes: codes,
+    countryLabels: codes.map((code) => COUNTRY_LABELS_FA[code] || code),
+    countryNames: [...new Set(countryNames)],
+  };
+};
+
 const normalizePersonRole = (value: unknown, fallback: CatalogPerson['role'] | null = null) => {
   const text = asString(value).toLowerCase();
   if (/director|کارگردان|directing/.test(text)) return 'director' as const;
@@ -192,22 +247,26 @@ const normalizePersonImage = (value: unknown, source: 'tmdb' | 'upera' = 'upera'
   const resolved = resolveCatalogAsset(value);
   const raw = resolved.trim();
   if (!raw || /default|placeholder|no[-_ ]?image/i.test(raw)) return '';
+
   if (/^https?:\/\//i.test(raw)) {
-    const httpsUrl = raw.replace(/^http:\/\//i, 'https://');
-    if (/\/assets\/media\//i.test(httpsUrl)) return httpsUrl;
-    if (source === 'tmdb' || /^https:\/\/image\.tmdb\.org\/t\/p\//i.test(httpsUrl)) return '';
-    return httpsUrl;
+    return raw.replace(/^http:\/\//i, 'https://');
   }
   if (/^\/\//.test(raw)) return `https:${raw}`;
+
+  if (source === 'tmdb') {
+    const path = raw.startsWith('/') ? raw : `/${raw}`;
+    if (/\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(path)) {
+      return `https://image.tmdb.org/t/p/w500${path}`;
+    }
+    return '';
+  }
+
   if (raw.startsWith('/')) {
-    if (source === 'tmdb') return '';
     if (/^\/(?:s3|uploads?|images?|storage|media)\//i.test(raw)) return `https://thumb.upera.tv${raw}`;
     return `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
   }
   if (/\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(raw)) {
-    return source === 'tmdb'
-      ? ''
-      : `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
+    return `https://thumb.upera.tv/s3/actors/${raw.replace(/^\/+/, '')}`;
   }
   return '';
 };
@@ -687,8 +746,15 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const backdropFallback = resolveCatalogAsset(item.backdropFallback ?? item.backdrop_fallback);
   const poster = resolveCatalogAsset(item.poster) || posterFallback || backdropFallback;
   const backdrop = resolveCatalogAsset(item.backdrop) || backdropFallback || poster;
-  const countryMetadata = normalizeCountryMetadata(item);
-  const iranian = asBoolean(item.ir) || countryMetadata.countryCodes.includes('IR');
+  const originalLanguage = asString(item.originalLanguage ?? item.original_language).toLowerCase();
+  const countryMetadata = correctedCountryMetadata(
+    item,
+    normalizeCountryMetadata(item),
+    originalLanguage,
+    name,
+    nameFa,
+  );
+  const iranian = asBoolean(item.ir) || countryMetadata.countryCodes.includes('IR') || originalLanguage === 'fa';
   if (iranian && !countryMetadata.countryCodes.includes('IR')) {
     countryMetadata.countryCodes.unshift('IR');
   }
@@ -772,9 +838,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     ...(countryMetadata.countryNames.length
       ? { countryNames: countryMetadata.countryNames }
       : {}),
-    ...(asString(item.originalLanguage ?? item.original_language)
-      ? { originalLanguage: asString(item.originalLanguage ?? item.original_language).toLowerCase() }
-      : {}),
+    ...(originalLanguage ? { originalLanguage } : {}),
     ...(collectionId ? { collectionId } : {}),
     ...(collectionNameFa ? { collectionNameFa } : {}),
     ...(collectionName ? { collectionName } : {}),
@@ -816,6 +880,29 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
             : {}),
           ...(item.isAiring !== undefined || item.is_airing !== undefined
             ? { isAiring: asBoolean(item.isAiring ?? item.is_airing) }
+            : {}),
+        }
+      : {}),
+    ...(type === 'series'
+      ? {
+          publicationStatus: (
+            asString(item.publicationStatus ?? item.publication_status) === 'published'
+              ? 'published'
+              : asBoolean(item.isAiring ?? item.is_airing) && episodeSections.length > 0
+                ? 'published'
+                : 'building-archive'
+          ) as 'published' | 'building-archive',
+          ...(item.archiveComplete !== undefined || item.archive_complete !== undefined
+            ? { archiveComplete: asBoolean(item.archiveComplete ?? item.archive_complete) }
+            : {}),
+          ...(asNumber(item.archivePendingEpisodeCount ?? item.archive_pending_episode_count, -1) >= 0
+            ? { archivePendingEpisodeCount: asNumber(item.archivePendingEpisodeCount ?? item.archive_pending_episode_count, 0) }
+            : {}),
+          ...(asNumber(item.sourceEpisodeCount ?? item.source_episode_count, -1) >= 0
+            ? { sourceEpisodeCount: asNumber(item.sourceEpisodeCount ?? item.source_episode_count, 0) }
+            : {}),
+          ...(asString(item.archiveAuditStatus ?? item.archive_audit_status)
+            ? { archiveAuditStatus: asString(item.archiveAuditStatus ?? item.archive_audit_status) as 'pending' | 'checked' }
             : {}),
         }
       : {}),
@@ -1054,13 +1141,16 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
   try {
     const refreshSeparator = remoteUrl.includes('?') ? '&' : '?';
     const requestUrl = `${remoteUrl}${refreshSeparator}_aparatchi_refresh=${Math.floor(Date.now() / 60_000)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
     const response = await fetch(requestUrl, {
       headers: {
         Accept: 'application/json',
         'Cache-Control': 'no-cache, no-store, max-age=0',
         Pragma: 'no-cache',
       },
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const rawPayload = await response.json();

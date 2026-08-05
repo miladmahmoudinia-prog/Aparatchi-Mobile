@@ -54,6 +54,14 @@ const DOWNLOAD_DIRECTORY = `${FileSystem.documentDirectory}aparatchi-downloads/`
 const DATABASE_FILE = `${FileSystem.documentDirectory}aparatchi-downloads.json`;
 const activeTasks = new Map<string, any>();
 
+const friendlyDownloadFailure = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (/unable to resolve host|no address associated|network request failed|socket|connection|offline|internet/i.test(message)) {
+    return 'اینترنت قطع است؛ اینترنت را روشن کنید و برای ادامه دوباره بزنید.';
+  }
+  return message || 'دانلود متوقف شد.';
+};
+
 const sanitizeName = (value: string) =>
   value
     .trim()
@@ -218,7 +226,7 @@ export async function runDownload({
       paused: true,
       destinationUri: task.fileUri || destination,
       resumeData: savable?.resumeData || record.resumeData,
-      error: error instanceof Error ? error.message : 'دانلود متوقف شد.',
+      error: friendlyDownloadFailure(error),
     };
   } finally {
     if (activeTasks.get(record.id) === task) {
