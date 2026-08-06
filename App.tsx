@@ -911,6 +911,19 @@ const visibleLoadedContent = (loaded: LoadedContent): LoadedContent => ({
   items: (loaded.items || []).filter(itemHasUsableContent),
 });
 
+// Avoid rebuilding the whole app tree every time the periodic catalog check
+// returns the exact same payload. Parsing a large catalog and replacing its
+// array reference was enough to make every home row, star card and image list
+// render again even when nothing had changed.
+const loadedContentRevision = (loaded: LoadedContent) => [
+  String(loaded.version || ''),
+  String(loaded.updatedAt || ''),
+  String((loaded.items || []).length),
+  String((loaded.iranianSchedule || []).length),
+  String((loaded.weeklySchedule || []).length),
+  String((loaded.featuredPeople || []).length),
+].join('|');
+
 const catalogTitleText = (item: CatalogItem) => normalizeComparableText([
   item.nameFa,
   item.name,
@@ -1238,7 +1251,7 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
   return result;
 };
 
-function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
+const PersonAvatar = memo(function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
   const candidates = useMemo(() => personImageCandidates(person.image), [person.image]);
   const [candidateIndex, setCandidateIndex] = useState(0);
 
@@ -1279,15 +1292,15 @@ function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) 
       onError={() => setCandidateIndex((current) => current + 1)}
     />
   );
-}
+});
 
-function CatalogArtwork({
+const CatalogArtwork = memo(function CatalogArtwork({
   primary,
   fallback,
   localFallback,
   style,
   contentFit = 'cover',
-  transition = 80,
+  transition = 0,
   imageKind = 'poster',
 }: {
   primary?: string;
@@ -1350,7 +1363,7 @@ function CatalogArtwork({
       ) : null}
     </View>
   );
-}
+});
 
 const localArtworkForItem = (_item: CatalogItem) => undefined;
 
@@ -2012,7 +2025,7 @@ function WeeklySchedule({
   );
 }
 
-function PosterCard({
+const PosterCard = memo(function PosterCard({
   item,
   onOpen,
   width = 137,
@@ -2033,7 +2046,7 @@ function PosterCard({
           localFallback={localArtworkForItem(item)}
           style={styles.posterImage}
           contentFit="cover"
-          transition={70}
+          transition={0}
         />
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
         {posterBadges.length ? (
@@ -2076,7 +2089,7 @@ function PosterCard({
       <Text numberOfLines={1} style={styles.posterEnglish}>{item.name || toPersianDigits(item.year)}</Text>
     </Pressable>
   );
-}
+});
 
 function MovieCollectionSection({
   item,
@@ -2157,6 +2170,32 @@ function MovieCollectionSection({
   );
 }
 
+const CastPersonCard = memo(function CastPersonCard({
+  person,
+  onOpen,
+}: {
+  person: CatalogPerson;
+  onOpen: (person: CatalogPerson) => void;
+}) {
+  return (
+    <Pressable onPress={() => onOpen(person)} style={styles.personCard} hitSlop={8}>
+      <View style={styles.personAvatarWrap}>
+        <PersonAvatar person={person} style={styles.personAvatar} />
+      </View>
+      <Text numberOfLines={2} ellipsizeMode="tail" style={styles.personCardName}>{personName(person)}</Text>
+      <Text numberOfLines={1} style={styles.personCardRole}>{personRoleTitle(person)}</Text>
+      <View style={styles.personCardCharacterWrap}>
+        {person.character ? (
+          <>
+            <Text style={styles.personCardCharacterLabel}>نقش</Text>
+            <Text numberOfLines={2} ellipsizeMode="tail" style={styles.personCardCharacter}>{person.character}</Text>
+          </>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+});
+
 function PeopleSection({
   item,
   onOpen,
@@ -2195,35 +2234,23 @@ function PeopleSection({
           <Text style={styles.peopleSectionSubtitle}>برای دیدن همه آثار، روی هر نفر بزنید.</Text>
         </View>
       </View>
-      <ScrollView
+      <FlatList
         horizontal
+        inverted
+        data={people}
+        keyExtractor={(person) => person.tmdbId
+          ? `tmdb:${person.tmdbId}:${person.role}`
+          : `person:${normalizeComparableText(personName(person))}:${person.role}`}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.peopleList}
-        directionalLockEnabled
-      >
-        {people.map((person) => {
-          const key = person.tmdbId
-            ? `tmdb:${person.tmdbId}:${person.role}`
-            : `person:${normalizeComparableText(personName(person))}:${person.role}`;
-          return (
-            <Pressable key={key} onPress={() => onOpen(person)} style={styles.personCard}>
-              <View style={styles.personAvatarWrap}>
-                <PersonAvatar person={person} style={styles.personAvatar} />
-              </View>
-              <Text numberOfLines={2} ellipsizeMode="tail" style={styles.personCardName}>{personName(person)}</Text>
-              <Text numberOfLines={1} style={styles.personCardRole}>{personRoleTitle(person)}</Text>
-              <View style={styles.personCardCharacterWrap}>
-                {person.character ? (
-                  <>
-                    <Text style={styles.personCardCharacterLabel}>نقش</Text>
-                    <Text numberOfLines={2} ellipsizeMode="tail" style={styles.personCardCharacter}>{person.character}</Text>
-                  </>
-                ) : null}
-              </View>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
+        updateCellsBatchingPeriod={48}
+        windowSize={3}
+        removeClippedSubviews
+        getItemLayout={(_, index) => ({ length: 100, offset: 100 * index, index })}
+        renderItem={({ item: person }) => <CastPersonCard person={person} onOpen={onOpen} />}
+      />
     </View>
   );
 }
@@ -2235,25 +2262,76 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
   items: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
 }) {
+  const renderPoster = useCallback(({ item }: { item: CatalogItem }) => (
+    <PosterCard item={item} onOpen={() => onOpen(item)} />
+  ), [onOpen]);
+
   return (
     <FlatList
       horizontal
       inverted
       data={items}
       keyExtractor={(item) => item.id}
-      renderItem={({ item }) => (
-        <PosterCard item={item} onOpen={() => onOpen(item)} />
-      )}
+      renderItem={renderPoster}
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-      initialNumToRender={3}
-      maxToRenderPerBatch={3}
-      updateCellsBatchingPeriod={24}
-      windowSize={5}
-      removeClippedSubviews={false}
+      initialNumToRender={2}
+      maxToRenderPerBatch={2}
+      updateCellsBatchingPeriod={48}
+      windowSize={3}
+      removeClippedSubviews
+      getItemLayout={(_, index) => ({ length: 148, offset: 148 * index, index })}
       nestedScrollEnabled
     />
+  );
+});
+
+const StarPersonButton = memo(function StarPersonButton({
+  person,
+  active,
+  onSelect,
+}: {
+  person: FeaturedPerson;
+  active: boolean;
+  onSelect: (personId: string) => void;
+}) {
+  return (
+    <Pressable
+      onPress={() => onSelect(person.id)}
+      unstable_pressDelay={0}
+      style={styles.starPersonCard}
+      hitSlop={10}
+    >
+      <View style={[styles.starPersonAvatarWrap, active && styles.starPersonAvatarActive]}>
+        <PersonAvatar person={person} style={styles.starPersonAvatar} />
+      </View>
+      <Text numberOfLines={1} style={[styles.starPersonName, active && styles.starPersonNameActive]}>
+        {personName(person)}
+      </Text>
+    </Pressable>
+  );
+});
+
+const StarWorkPosterCard = memo(function StarWorkPosterCard({
+  item,
+  onOpen,
+}: {
+  item: CatalogItem;
+  onOpen: (item: CatalogItem) => void;
+}) {
+  return (
+    <Pressable onPress={() => onOpen(item)} unstable_pressDelay={0} style={styles.starWorkCard} hitSlop={10}>
+      <CatalogArtwork
+        primary={item.poster}
+        fallback={item.posterFallback || item.backdrop}
+        localFallback={localArtworkForItem(item)}
+        style={styles.starWorkPoster}
+        imageKind="poster"
+        transition={0}
+      />
+      <Text numberOfLines={2} style={styles.starWorkTitle}>{item.nameFa}</Text>
+    </Pressable>
   );
 });
 
@@ -2308,35 +2386,37 @@ function HomeStarsSectionBase({
     if (!resolvedPeople.some((person) => person.id === selectedId)) setSelectedId(resolvedPeople[0].id);
   }, [resolvedPeople, selectedId]);
 
+  const worksByPersonId = useMemo(() => {
+    const map = new Map<string, CatalogItem[]>();
+    for (const person of resolvedPeople) {
+      const explicitIds = new Set(person.itemIds || []);
+      const matched = explicitIds.size
+        ? [...explicitIds]
+            .map((itemId) => catalogById.get(String(itemId)))
+            .filter((item): item is CatalogItem => Boolean(item))
+        : personWorksFor(person, catalog);
+      map.set(person.id, sortForCatalogFilter(matched, 'latest').slice(0, 18));
+    }
+    return map;
+  }, [catalog, catalogById, resolvedPeople]);
+
   const selected = resolvedPeople.find((person) => person.id === selectedId) || resolvedPeople[0];
-  const works = useMemo(() => {
-    if (!selected) return [];
-    const explicitIds = new Set(selected.itemIds || []);
-    const matched = explicitIds.size
-      ? [...explicitIds]
-          .map((itemId) => catalogById.get(String(itemId)))
-          .filter((item): item is CatalogItem => Boolean(item))
-      : personWorksFor(selected, catalog);
-    return sortForCatalogFilter(matched, 'latest');
-  }, [catalog, catalogById, selected]);
+  const works = selected ? (worksByPersonId.get(selected.id) || []) : [];
 
   const selectedIdForRender = selected?.id || '';
   const selectPerson = useCallback((personId: string) => {
     setSelectedId((current) => current === personId ? current : personId);
   }, []);
-  const renderStarPerson = useCallback(({ item: person }: { item: FeaturedPerson }) => {
-    const active = person.id === selectedIdForRender;
-    return (
-      <Pressable onPress={() => selectPerson(person.id)} unstable_pressDelay={0} style={styles.starPersonCard} hitSlop={10}>
-        <View style={[styles.starPersonAvatarWrap, active && styles.starPersonAvatarActive]}>
-          <PersonAvatar person={person} style={styles.starPersonAvatar} />
-        </View>
-        <Text numberOfLines={1} style={[styles.starPersonName, active && styles.starPersonNameActive]}>
-          {personName(person)}
-        </Text>
-      </Pressable>
-    );
-  }, [selectPerson, selectedIdForRender]);
+  const renderStarPerson = useCallback(({ item: person }: { item: FeaturedPerson }) => (
+    <StarPersonButton
+      person={person}
+      active={person.id === selectedIdForRender}
+      onSelect={selectPerson}
+    />
+  ), [selectPerson, selectedIdForRender]);
+  const renderStarWork = useCallback(({ item }: { item: CatalogItem }) => (
+    <StarWorkPosterCard item={item} onOpen={onOpen} />
+  ), [onOpen]);
 
   if (!selected || !works.length) return null;
   const birthday = formatPersonBirthday(selected.birthday);
@@ -2369,11 +2449,11 @@ function HomeStarsSectionBase({
         keyExtractor={(person) => person.tmdbId ? `tmdb:${person.tmdbId}` : person.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.starsPeopleList}
-        initialNumToRender={8}
-        maxToRenderPerBatch={6}
-        updateCellsBatchingPeriod={24}
-        windowSize={4}
-        removeClippedSubviews={false}
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        updateCellsBatchingPeriod={48}
+        windowSize={3}
+        removeClippedSubviews
         getItemLayout={(_, index) => ({ length: 66, offset: 66 * index, index })}
         nestedScrollEnabled
         renderItem={renderStarPerson}
@@ -2398,28 +2478,18 @@ function HomeStarsSectionBase({
           horizontal
           inverted
           style={styles.starWorksRail}
-          data={works.slice(0, 18)}
+          data={works}
           keyExtractor={(item) => item.id}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.starWorksList}
-          initialNumToRender={3}
-          maxToRenderPerBatch={3}
-          updateCellsBatchingPeriod={24}
-          windowSize={4}
-          removeClippedSubviews={false}
+          initialNumToRender={2}
+          maxToRenderPerBatch={2}
+          updateCellsBatchingPeriod={48}
+          windowSize={3}
+          removeClippedSubviews
+          getItemLayout={(_, index) => ({ length: 113, offset: 113 * index, index })}
           nestedScrollEnabled
-          renderItem={({ item }) => (
-            <Pressable onPress={() => onOpen(item)} unstable_pressDelay={0} style={styles.starWorkCard} hitSlop={10}>
-              <CatalogArtwork
-                primary={item.poster}
-                fallback={item.posterFallback || item.backdrop}
-                localFallback={localArtworkForItem(item)}
-                style={styles.starWorkPoster}
-                imageKind="poster"
-              />
-              <Text numberOfLines={2} style={styles.starWorkTitle}>{item.nameFa}</Text>
-            </Pressable>
-          )}
+          renderItem={renderStarWork}
         />
       </View>
     </LinearGradient>
@@ -2433,6 +2503,32 @@ type HomeCatalogRow = {
   title: string;
   items: CatalogItem[];
 };
+
+const HomeCatalogSection = memo(function HomeCatalogSection({
+  row,
+  featuredPeople,
+  catalog,
+  onOpen,
+  onBrowse,
+}: {
+  row: HomeCatalogRow;
+  featuredPeople: FeaturedPerson[];
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+  onBrowse: (filter: SearchFilter) => void;
+}) {
+  return (
+    <View>
+      <View style={styles.catalogSection}>
+        <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
+        <HorizontalCatalog items={row.items} onOpen={onOpen} />
+      </View>
+      {row.filter === 'foreign-movies' ? (
+        <HomeStarsSection people={featuredPeople} catalog={catalog} onOpen={onOpen} />
+      ) : null}
+    </View>
+  );
+});
 
 const HomeScreen = memo(function HomeScreen({
   catalog,
@@ -2495,6 +2591,33 @@ const HomeScreen = memo(function HomeScreen({
     { filter: 'documentaries', title: 'مستندها', items: catalogItemsForFilter(catalog, 'documentaries').slice(0, 10) },
   ].filter((row) => row.items.length), [catalog, newest, updated]);
 
+  const homeHeader = useMemo(() => (
+    <>
+      <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} isActive={isActive} />
+      <WeeklySchedule
+        catalog={catalog}
+        iranianSchedule={iranianSchedule}
+        weeklySchedule={weeklySchedule}
+        onOpenItem={onOpen}
+        isActive={isActive}
+      />
+    </>
+  ), [catalog, iranianSchedule, isActive, newest, onOpen, weeklySchedule]);
+
+  const renderHomeRow = useCallback(({ item: row }: { item: HomeCatalogRow }) => (
+    <HomeCatalogSection
+      row={row}
+      featuredPeople={featuredPeople}
+      catalog={catalog}
+      onOpen={onOpen}
+      onBrowse={onBrowse}
+    />
+  ), [catalog, featuredPeople, onBrowse, onOpen]);
+
+  const rememberVisibleOffset = useCallback((event: any) => {
+    onScrollOffset(event.nativeEvent.contentOffset.y);
+  }, [onScrollOffset]);
+
   if (!newest.length) return (
     <View style={styles.screen}>
       <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
@@ -2533,30 +2656,15 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        scrollEventThrottle={32}
-        initialNumToRender={4}
-        maxToRenderPerBatch={3}
-        updateCellsBatchingPeriod={24}
-        windowSize={8}
-        removeClippedSubviews={false}
-        onScroll={(event) => onScrollOffset(event.nativeEvent.contentOffset.y)}
-        ListHeaderComponent={(
-          <>
-            <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} isActive={isActive} />
-            <WeeklySchedule catalog={catalog} iranianSchedule={iranianSchedule} weeklySchedule={weeklySchedule} onOpenItem={onOpen} isActive={isActive} />
-          </>
-        )}
-        renderItem={({ item: row }) => (
-          <View>
-            <View style={styles.catalogSection}>
-              <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
-              <HorizontalCatalog items={row.items} onOpen={onOpen} />
-            </View>
-            {row.filter === 'foreign-movies' ? (
-              <HomeStarsSection people={featuredPeople} catalog={catalog} onOpen={onOpen} />
-            ) : null}
-          </View>
-        )}
+        initialNumToRender={2}
+        maxToRenderPerBatch={2}
+        updateCellsBatchingPeriod={56}
+        windowSize={4}
+        removeClippedSubviews
+        onScrollEndDrag={rememberVisibleOffset}
+        onMomentumScrollEnd={rememberVisibleOffset}
+        ListHeaderComponent={homeHeader}
+        renderItem={renderHomeRow}
         ListFooterComponent={<View style={styles.homeListFooter} />}
       />
     </View>
@@ -2852,11 +2960,11 @@ const CategoriesScreen = memo(function CategoriesScreen({
           <View style={styles.dynamicChips}>{years.map((year) => <Pressable key={year} onPress={() => onBrowse(yearFilter(year))} hitSlop={6} style={({ pressed }) => [styles.dynamicChip, pressed && styles.dynamicChipPressed]}><Text style={styles.dynamicChipText}>{toPersianDigits(year)}</Text></Pressable>)}</View>
         </View>
       )}
-      initialNumToRender={6}
-      maxToRenderPerBatch={4}
-      updateCellsBatchingPeriod={20}
-      windowSize={6}
-      removeClippedSubviews={false}
+      initialNumToRender={4}
+      maxToRenderPerBatch={3}
+      updateCellsBatchingPeriod={48}
+      windowSize={4}
+      removeClippedSubviews
     />
   );
 });
@@ -2872,20 +2980,14 @@ function CatalogListScreen({
 }) {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(normalizeComparableText(query));
-  const [readyFilter, setReadyFilter] = useState<SearchFilter | null>(null);
   const { width: screenWidth } = useWindowDimensions();
 
-  useEffect(() => {
-    setReadyFilter(null);
-    const interaction = InteractionManager.runAfterInteractions(() => {
-      requestAnimationFrame(() => setReadyFilter(initialFilter));
-    });
-    return () => interaction.cancel();
-  }, [initialFilter]);
-
+  // Filter results are cached per catalog. Waiting for InteractionManager here
+  // made a normal tap feel ignored whenever an image list or slider animation
+  // was active. Open the destination immediately and read the cached list.
   const baseItems = useMemo(
-    () => readyFilter ? catalogItemsForFilter(catalog, readyFilter) : [],
-    [catalog, readyFilter],
+    () => catalogItemsForFilter(catalog, initialFilter),
+    [catalog, initialFilter],
   );
   const results = useMemo(() => {
     if (!deferredQuery) return baseItems;
@@ -2920,7 +3022,7 @@ function CatalogListScreen({
         />
         {query ? <Pressable onPress={() => setQuery('')} hitSlop={8}><Ionicons name="close-circle" color={COLORS.muted} size={18} /></Pressable> : null}
       </View>
-      <Text style={styles.resultCount}>{readyFilter ? `${toPersianDigits(results.length)} نتیجه` : 'در حال آماده‌سازی…'}</Text>
+      <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text>
     </View>
   );
 
@@ -2935,16 +3037,11 @@ function CatalogListScreen({
       keyExtractor={(item) => item.id}
       columnWrapperStyle={columnCount > 1 ? { gap: gridGap, flexDirection: 'row-reverse' } : undefined}
       ListHeaderComponent={header}
-      ListEmptyComponent={readyFilter ? (
+      ListEmptyComponent={(
         <View style={styles.searchEmptyState}>
           <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
           <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
           <Text style={styles.largeEmptyText}>عبارت جست‌وجو را تغییر دهید.</Text>
-        </View>
-      ) : (
-        <View style={styles.searchPreparing}>
-          <ActivityIndicator color={COLORS.gold} size="small" />
-          <Text style={styles.searchPreparingText}>در حال آماده‌کردن فهرست…</Text>
         </View>
       )}
       renderItem={({ item }) => (
@@ -2952,11 +3049,11 @@ function CatalogListScreen({
           <PosterCard item={item} width={cardWidth} onOpen={() => onOpen(item)} />
         </View>
       )}
-      initialNumToRender={6}
-      maxToRenderPerBatch={5}
-      windowSize={6}
-      updateCellsBatchingPeriod={24}
-      removeClippedSubviews={false}
+      initialNumToRender={4}
+      maxToRenderPerBatch={3}
+      windowSize={4}
+      updateCellsBatchingPeriod={48}
+      removeClippedSubviews
       showsVerticalScrollIndicator={false}
     />
   );
@@ -4277,10 +4374,11 @@ function DetailModal({
     setDetailBodyReady(false);
     if (!visible || !item) return undefined;
     let cancelled = false;
+    // Waiting for InteractionManager could stall forever while a carousel or
+    // scroll animation was active. Paint the modal first, then build the heavy
+    // download body on the very next frame.
     const frame = requestAnimationFrame(() => {
-      InteractionManager.runAfterInteractions(() => {
-        if (!cancelled) setDetailBodyReady(true);
-      });
+      if (!cancelled) setDetailBodyReady(true);
     });
     return () => {
       cancelled = true;
@@ -4416,9 +4514,12 @@ function PersonProfileModal({
   onOpenItem: (item: CatalogItem) => void;
 }) {
   const { width: screenWidth } = useWindowDimensions();
+  const works = useMemo(
+    () => person ? personWorksFor(person, catalog) : [],
+    [catalog, person],
+  );
   if (!person) return null;
 
-  const works = personWorksFor(person, catalog);
   const cardGap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - cardGap) / 2);
 
@@ -4431,46 +4532,58 @@ function PersonProfileModal({
             <Ionicons name="arrow-forward" color="#fff" size={21} />
           </Pressable>
         </View>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.personProfileContent}>
-          <View style={styles.personProfileHeader}>
-            <View style={styles.personProfileAvatarWrap}>
-              <PersonAvatar person={person} style={styles.personProfileAvatar} />
-            </View>
-            <Text style={styles.personProfileName}>{personName(person)}</Text>
-            <View style={styles.personProfileRoleBadge}>
-              <Ionicons
-                name={person.role === 'director' ? 'videocam-outline' : 'person-outline'}
-                color={COLORS.gold}
-                size={15}
-              />
-              <Text style={styles.personProfileRoleText}>{personRoleTitle(person)}</Text>
-            </View>
-          </View>
+        <FlatList
+          data={works}
+          numColumns={2}
+          keyExtractor={(work) => work.id}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.personProfileContent}
+          columnWrapperStyle={works.length > 1 ? { gap: cardGap, flexDirection: 'row-reverse' } : undefined}
+          initialNumToRender={4}
+          maxToRenderPerBatch={3}
+          updateCellsBatchingPeriod={48}
+          windowSize={4}
+          removeClippedSubviews
+          ListHeaderComponent={(
+            <>
+              <View style={styles.personProfileHeader}>
+                <View style={styles.personProfileAvatarWrap}>
+                  <PersonAvatar person={person} style={styles.personProfileAvatar} />
+                </View>
+                <Text style={styles.personProfileName}>{personName(person)}</Text>
+                <View style={styles.personProfileRoleBadge}>
+                  <Ionicons
+                    name={person.role === 'director' ? 'videocam-outline' : 'person-outline'}
+                    color={COLORS.gold}
+                    size={15}
+                  />
+                  <Text style={styles.personProfileRoleText}>{personRoleTitle(person)}</Text>
+                </View>
+              </View>
 
-          <View style={styles.personWorksHeader}>
-            <Text style={styles.personWorksTitle}>فیلم‌ها و سریال‌ها</Text>
-            <Text style={styles.personWorksCount}>{toPersianDigits(works.length)} عنوان</Text>
-          </View>
-
-          {works.length ? (
-            <View style={styles.personWorksGrid}>
-              {works.map((work) => (
-                <PosterCard
-                  key={work.id}
-                  item={work}
-                  width={cardWidth}
-                  onOpen={() => onOpenItem(work)}
-                />
-              ))}
-            </View>
-          ) : (
+              <View style={styles.personWorksHeader}>
+                <Text style={styles.personWorksTitle}>فیلم‌ها و سریال‌ها</Text>
+                <Text style={styles.personWorksCount}>{toPersianDigits(works.length)} عنوان</Text>
+              </View>
+            </>
+          )}
+          ListEmptyComponent={(
             <View style={styles.personWorksEmpty}>
               <Ionicons name="film-outline" color={COLORS.muted} size={27} />
               <Text style={styles.personWorksEmptyTitle}>اثر دیگری در کاتالوگ پیدا نشد</Text>
               <Text style={styles.personWorksEmptyText}>با کامل‌شدن کاتالوگ، آثار بیشتری اینجا نمایش داده می‌شوند.</Text>
             </View>
           )}
-        </ScrollView>
+          renderItem={({ item: work }) => (
+            <View style={{ width: cardWidth, marginBottom: 18 }}>
+              <PosterCard
+                item={work}
+                width={cardWidth}
+                onOpen={() => onOpenItem(work)}
+              />
+            </View>
+          )}
+        />
       </SafeAreaView>
     </Modal>
   );
@@ -5397,7 +5510,7 @@ const BottomNavigation = memo(function BottomNavigation({ active, onChange }: { 
           <Pressable
             key={tab.id}
             disabled={selected}
-            onPress={() => onChange(tab.id)}
+            onPressIn={() => onChange(tab.id)}
             unstable_pressDelay={0}
             hitSlop={14}
             style={({ pressed }) => [styles.bottomTab, pressed && !selected && styles.bottomTabPressed]}
@@ -5432,6 +5545,8 @@ function AppContent() {
   const [content, setContent] = useState<LoadedContent>(() =>
     visibleLoadedContent(getBundledContent()),
   );
+  const contentRef = useRef(content);
+  const contentRevisionRef = useRef(loadedContentRevision(content));
   const [contentReady, setContentReady] = useState(false);
   const [contentResolved, setContentResolved] = useState(false);
   const [contentLoading, setContentLoading] = useState(false);
@@ -5473,6 +5588,7 @@ function AppContent() {
   });
 
   activeTabRef.current = activeTab;
+  contentRef.current = content;
   navigationStateRef.current = {
     activeTab,
     menuOpen,
@@ -5525,14 +5641,24 @@ function AppContent() {
     setContentOffline(!online);
     const initialLoad = lastContentLoadRef.current === 0;
     const showRefreshIndicator = force && !initialLoad;
-    const hadVisibleCatalog = content.items.length > 0;
+    const hadVisibleCatalog = contentRef.current.items.length > 0;
 
     if (showRefreshIndicator) setContentLoading(true);
     if (!hadVisibleCatalog) setContentResolved(false);
 
     const applyContent = (nextContent: LoadedContent) => {
+      const incomingRevision = loadedContentRevision(nextContent);
+      if (incomingRevision === contentRevisionRef.current && contentRef.current.items.length) {
+        lastContentLoadRef.current = Date.now();
+        setContentReady(true);
+        setContentResolved(true);
+        return true;
+      }
+
       const visibleContent = visibleLoadedContent(nextContent);
       if (!visibleContent.items.length) return false;
+      contentRevisionRef.current = incomingRevision;
+      contentRef.current = visibleContent;
       setContent(visibleContent);
       lastContentLoadRef.current = Date.now();
       setContentReady(true);
@@ -5626,7 +5752,7 @@ function AppContent() {
     });
     const catalogRefreshTimer = setInterval(() => {
       if (AppState.currentState === 'active') void reloadContent(false);
-    }, 2 * 60 * 1000);
+    }, 5 * 60 * 1000);
 
     return () => {
       clearInterval(catalogRefreshTimer);
