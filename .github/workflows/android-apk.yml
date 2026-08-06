@@ -30,7 +30,14 @@ jobs:
           java-version: "17"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Type-check application
+        run: npm run typecheck
+
+      - name: Resolve application version
+        id: app_version
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
 
       - name: Create Android project
         run: npx expo prebuild --platform android --non-interactive
@@ -44,5 +51,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Aparatchi-Android-Release-v0.7.0
+          name: Aparatchi-Android-Release-v${{ steps.app_version.outputs.version }}
           path: android/app/build/outputs/apk/release/app-release.apk
