@@ -135,7 +135,7 @@ export async function loadDownloadRecords(): Promise<DownloadRecord[]> {
     return Promise.all(normalized.map(async (record) => {
       if (record.status !== 'completed' || !record.localUri) return record;
 
-      const fileInfo = await FileSystem.getInfoAsync(record.localUri, { size: true }).catch(() => null);
+      const fileInfo = await FileSystem.getInfoAsync(record.localUri).catch(() => null);
       const actualSize = Number((fileInfo as any)?.size || 0);
       const expectedSize = Math.max(0, Number(record.totalBytes || 0));
       const looksComplete = Boolean(
@@ -225,7 +225,7 @@ export async function runDownload({
       return { paused: !activeTasks.has(record.id), destinationUri: destination };
     }
 
-    const info = await FileSystem.getInfoAsync(result.uri, { size: true });
+    const info = await FileSystem.getInfoAsync(result.uri);
     const actualSize = Number((info as any).size || 0);
     const expectedSize = Math.max(0, Number(record.totalBytes || 0));
     const status = responseStatusCode(result);
@@ -332,7 +332,7 @@ export async function saveDownloadedFileToGallery(localUri?: string) {
     throw new Error('اجازه ذخیره ویدئو در گالری داده نشد.');
   }
 
-  const info = await FileSystem.getInfoAsync(localUri, { size: true });
+  const info = await FileSystem.getInfoAsync(localUri);
   if (!info.exists || Number((info as any).size || 0) < MIN_VALID_VIDEO_BYTES || !VIDEO_EXTENSION_RE.test(localUri)) {
     throw new Error('فایل ویدئویی کامل و معتبر نیست.');
   }

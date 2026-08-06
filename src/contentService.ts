@@ -31,6 +31,18 @@ const LOCAL_PAYLOAD: CatalogPayload = {
 const REMOTE_CACHE_URI = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}aparatchi-catalog-cache.json`
   : '';
+const REMOTE_CACHE_META_URI = FileSystem.documentDirectory
+  ? `${FileSystem.documentDirectory}aparatchi-catalog-cache-meta.json`
+  : '';
+
+type RemoteCacheMetadata = {
+  etag?: string;
+  lastModified?: string;
+};
+
+let memoryContent: CatalogPayload | null = null;
+let cacheMetadataLoaded = false;
+let cacheMetadata: RemoteCacheMetadata = {};
 
 const DAY_IDS: DayId[] = [
   'saturday',
@@ -1138,21 +1150,49 @@ export const getBundledContent = (): LoadedContent => ({
 });
 
 const readCachedContent = async (): Promise<CatalogPayload | null> => {
+  if (memoryContent) return memoryContent;
   if (!REMOTE_CACHE_URI) return null;
   try {
     const info = await FileSystem.getInfoAsync(REMOTE_CACHE_URI);
     if (!info.exists) return null;
     const raw = await FileSystem.readAsStringAsync(REMOTE_CACHE_URI);
-    return parsePayload(JSON.parse(raw));
+    const parsed = parsePayload(JSON.parse(raw));
+    if (parsed) memoryContent = parsed;
+    return parsed;
   } catch {
     return null;
   }
 };
 
-const writeCachedContent = async (payload: unknown) => {
+const readCacheMetadata = async () => {
+  if (cacheMetadataLoaded) return;
+  cacheMetadataLoaded = true;
+  if (!REMOTE_CACHE_META_URI) return;
+  try {
+    const info = await FileSystem.getInfoAsync(REMOTE_CACHE_META_URI);
+    if (!info.exists) return;
+    const value = JSON.parse(await FileSystem.readAsStringAsync(REMOTE_CACHE_META_URI));
+    if (value && typeof value === 'object') {
+      cacheMetadata = {
+        ...(asString(value.etag) ? { etag: asString(value.etag) } : {}),
+        ...(asString(value.lastModified) ? { lastModified: asString(value.lastModified) } : {}),
+      };
+    }
+  } catch {
+    cacheMetadata = {};
+  }
+};
+
+const writeCachedContent = async (
+  rawPayload: string,
+  metadata: RemoteCacheMetadata,
+) => {
   if (!REMOTE_CACHE_URI) return;
   try {
-    await FileSystem.writeAsStringAsync(REMOTE_CACHE_URI, JSON.stringify(payload));
+    await FileSystem.writeAsStringAsync(REMOTE_CACHE_URI, rawPayload);
+    if (REMOTE_CACHE_META_URI) {
+      await FileSystem.writeAsStringAsync(REMOTE_CACHE_META_URI, JSON.stringify(metadata));
+    }
   } catch {
     // A cache write failure must never prevent the freshly fetched catalog from opening.
   }
@@ -1168,6 +1208,7 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
   }
 
   if (preferCache) {
+    await readCacheMetadata();
     const cached = await readCachedContent();
     if (cached) return { ...cached, source: 'cache' };
     return {
@@ -1177,25 +1218,50 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
   }
 
   try {
-    const refreshSeparator = remoteUrl.includes('?') ? '&' : '?';
-    const requestUrl = `${remoteUrl}${refreshSeparator}_aparatchi_refresh=${Math.floor(Date.now() / 60_000)}`;
+    await readCacheMetadata();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12_000);
-    const response = await fetch(requestUrl, {
+    const requestHeaders: Record<string, string> = {
+      Accept: 'application/json',
+      'Cache-Control': 'no-cache',
+    };
+    if (cacheMetadata.etag) requestHeaders['If-None-Match'] = cacheMetadata.etag;
+    if (cacheMetadata.lastModified) {
+      requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
+    }
+    const response = await fetch(remoteUrl, {
       headers: {
-        Accept: 'application/json',
-        'Cache-Control': 'no-cache, no-store, max-age=0',
-        Pragma: 'no-cache',
+        ...requestHeaders,
       },
       signal: controller.signal,
     }).finally(() => clearTimeout(timeout));
+    if (response.status === 304) {
+      const cached = await readCachedContent();
+      if (cached) return { ...cached, source: 'remote' };
+      cacheMetadata = {};
+      if (REMOTE_CACHE_META_URI) {
+        void FileSystem.writeAsStringAsync(REMOTE_CACHE_META_URI, '{}').catch(() => undefined);
+      }
+      throw new Error('Remote catalog returned 304 without a local cache');
+    }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const rawPayload = await response.json();
+    // Keep the original response text for the on-device cache. Re-stringifying
+    // an 8+ MB object on the JS thread caused a second avoidable UI pause.
+    const rawText = await response.text();
+    const rawPayload = JSON.parse(rawText);
     const parsed = parsePayload(rawPayload);
     if (!parsed) throw new Error('Invalid catalog payload');
 
-    void writeCachedContent(rawPayload);
+    memoryContent = parsed;
+    const responseEtag = response.headers.get('etag') || cacheMetadata.etag;
+    const responseLastModified =
+      response.headers.get('last-modified') || cacheMetadata.lastModified;
+    cacheMetadata = {
+      ...(responseEtag ? { etag: responseEtag } : {}),
+      ...(responseLastModified ? { lastModified: responseLastModified } : {}),
+    };
+    void writeCachedContent(rawText, cacheMetadata);
     return { ...parsed, source: 'remote' };
   } catch {
     const cached = await readCachedContent();

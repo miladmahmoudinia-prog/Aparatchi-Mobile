@@ -18,6 +18,17 @@ type TvMazeEpisode = {
   airtime?: string;
 };
 
+type ScheduleCacheEntry = {
+  expiresAt: number;
+  value: ScheduleEntry | null;
+};
+
+const REQUEST_TIMEOUT_MS = 5_000;
+const CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
+const MAX_CANDIDATES = 10;
+const MAX_CONCURRENT_REQUESTS = 3;
+const scheduleCache = new Map<string, ScheduleCacheEntry>();
+
 const JS_DAY_TO_ID: Record<number, DayId> = {
   0: 'sunday',
   1: 'monday',
@@ -51,48 +62,111 @@ const isInCurrentWeek = (airdate: string) => {
   return episodeDate >= weekStart && episodeDate < weekEnd;
 };
 
-export async function loadVerifiedForeignSchedule(catalog: CatalogItem[]): Promise<ScheduleEntry[]> {
-  const candidates = catalog.filter((item) => item.type === 'series' && !item.ir && item.imdb);
+const fetchJson = async <T>(url: string): Promise<T | null> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    return await response.json() as T;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
 
-  const results = await Promise.all(
-    candidates.map(async (item): Promise<ScheduleEntry | null> => {
-      try {
-        const showResponse = await fetch(
-          `https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(item.imdb!)}`,
-        );
-        if (!showResponse.ok) return null;
+const loadCandidateSchedule = async (item: CatalogItem): Promise<ScheduleEntry | null> => {
+  const imdb = String(item.imdb || '').trim();
+  if (!imdb) return null;
 
-        const show = (await showResponse.json()) as TvMazeShow;
-        if (show.status.toLowerCase() === 'ended' || !show._links?.nextepisode?.href) {
-          return null;
-        }
+  const cached = scheduleCache.get(imdb);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-        const episodeResponse = await fetch(show._links.nextepisode.href);
-        if (!episodeResponse.ok) return null;
-
-        const episode = (await episodeResponse.json()) as TvMazeEpisode;
-        if (!episode.airdate || !isInCurrentWeek(episode.airdate)) return null;
-
-        const [year, month, dayOfMonth] = episode.airdate.split('-').map(Number);
-        const episodeDate = new Date(year, month - 1, dayOfMonth);
-        const day = JS_DAY_TO_ID[episodeDate.getDay()];
-
-        return {
-          id: `weekly-${show.id}-${episode.id}`,
-          itemId: item.id,
-          nameFa: item.nameFa,
-          poster: item.poster,
-          day,
-          time: episode.airtime ? toPersianDigits(episode.airtime) : 'زمان نامشخص',
-          ...(episode.number ? { episode: episode.number } : {}),
-          region: 'foreign',
-        };
-      } catch {
-        return null;
-      }
-    }),
+  const show = await fetchJson<TvMazeShow>(
+    `https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(imdb)}`,
   );
+  if (
+    !show ||
+    String(show.status || '').toLowerCase() === 'ended' ||
+    !show._links?.nextepisode?.href
+  ) {
+    scheduleCache.set(imdb, { expiresAt: Date.now() + CACHE_TTL_MS, value: null });
+    return null;
+  }
 
+  const episode = await fetchJson<TvMazeEpisode>(show._links.nextepisode.href);
+  if (!episode?.airdate || !isInCurrentWeek(episode.airdate)) {
+    scheduleCache.set(imdb, { expiresAt: Date.now() + CACHE_TTL_MS, value: null });
+    return null;
+  }
+
+  const [year, month, dayOfMonth] = episode.airdate.split('-').map(Number);
+  const episodeDate = new Date(year, month - 1, dayOfMonth);
+  const value: ScheduleEntry = {
+    id: `weekly-${show.id}-${episode.id}`,
+    itemId: item.id,
+    nameFa: item.nameFa,
+    poster: item.poster,
+    day: JS_DAY_TO_ID[episodeDate.getDay()],
+    time: episode.airtime ? toPersianDigits(episode.airtime) : 'زمان نامشخص',
+    ...(episode.number ? { episode: episode.number } : {}),
+    region: 'foreign',
+  };
+  scheduleCache.set(imdb, { expiresAt: Date.now() + CACHE_TTL_MS, value });
+  return value;
+};
+
+const mapWithConcurrency = async <T, R>(
+  values: T[],
+  concurrency: number,
+  task: (value: T) => Promise<R>,
+): Promise<R[]> => {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), values.length) },
+    async () => {
+      while (cursor < values.length) {
+        const index = cursor;
+        cursor += 1;
+        results[index] = await task(values[index]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+};
+
+export async function loadVerifiedForeignSchedule(
+  catalog: CatalogItem[],
+  knownEntries: ScheduleEntry[] = [],
+): Promise<ScheduleEntry[]> {
+  const scheduledItemIds = new Set(knownEntries.map((entry) => String(entry.itemId)));
+  const candidates = catalog
+    .filter((item) =>
+      item.type === 'series' &&
+      !item.ir &&
+      Boolean(item.imdb) &&
+      !scheduledItemIds.has(String(item.id)),
+    )
+    .sort((a, b) =>
+      Number(b.isAiring === true) - Number(a.isAiring === true) ||
+      String(b.nextEpisodeAirDate || b.updatedAt || '').localeCompare(
+        String(a.nextEpisodeAirDate || a.updatedAt || ''),
+      ),
+    )
+    .slice(0, MAX_CANDIDATES);
+
+  if (!candidates.length) return [];
+  const results = await mapWithConcurrency(
+    candidates,
+    MAX_CONCURRENT_REQUESTS,
+    loadCandidateSchedule,
+  );
   return results.filter((entry): entry is ScheduleEntry => Boolean(entry));
 }
 
