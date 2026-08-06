@@ -1,22 +1,30 @@
-فایل‌های تغییرکرده نسخه 0.10.0
+فایل‌های تغییرکرده نسخه 0.11.0
 
 این فایل‌ها را با حفظ مسیر، جایگزین فایل‌های فعلی پروژه کنید:
 
 App.tsx
+CHANGELOG.md
+FILES-TO-REPLACE-FA.txt
+README.md
 app.json
 package.json
 package-lock.json
+.github/workflows/android-apk.yml
+modules/aparatchi-vpn-detector/index.ts
 src/contentService.ts
 src/downloadManager.ts
-CHANGELOG.md
-README.md
+src/foreignSchedule.ts
 
 فایل‌های اصلی و لازم برای اجرای تغییرات:
 - App.tsx
 - app.json
 - package.json
 - package-lock.json
+- .github/workflows/android-apk.yml
+- modules/aparatchi-vpn-detector/index.ts
 - src/contentService.ts
 - src/downloadManager.ts
+- src/foreignSchedule.ts
 
-دو فایل README.md و CHANGELOG.md فقط مستندات نسخه هستند.
+فایل‌های README.md، CHANGELOG.md و FILES-TO-REPLACE-FA.txt مستندات نسخه هستند.
+فایلی حذف نمی‌شود؛ ZIP را در ریشه مخزن موبایل استخراج و جایگزینی فایل‌های هم‌نام را تأیید کنید.

@@ -34,7 +34,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
 import { getBundledContent, loadContent, LoadedContent } from './src/contentService';
@@ -339,8 +339,10 @@ const inferredScheduleFromCatalog = (catalog: CatalogItem[]): ScheduleEntry[] =>
 const downloadModeFor = (file: DownloadFile): NonNullable<DownloadFile['mode']> =>
   file.mode || 'download';
 
-const isOperatorFile = (file: DownloadFile) =>
-  downloadModeFor(file) === 'operator-play';
+const isOperatorFile = (file: DownloadFile) => {
+  const mode = downloadModeFor(file);
+  return mode === 'operator-play' || mode === 'operator-download';
+};
 
 const isTrustedOperatorHostUrl = (url?: string) => {
   if (!url) return false;
@@ -360,9 +362,13 @@ const isOperatorPortalUrl = (url?: string) => {
   if (!url || !isTrustedOperatorHostUrl(url)) return false;
   try {
     const parsed = new URL(url);
-    if (!/(^|\.)upera\.tv$/i.test(parsed.hostname)) return false;
     const decodedPath = decodeURIComponent(parsed.pathname || '');
-    return /^\/stream\/(?:movie|episode)\/[^/?#]+\/?$/i.test(decodedPath);
+    if (/(^|\.)redl\.ink$/i.test(parsed.hostname)) return decodedPath.length > 1;
+    if (!/(^|\.)upera\.tv$/i.test(parsed.hostname)) return false;
+    const exactStream = /^\/stream\/(?:movie|episode)\/[^/?#]+\/?$/i.test(decodedPath);
+    const explicitPortal = /\/(?:watch|play|download)(?:\/|$)/i.test(decodedPath) &&
+      /\/(?:movie|series|episode)(?:\/|$)/i.test(decodedPath);
+    return exactStream || explicitPortal;
   } catch {
     return false;
   }
@@ -1749,21 +1755,6 @@ function WeeklySchedule({
     requestAnimationFrame(() => daysScrollRef.current?.scrollTo({ x: target, animated }));
   }, [scheduleViewportWidth]);
 
-  useEffect(() => {
-    let mounted = true;
-    setLoadingForeign(true);
-    loadVerifiedForeignSchedule(catalog)
-      .then((entries) => {
-        if (mounted) setForeignEntries(entries);
-      })
-      .finally(() => {
-        if (mounted) setLoadingForeign(false);
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [catalog]);
-
   const catalogById = useMemo(
     () => new Map(catalog.map((item) => [String(item.id), item])),
     [catalog],
@@ -1777,6 +1768,26 @@ function WeeklySchedule({
   }, [catalog]);
 
   const inferredEntries = useMemo(() => inferredScheduleFromCatalog(catalog), [catalog]);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoadingForeign(true);
+    // The catalog schedule is authoritative. TVmaze is only a bounded fallback
+    // for foreign series that do not already have a known broadcast day.
+    loadVerifiedForeignSchedule(
+      catalog,
+      [...inferredEntries, ...iranianSchedule, ...weeklySchedule],
+    )
+      .then((entries) => {
+        if (mounted) setForeignEntries(entries);
+      })
+      .finally(() => {
+        if (mounted) setLoadingForeign(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [catalog, inferredEntries, iranianSchedule, weeklySchedule]);
 
   const allEntries = useMemo(() => {
     const merged = new Map<string, ScheduleEntry>();
@@ -2569,27 +2580,30 @@ const HomeScreen = memo(function HomeScreen({
     }
   }, []);
 
-  const rows = useMemo<HomeCatalogRow[]>(() => [
-    { filter: 'latest', title: 'جدیدترین‌ها', items: newest.slice(0, 10) },
-    { filter: 'updated', title: 'به‌روزشده‌ها', items: updated.slice(0, 10) },
-    { filter: 'mobile-operator', title: 'ویژه اینترنت همراه', items: catalogItemsForFilter(catalog, 'mobile-operator').slice(0, 10) },
-    { filter: 'iranian-movies', title: 'فیلم‌های ایرانی', items: catalogItemsForFilter(catalog, 'iranian-movies').slice(0, 10) },
-    { filter: 'foreign-movies', title: 'فیلم‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-movies').slice(0, 10) },
-    { filter: 'iranian-series', title: 'سریال‌های ایرانی', items: catalogItemsForFilter(catalog, 'iranian-series').slice(0, 10) },
-    { filter: 'foreign-series', title: 'سریال‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-series').slice(0, 10) },
-    { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-movies').slice(0, 10) },
-    { filter: 'korean-series', title: 'سریال‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-series').slice(0, 10) },
-    { filter: 'indian-movies', title: 'فیلم‌های هندی', items: catalogItemsForFilter(catalog, 'indian-movies').slice(0, 10) },
-    { filter: 'japanese-movies', title: 'فیلم‌های ژاپنی', items: catalogItemsForFilter(catalog, 'japanese-movies').slice(0, 10) },
-    { filter: 'anime-movies', title: 'انیمه‌های سینمایی', items: catalogItemsForFilter(catalog, 'anime-movies').slice(0, 10) },
-    { filter: 'anime-series', title: 'انیمه‌های سریالی', items: catalogItemsForFilter(catalog, 'anime-series').slice(0, 10) },
-    { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی', items: catalogItemsForFilter(catalog, 'animation-movies').slice(0, 10) },
-    { filter: 'animation-series', title: 'انیمیشن‌های سریالی', items: catalogItemsForFilter(catalog, 'animation-series').slice(0, 10) },
-    { filter: 'kids', title: 'کودکان', items: catalogItemsForFilter(catalog, 'kids').slice(0, 10) },
-    { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها', items: catalogItemsForFilter(catalog, 'programs').slice(0, 10) },
-    { filter: 'religious', title: 'مذهبی و مناسبتی', items: catalogItemsForFilter(catalog, 'religious').slice(0, 10) },
-    { filter: 'documentaries', title: 'مستندها', items: catalogItemsForFilter(catalog, 'documentaries').slice(0, 10) },
-  ].filter((row) => row.items.length), [catalog, newest, updated]);
+  const rows = useMemo<HomeCatalogRow[]>(() => {
+    const candidates: HomeCatalogRow[] = [
+      { filter: 'latest', title: 'جدیدترین‌ها', items: newest.slice(0, 10) },
+      { filter: 'updated', title: 'به‌روزشده‌ها', items: updated.slice(0, 10) },
+      { filter: 'mobile-operator', title: 'ویژه اینترنت همراه', items: catalogItemsForFilter(catalog, 'mobile-operator').slice(0, 10) },
+      { filter: 'iranian-movies', title: 'فیلم‌های ایرانی', items: catalogItemsForFilter(catalog, 'iranian-movies').slice(0, 10) },
+      { filter: 'foreign-movies', title: 'فیلم‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-movies').slice(0, 10) },
+      { filter: 'iranian-series', title: 'سریال‌های ایرانی', items: catalogItemsForFilter(catalog, 'iranian-series').slice(0, 10) },
+      { filter: 'foreign-series', title: 'سریال‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-series').slice(0, 10) },
+      { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-movies').slice(0, 10) },
+      { filter: 'korean-series', title: 'سریال‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-series').slice(0, 10) },
+      { filter: 'indian-movies', title: 'فیلم‌های هندی', items: catalogItemsForFilter(catalog, 'indian-movies').slice(0, 10) },
+      { filter: 'japanese-movies', title: 'فیلم‌های ژاپنی', items: catalogItemsForFilter(catalog, 'japanese-movies').slice(0, 10) },
+      { filter: 'anime-movies', title: 'انیمه‌های سینمایی', items: catalogItemsForFilter(catalog, 'anime-movies').slice(0, 10) },
+      { filter: 'anime-series', title: 'انیمه‌های سریالی', items: catalogItemsForFilter(catalog, 'anime-series').slice(0, 10) },
+      { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی', items: catalogItemsForFilter(catalog, 'animation-movies').slice(0, 10) },
+      { filter: 'animation-series', title: 'انیمیشن‌های سریالی', items: catalogItemsForFilter(catalog, 'animation-series').slice(0, 10) },
+      { filter: 'kids', title: 'کودکان', items: catalogItemsForFilter(catalog, 'kids').slice(0, 10) },
+      { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها', items: catalogItemsForFilter(catalog, 'programs').slice(0, 10) },
+      { filter: 'religious', title: 'مذهبی و مناسبتی', items: catalogItemsForFilter(catalog, 'religious').slice(0, 10) },
+      { filter: 'documentaries', title: 'مستندها', items: catalogItemsForFilter(catalog, 'documentaries').slice(0, 10) },
+    ];
+    return candidates.filter((row) => row.items.length > 0);
+  }, [catalog, newest, updated]);
 
   const homeHeader = useMemo(() => (
     <>
@@ -3412,7 +3426,7 @@ function AdvancedSearchScreen({
         {visibleFilters.map(({ id, label }) => (
           <Pressable
             key={id}
-            onPress={() => { pauseScheduleRotation(); setFilter(id); }}
+            onPress={() => setFilter(id)}
             style={[styles.filterChip, filter === id && styles.filterChipActive]}
           >
             <Text style={[styles.filterChipText, filter === id && styles.filterChipTextActive]}>{label}</Text>
@@ -4374,15 +4388,20 @@ function DetailModal({
     setDetailBodyReady(false);
     if (!visible || !item) return undefined;
     let cancelled = false;
-    // Waiting for InteractionManager could stall forever while a carousel or
-    // scroll animation was active. Paint the modal first, then build the heavy
-    // download body on the very next frame.
-    const frame = requestAnimationFrame(() => {
-      if (!cancelled) setDetailBodyReady(true);
-    });
+    const reveal = () => {
+      if (cancelled) return;
+      cancelled = true;
+      setDetailBodyReady(true);
+    };
+    // Open the modal immediately and build long episode/download trees after
+    // the tap/fade interaction. The timeout guarantees that a continuously
+    // moving carousel can never postpone the body indefinitely.
+    const interaction = InteractionManager.runAfterInteractions(reveal);
+    const fallback = setTimeout(reveal, 140);
     return () => {
       cancelled = true;
-      cancelAnimationFrame(frame);
+      interaction.cancel();
+      clearTimeout(fallback);
     };
   }, [item?.id, visible]);
   if (!item) return null;
@@ -4938,7 +4957,7 @@ function VideoPlayerModal({
       navigationBarTranslucent={false}
     >
       <View style={styles.mediaModal}>
-        <StatusBar style="light" hidden={landscape || orientationTransitioning} backgroundColor="#000000" />
+        <StatusBar style="light" hidden={landscape || orientationTransitioning} />
 
         <View style={[styles.videoFrame, frameRect]}>
           {request.artwork && !firstFrameReady && optimizedImageUrl(request.artwork, 'backdrop') ? (
@@ -5659,7 +5678,9 @@ function AppContent() {
       if (!visibleContent.items.length) return false;
       contentRevisionRef.current = incomingRevision;
       contentRef.current = visibleContent;
-      setContent(visibleContent);
+      // Replacing a large catalog can rebuild many virtualized rows. Mark it
+      // as non-urgent so taps and scrolling already in progress stay responsive.
+      startTransition(() => setContent(visibleContent));
       lastContentLoadRef.current = Date.now();
       setContentReady(true);
       setContentResolved(true);
@@ -5744,17 +5765,27 @@ function AppContent() {
     void refreshVpnState(true);
     const vpnRetryTimer = setTimeout(() => { void refreshVpnState(); }, 750);
 
+    let pendingIdleRefresh: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
+    const reloadContentWhenIdle = () => {
+      pendingIdleRefresh?.cancel();
+      pendingIdleRefresh = InteractionManager.runAfterInteractions(() => {
+        pendingIdleRefresh = null;
+        void reloadContent(false);
+      });
+    };
+
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        void reloadContent(false);
+        reloadContentWhenIdle();
         void refreshVpnState();
       }
     });
     const catalogRefreshTimer = setInterval(() => {
-      if (AppState.currentState === 'active') void reloadContent(false);
+      if (AppState.currentState === 'active') reloadContentWhenIdle();
     }, 5 * 60 * 1000);
 
     return () => {
+      pendingIdleRefresh?.cancel();
       clearInterval(catalogRefreshTimer);
       clearTimeout(vpnRetryTimer);
       if (startupDismissTimerRef.current) clearTimeout(startupDismissTimerRef.current);
@@ -6146,7 +6177,7 @@ function AppContent() {
   }, [navigateToTab]);
 
   const openOperatorAccess = async (item: CatalogItem, file: DownloadFile) => {
-    if (downloadModeFor(file) !== 'operator-play' || !isOperatorPortalUrl(file.url)) {
+    if (!isOperatorFile(file) || !isOperatorPortalUrl(file.url)) {
       Alert.alert('پخش ویژه اینترنت همراه', 'لینک پخش این عنوان فعلاً در دسترس نیست.');
       return;
     }
@@ -6163,7 +6194,7 @@ function AppContent() {
 
     setOperatorGateRequest(null);
     setOperatorWebRequest({
-      title: `${item.nameFa} — پخش ویژه همراه`,
+      title: `${item.nameFa} — ${downloadModeFor(file) === 'operator-download' ? 'دریافت ویژه همراه' : 'پخش ویژه همراه'}`,
       url: file.url,
     });
   };
@@ -6561,7 +6592,7 @@ function AppContent() {
   if (startupVisible) {
     return (
       <View style={styles.initialLoading}>
-        <StatusBar style="light" backgroundColor={COLORS.background} />
+        <StatusBar style="light" />
         <View style={styles.startupLogoMark}>
           <Ionicons name="film-outline" color={COLORS.gold} size={30} />
         </View>
@@ -6742,12 +6773,20 @@ const rtlText = {
   includeFontPadding: false,
 };
 
+const absoluteFillObject = {
+  position: 'absolute' as const,
+  top: 0,
+  right: 0,
+  bottom: 0,
+  left: 0,
+};
+
 const styles = StyleSheet.create({
   app: { flex: 1, backgroundColor: COLORS.background },
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   tabScene: { flex: 1 },
   tabSceneHidden: { display: 'none' },
-  playerRouteBackdrop: { ...StyleSheet.absoluteFillObject, zIndex: 900, elevation: 1000, backgroundColor: '#000' },
+  playerRouteBackdrop: { ...absoluteFillObject, zIndex: 900, elevation: 1000, backgroundColor: '#000' },
   globalMenuButton: { position: 'absolute', top: 10, right: 14, zIndex: 30, width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,21,28,0.96)', borderWidth: 1, borderColor: COLORS.border },
   bottomNavigationSafeArea: { backgroundColor: COLORS.background, paddingHorizontal: 10, paddingTop: 6, zIndex: 120, elevation: 30 },
   screen: { flex: 1, backgroundColor: COLORS.background },
@@ -7003,6 +7042,7 @@ const styles = StyleSheet.create({
   searchPreparingText: { ...rtlText, color: COLORS.muted, fontSize: 9, fontWeight: '800' },
   resultCount: { ...rtlText, color: COLORS.muted, fontSize: 10, marginTop: 22, marginBottom: 12 },
   searchGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 20 },
+  searchGridRow: { flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 12 },
   searchEmptyState: { minHeight: 330, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 38 },
   largeEmpty: { minHeight: 420, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 38 },
   largeEmptyIcon: { width: 74, height: 74, borderRadius: 25, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.22)' },
@@ -7118,9 +7158,9 @@ const styles = StyleSheet.create({
   playerQualityButton: { minWidth: 76, height: 38, paddingHorizontal: 8, borderRadius: 11, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
   playerQualityButtonDisabled: { opacity: 0.55 },
   playerQualityButtonText: { color: COLORS.text, fontSize: 9.5, fontWeight: '900' },
-  qualitySwitchLoading: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.72)' },
+  qualitySwitchLoading: { ...absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.72)' },
   qualitySwitchLoadingText: { ...rtlText, color: COLORS.text, fontSize: 11, fontWeight: '800', marginTop: 12 },
-  playerQualityOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.64)', paddingHorizontal: 12 },
+  playerQualityOverlay: { ...absoluteFillObject, zIndex: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.64)', paddingHorizontal: 12 },
   playerMenuCard: { width: '100%', maxWidth: 430, borderRadius: 20, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 14, backgroundColor: '#101319', borderWidth: 1, borderColor: COLORS.border, overflow: 'hidden' },
   playerMenuBottomSheet: { position: 'absolute', left: 12, right: 12, maxWidth: undefined, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
   playerMenuGrabber: { width: 42, height: 4, borderRadius: 3, alignSelf: 'center', marginBottom: 10, backgroundColor: 'rgba(255,255,255,0.22)' },
@@ -7213,10 +7253,10 @@ const styles = StyleSheet.create({
   personWorksEmptyTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900', textAlign: 'center', marginTop: 10 },
   personWorksEmptyText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 18, textAlign: 'center', marginTop: 6 },
   mediaModal: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#000' },
-  playerOrientationCover: { ...StyleSheet.absoluteFillObject, zIndex: 220, elevation: 220, backgroundColor: '#000' },
+  playerOrientationCover: { ...absoluteFillObject, zIndex: 220, elevation: 220, backgroundColor: '#000' },
   detailCircleButtonPlaceholder: { width: 46, height: 46 },
   videoViewPreparing: { opacity: 0 },
-  playerPreparingOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  playerPreparingOverlay: { ...absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   playerPreparingSpinner: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   playerFramePortal: { position: 'absolute', zIndex: 70, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   playerOfflineOverlay: { position: 'absolute', zIndex: 95, elevation: 95, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, backgroundColor: 'rgba(0,0,0,0.78)' },
@@ -7246,7 +7286,7 @@ const styles = StyleSheet.create({
   videoStage: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   videoView: { width: '100%', height: '100%', backgroundColor: '#000' },
   webView: { flex: 1, backgroundColor: '#fff' },
-  webLoading: { ...StyleSheet.absoluteFillObject, top: 62, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)' },
+  webLoading: { ...absoluteFillObject, top: 62, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.72)' },
 
   libraryTabs: { flexDirection: 'row-reverse', gap: 7, padding: 5, marginBottom: 18, borderRadius: 14, backgroundColor: '#090B0F', borderWidth: 1, borderColor: COLORS.border },
   libraryTab: { flex: 1, minHeight: 45, borderRadius: 10, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 7 },
@@ -7319,12 +7359,12 @@ const styles = StyleSheet.create({
   storageTotals: { marginTop: 13, padding: 11, borderRadius: 11, alignItems: 'flex-end', gap: 5, backgroundColor: 'rgba(216,180,90,0.06)' },
   storageTotalText: { ...rtlText, color: COLORS.text, fontSize: 8.7, fontWeight: '800' },
   downloadLibraryBytes: { ...rtlText, color: COLORS.text, fontSize: 7.6, marginTop: 5, width: '100%' },
-  playerControlsLayer: { ...StyleSheet.absoluteFillObject, zIndex: 12 },
+  playerControlsLayer: { ...absoluteFillObject, zIndex: 12 },
   playerTopGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 78 },
   playerBottomGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 112 },
   playerOverlayHeader: { position: 'absolute', top: 7, right: 9, left: 9, minHeight: 42, paddingHorizontal: 4, flexDirection: 'row', alignItems: 'center', gap: 8 },
   playerOverlayHeaderLandscape: { right: 16, left: 16, minHeight: 48 },
-  playerCenterZone: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  playerCenterZone: { ...absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   playerCenterControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 22 },
   playerCenterControlsLandscape: { gap: 34 },
   playerRoundButton: { width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(5,7,10,0.76)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
@@ -7347,7 +7387,7 @@ const styles = StyleSheet.create({
   playerControlIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   playerControlSpacer: { flex: 1 },
   playerTimeSeparator: { color: 'rgba(255,255,255,0.48)', fontSize: 9 },
-  playerSettingsOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.42)' },
+  playerSettingsOverlay: { ...absoluteFillObject, zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.42)' },
   playerSettingsFrameOverlay: { position: 'absolute', zIndex: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 10, backgroundColor: 'rgba(0,0,0,0.78)' },
   playerSettingsCard: { width: 270, maxWidth: '90%', maxHeight: '84%', padding: 9, borderRadius: 13, backgroundColor: 'rgba(16,19,25,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)' },
   playerSettingsCardPortrait: { width: '100%', maxWidth: 320, maxHeight: '56%' },
@@ -7368,7 +7408,7 @@ const styles = StyleSheet.create({
   playerSettingsQualityOption: { minHeight: 38, paddingHorizontal: 11, borderRadius: 9, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(255,255,255,0.035)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   playerSettingsQualityOptionActive: { borderColor: 'rgba(216,180,90,0.65)', backgroundColor: 'rgba(216,180,90,0.12)' },
   playerSettingsQualityOptionPressed: { backgroundColor: 'rgba(255,255,255,0.08)' },
-  playerSettingsQualityOptionText: { flex: 1, color: '#D8DBE0', fontSize: 9.5, fontWeight: '850', textAlign: 'right', writingDirection: 'ltr' },
+  playerSettingsQualityOptionText: { flex: 1, color: '#D8DBE0', fontSize: 9.5, fontWeight: '800', textAlign: 'right', writingDirection: 'ltr' },
   playerSettingsQualityOptionTextActive: { color: COLORS.gold },
   playerSingleQualityText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 17, textAlign: 'center', marginTop: 10, marginBottom: 4 },
   playerSettingChip: { minHeight: 29, minWidth: 52, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
@@ -7400,7 +7440,7 @@ const styles = StyleSheet.create({
   sideMenuAccordion: { gap: 6 },
   sideMenuItem: { minHeight: 54, paddingHorizontal: 13, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   sideMenuItemOpen: { borderColor: 'rgba(216,180,90,0.48)', backgroundColor: 'rgba(216,180,90,0.07)' },
-  sideMenuItemText: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 10.5, fontWeight: '850' },
+  sideMenuItemText: { ...rtlText, flex: 1, color: COLORS.text, fontSize: 10.5, fontWeight: '800' },
   sideMenuChildren: { marginTop: 5, marginRight: 12, gap: 6, borderRightWidth: 1, borderRightColor: 'rgba(216,180,90,0.2)', paddingRight: 10 },
   sideMenuNestedAccordion: { gap: 5 },
   sideMenuNestedHeader: { backgroundColor: '#0F131A' },

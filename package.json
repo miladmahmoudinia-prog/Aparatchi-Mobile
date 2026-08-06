@@ -2,7 +2,7 @@
   "name": "aparatchi-mobile",
   "description": "Aparatchi mobile app for Android and iOS.",
   "private": true,
-  "version": "0.10.2",
+  "version": "0.11.0",
   "main": "index.ts",
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -19,10 +19,10 @@
     "expo-media-library": "~57.0.3",
     "expo-network": "~57.0.1",
     "expo-background-task": "~57.0.6",
+    "expo-font": "~57.0.1",
     "expo-notifications": "~57.0.6",
     "expo-task-manager": "~57.0.6",
-    "expo-screen-orientation": "~57.0.1",
-    "expo-modules-core": "~57.0.7"
+    "expo-screen-orientation": "~57.0.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
