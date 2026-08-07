@@ -28,7 +28,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "22"
-          package-manager-cache: false
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -65,6 +64,7 @@ jobs:
       - name: Prepare APK for release
         run: cp android/app/build/outputs/apk/release/app-release.apk Aparatchi-Android-Release.apk
 
+      # Releases does not consume the 0.5 GB Actions artifact quota.
       - name: Publish APK to GitHub Releases
         shell: bash
         env:
