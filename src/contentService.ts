@@ -6,6 +6,8 @@ import {
   CatalogPerson,
   CatalogPayload,
   FeaturedPerson,
+  ImdbTop100,
+  ImdbTopEntry,
   DayId,
   DownloadFile,
   DownloadSection,
@@ -26,6 +28,7 @@ const LOCAL_PAYLOAD: CatalogPayload = {
   iranianSchedule: VERIFIED_IRANIAN_SCHEDULE,
   weeklySchedule: [],
   featuredPeople: [],
+  imdbTop100: undefined,
 };
 
 const REMOTE_CACHE_URI = FileSystem.documentDirectory
@@ -636,6 +639,9 @@ const normalizeDownloadSection = (value: unknown, index: number): DownloadSectio
         : 'لینک‌های دریافت'),
     ...(rawSubtitle ? { subtitle: rawSubtitle } : {}),
     ...(rawBadge ? { badge: rawBadge } : {}),
+    ...(resolveCatalogAsset(section.artwork ?? section.image ?? section.poster ?? section.backdrop ?? section.still)
+      ? { artwork: resolveCatalogAsset(section.artwork ?? section.image ?? section.poster ?? section.backdrop ?? section.still) }
+      : {}),
     files,
     ...(language ? { language } : {}),
     ...(asString(section.sourceEpisodeId)
@@ -870,6 +876,9 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     nameFa,
     name,
     ...(asString(item.imdb) ? { imdb: asString(item.imdb) } : {}),
+    ...(asNumber(item.imdbVotes ?? item.imdb_votes, 0) > 0
+      ? { imdbVotes: asNumber(item.imdbVotes ?? item.imdb_votes, 0) }
+      : {}),
     ...(countryMetadata.countryCodes.length
       ? { countryCodes: countryMetadata.countryCodes }
       : {}),
@@ -1070,6 +1079,130 @@ const hydrateSharedPersonImages = (
   };
 };
 
+const hydratePeopleFromFeaturedIndex = (
+  items: CatalogItem[],
+  featuredPeople: FeaturedPerson[],
+) => {
+  const byItemId = new Map<string, CatalogPerson[]>();
+  for (const featured of featuredPeople) {
+    const person: CatalogPerson = {
+      id: featured.id,
+      nameFa: featured.nameFa,
+      ...(featured.name ? { name: featured.name } : {}),
+      role: featured.role,
+      ...(featured.roleLabel ? { roleLabel: featured.roleLabel } : {}),
+      ...(featured.image ? { image: featured.image } : {}),
+      ...(featured.tmdbId ? { tmdbId: featured.tmdbId } : {}),
+      ...(featured.source ? { source: featured.source } : {}),
+      ...(featured.order !== undefined ? { order: featured.order } : {}),
+    };
+    for (const itemId of featured.itemIds) {
+      byItemId.set(itemId, [...(byItemId.get(itemId) || []), person]);
+    }
+  }
+
+  return items.map((item) => {
+    const indexed = byItemId.get(String(item.id)) || [];
+    if (!indexed.length) return item;
+    const merged = new Map<string, CatalogPerson>();
+    for (const person of [...(item.people || []), ...indexed]) {
+      const key = person.tmdbId
+        ? `${person.role}:tmdb:${person.tmdbId}`
+        : `${person.role}:name:${normalizeIdentityText(person.name || person.nameFa)}`;
+      const current = merged.get(key);
+      if (!current || (!current.image && person.image)) merged.set(key, person);
+    }
+    return { ...item, people: [...merged.values()].slice(0, 24) };
+  });
+};
+
+const normalizeImdbTop100 = (
+  value: unknown,
+  items: CatalogItem[],
+  fallbackUpdatedAt: string,
+): ImdbTop100 => {
+  const record = value && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : {};
+  const byId = new Map(items.map((item) => [String(item.id), item]));
+  const byImdb = new Map(items
+    .filter((item) => Boolean(item.imdb))
+    .map((item) => [String(item.imdb).toLowerCase(), item]));
+
+  const normalizeList = (raw: unknown, type: CatalogItem['type']): ImdbTopEntry[] => {
+    const seen = new Set<string>();
+    const normalized: ImdbTopEntry[] = [];
+    for (const entryValue of Array.isArray(raw) ? raw : []) {
+      if (!entryValue || typeof entryValue !== 'object') continue;
+      const entry = entryValue as Record<string, unknown>;
+      const itemId = asString(entry.itemId ?? entry.item_id ?? entry.id);
+      const imdb = asString(entry.imdb).toLowerCase();
+      const item = byId.get(itemId) || byImdb.get(imdb);
+      if (item && item.type !== type) continue;
+      const identity = item?.id || imdb || `${type}:${asString(entry.title)}:${asString(entry.year)}`;
+      if (!identity || seen.has(identity)) continue;
+      const rating = asNumber(entry.rating ?? entry.rate ?? item?.rate, Number.NaN);
+      if (!Number.isFinite(rating) || rating <= 0) continue;
+      const title = asString(entry.title, item?.nameFa);
+      if (!title) continue;
+      seen.add(identity);
+      normalized.push({
+        rank: normalized.length + 1,
+        ...(item ? { itemId: item.id } : {}),
+        type,
+        title,
+        ...(asString(entry.imdb ?? item?.imdb) ? { imdb: asString(entry.imdb ?? item?.imdb) } : {}),
+        ...(asNumber(entry.year ?? item?.year, 0) > 0
+          ? { year: asNumber(entry.year ?? item?.year, 0) }
+          : {}),
+        rating,
+        ...(asNumber(entry.votes ?? item?.imdbVotes, 0) > 0
+          ? { votes: asNumber(entry.votes ?? item?.imdbVotes, 0) }
+          : {}),
+        ...(resolveCatalogAsset(entry.poster) || item?.poster
+          ? { poster: resolveCatalogAsset(entry.poster) || item?.poster }
+          : {}),
+      });
+    }
+
+    const fallback = items
+      .filter((item) => item.type === type && Number(item.rate || 0) > 0 && !seen.has(item.id))
+      .sort((a, b) =>
+        Number(b.rate || 0) - Number(a.rate || 0) ||
+        Number(b.imdbVotes || 0) - Number(a.imdbVotes || 0) ||
+        Number(b.year || 0) - Number(a.year || 0) ||
+        a.nameFa.localeCompare(b.nameFa, 'fa'),
+      );
+    for (const item of fallback) {
+      if (normalized.length >= 100) break;
+      normalized.push({
+        rank: normalized.length + 1,
+        itemId: item.id,
+        type,
+        title: item.nameFa,
+        ...(item.imdb ? { imdb: item.imdb } : {}),
+        year: item.year,
+        rating: Number(item.rate),
+        ...(item.imdbVotes ? { votes: item.imdbVotes } : {}),
+        ...(item.poster ? { poster: item.poster } : {}),
+      });
+    }
+    return normalized.slice(0, 100).map((entry, index) => ({ ...entry, rank: index + 1 }));
+  };
+
+  const movies = normalizeList(record.movies, 'movie');
+  const series = normalizeList(record.series, 'series');
+  const hasRemoteRanking = Array.isArray(record.movies) || Array.isArray(record.series);
+  return {
+    updatedAt: asString(record.updatedAt ?? record.updated_at, fallbackUpdatedAt),
+    source: hasRemoteRanking && record.source === 'imdb-ratings-dataset'
+      ? 'imdb-ratings-dataset'
+      : 'catalog',
+    movies,
+    series,
+  };
+};
+
 const normalizeScheduleEntry = (value: unknown, index: number): ScheduleEntry | null => {
   if (!value || typeof value !== 'object') return null;
   const entry = value as Record<string, unknown>;
@@ -1116,15 +1249,18 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
   if (!items.length) return null;
 
   const featuredPeople = normalizeFeaturedPeople(payload.featuredPeople ?? payload.featured_people);
-  const hydrated = hydrateSharedPersonImages(newestFirst(items), featuredPeople);
+  const indexedItems = hydratePeopleFromFeaturedIndex(newestFirst(items), featuredPeople);
+  const hydrated = hydrateSharedPersonImages(indexedItems, featuredPeople);
+  const updatedAt = asString(payload.updatedAt, new Date().toISOString());
 
   return {
     version: asString(payload.version, 'remote'),
-    updatedAt: asString(payload.updatedAt, new Date().toISOString()),
+    updatedAt,
     items: hydrated.items,
     iranianSchedule: normalizeSchedule(payload.iranianSchedule),
     weeklySchedule: normalizeSchedule(payload.weeklySchedule),
     featuredPeople: hydrated.featuredPeople,
+    imdbTop100: normalizeImdbTop100(payload.imdbTop100 ?? payload.imdb_top_100, hydrated.items, updatedAt),
   };
 };
 
@@ -1132,15 +1268,15 @@ const normalizedLocalPayload = (): CatalogPayload => {
   const items = LOCAL_PAYLOAD.items
     .map((item) => normalizeCatalogItem(item))
     .filter((item): item is CatalogItem => Boolean(item));
-  const hydrated = hydrateSharedPersonImages(
-    newestFirst(items),
-    normalizeFeaturedPeople(LOCAL_PAYLOAD.featuredPeople),
-  );
+  const featuredPeople = normalizeFeaturedPeople(LOCAL_PAYLOAD.featuredPeople);
+  const indexedItems = hydratePeopleFromFeaturedIndex(newestFirst(items), featuredPeople);
+  const hydrated = hydrateSharedPersonImages(indexedItems, featuredPeople);
 
   return {
     ...LOCAL_PAYLOAD,
     items: hydrated.items,
     featuredPeople: hydrated.featuredPeople,
+    imdbTop100: normalizeImdbTop100(LOCAL_PAYLOAD.imdbTop100, hydrated.items, LOCAL_PAYLOAD.updatedAt),
   };
 };
 

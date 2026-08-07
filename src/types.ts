@@ -52,6 +52,8 @@ export type DownloadSection = {
   title: string;
   subtitle?: string;
   badge?: string;
+  /** تصویر همان قسمت؛ در نبود آن اپ از پس‌زمینهٔ خود عنوان استفاده می‌کند. */
+  artwork?: string;
   files: DownloadFile[];
   language?: MediaLanguage;
   sourceEpisodeId?: string;
@@ -77,6 +79,7 @@ export type CatalogItem = {
   nameFa: string;
   name: string;
   imdb?: string;
+  imdbVotes?: number;
   /** کدهای استاندارد کشور سازنده، مثل IR، KR و IN. */
   countryCodes?: string[];
   countryLabels?: string[];
@@ -175,6 +178,25 @@ export type ScheduleEntry = {
   verifiedAt?: string;
 };
 
+export type ImdbTopEntry = {
+  rank: number;
+  itemId?: string;
+  type: ContentType;
+  title: string;
+  imdb?: string;
+  year?: number;
+  rating: number;
+  votes?: number;
+  poster?: string;
+};
+
+export type ImdbTop100 = {
+  updatedAt: string;
+  source: 'imdb-ratings-dataset' | 'catalog';
+  movies: ImdbTopEntry[];
+  series: ImdbTopEntry[];
+};
+
 export type CatalogPayload = {
   version: string;
   updatedAt: string;
@@ -182,6 +204,7 @@ export type CatalogPayload = {
   iranianSchedule: ScheduleEntry[];
   weeklySchedule?: ScheduleEntry[];
   featuredPeople?: FeaturedPerson[];
+  imdbTop100?: ImdbTop100;
 };
 
 export type DayId =
