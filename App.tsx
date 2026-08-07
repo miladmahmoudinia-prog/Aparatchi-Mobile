@@ -171,16 +171,24 @@ const catalogArtworkCandidates = (
 ) => {
   const image = optimizedImageUrl(value, kind);
   if (!isSafeHttpUrl(image) || isPlaceholderUrl(image)) return [];
+
   const candidates: string[] = [];
-  // TMDB/Upera image hosts can be slow or blocked on some Iranian networks.
-  // Prefer a lightweight WebP proxy and retain the original as fallback.
-  if (shouldProxyCatalogImage(image)) {
-    const sourceWithoutProtocol = image.replace(/^https?:\/\//i, '');
-    candidates.push(
-      `https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=${kind === 'poster' ? 500 : 960}&output=webp`,
-    );
+  const sourceWithoutProtocol = image.replace(/^https?:\/\//i, '');
+  const proxied = `https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=${kind === 'poster' ? 420 : 900}&output=webp`;
+  const isUperaArtwork = /^https?:\/\/thumb\.upera\.tv\//i.test(image);
+  const isTmdbArtwork = /^https?:\/\/image\.tmdb\.org\//i.test(image);
+
+  // Upera thumbnails are already purpose-built for cards and are usually the
+  // fastest source. Try them directly first; the proxy is only a fallback for
+  // networks where that host is blocked. TMDB originals can be larger, so its
+  // lightweight WebP proxy remains the preferred candidate.
+  if (isUperaArtwork) {
+    candidates.push(image, proxied);
+  } else if (isTmdbArtwork) {
+    candidates.push(proxied, image);
+  } else {
+    candidates.push(image);
   }
-  candidates.push(image);
   return [...new Set(candidates)];
 };
 
@@ -243,11 +251,9 @@ const isSeriesPublished = (item: CatalogItem) => {
   );
   if (explicitlyAuditedComplete) return true;
 
-  return Boolean(
-    !metadata.publicationStatus &&
-    item.isAiring &&
-    (item.downloads || []).length > 0,
-  );
+  // Legacy one-episode records must not leak into the public catalog. A series
+  // is visible only after an explicit archive audit/publish decision above.
+  return false;
 };
 
 const isCurrentScheduleSeries = (item?: CatalogItem | null) => {
@@ -1123,7 +1129,7 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
       return !isIranianItem(item) && itemLanguages(item).includes('dubbed');
     case 'subtitled':
       return !isIranianItem(item) && itemLanguages(item).includes('subtitled');
-    case 'updated': return Boolean(meaningfulUpdateLabel(item));
+    case 'updated': return item.type === 'series' && Boolean(meaningfulUpdateLabel(item));
     case 'iranian-movies': return item.type === 'movie' && isIranianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
     case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
     case 'iranian-series': return item.type === 'series' && isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
@@ -1206,11 +1212,24 @@ const personInitials = (person: CatalogPerson) =>
     .map((part) => part[0])
     .join('');
 
-const personWorksFor = (person: CatalogPerson, catalog: CatalogItem[]) =>
-  sortForCatalogFilter(
-    catalog.filter((item) => item.people?.some((candidate) => candidate.id === person.id)),
+const personWorksFor = (person: CatalogPerson, catalog: CatalogItem[]) => {
+  const identityNames = [person.name, person.nameFa, personName(person)]
+    .map((value) => normalizeComparableText(String(value || '')))
+    .filter(Boolean);
+  const identityNameSet = new Set(identityNames);
+
+  return sortForCatalogFilter(
+    catalog.filter((item) => item.people?.some((candidate) => {
+      if (candidate.id === person.id) return true;
+      if (person.tmdbId && candidate.tmdbId && Number(candidate.tmdbId) === Number(person.tmdbId)) return true;
+      const candidateNames = [candidate.name, candidate.nameFa, personName(candidate)]
+        .map((value) => normalizeComparableText(String(value || '')))
+        .filter(Boolean);
+      return candidateNames.some((name) => identityNameSet.has(name));
+    })),
     'latest',
   );
+};
 
 const personAge = (person: CatalogPerson) => {
   if (!person.birthday) return 0;
@@ -1278,9 +1297,9 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
   const iranian = ranked.filter((person) => person.region === 'iranian');
   const foreign = ranked.filter((person) => person.region === 'foreign');
   const result: FeaturedPerson[] = [];
-  for (let index = 0; result.length < 30 && (index < iranian.length || index < foreign.length); index += 1) {
+  for (let index = 0; result.length < 80 && (index < iranian.length || index < foreign.length); index += 1) {
     if (foreign[index]) result.push(foreign[index]);
-    if (result.length < 30 && iranian[index]) result.push(iranian[index]);
+    if (result.length < 80 && iranian[index]) result.push(iranian[index]);
   }
   return result;
 };
@@ -1451,7 +1470,7 @@ function SectionTitle({
         <Text style={styles.sectionTitle}>{title}</Text>
       </View>
       {action ? (
-        <Pressable onPress={onAction} unstable_pressDelay={0} hitSlop={14} style={({ pressed }) => [styles.sectionAction, pressed && styles.sectionActionPressed]}>
+        <Pressable onPress={onAction} unstable_pressDelay={0} hitSlop={18} android_ripple={{ color: 'rgba(216,180,90,0.12)', borderless: false }} style={({ pressed }) => [styles.sectionAction, pressed && styles.sectionActionPressed]}>
           <Text style={styles.sectionActionText}>{action}</Text>
           <Ionicons name="chevron-back" color={COLORS.gold} size={15} />
         </Pressable>
@@ -2383,33 +2402,49 @@ function HomeStarsSectionBase({
   );
   const resolvedPeople = useMemo(() => {
     const merged = new Map<string, FeaturedPerson>();
+    const explicitPriority = new Map<string, number>();
+    people.forEach((person, index) => {
+      const key = person.tmdbId
+        ? `tmdb:${person.tmdbId}`
+        : `name:${normalizeComparableText(personName(person))}`;
+      if (key && !explicitPriority.has(key)) explicitPriority.set(key, index);
+    });
+
     for (const person of [...people, ...deriveFeaturedPeople(catalog)]) {
       if (person.role !== 'actor' || !personName(person)) continue;
       const key = person.tmdbId
         ? `tmdb:${person.tmdbId}`
         : `name:${normalizeComparableText(personName(person))}`;
       const explicitIds = new Set(person.itemIds || []);
-      const matchedIds = explicitIds.size
-        ? [...explicitIds].filter((itemId) => catalogById.has(String(itemId)))
-        : personWorksFor(person, catalog).map((item) => item.id);
+      const explicitMatches = [...explicitIds].filter((itemId) => catalogById.has(String(itemId)));
+      const fallbackMatches = personWorksFor(person, catalog).map((item) => item.id);
+      // Never drop a known star merely because old itemIds went stale after a
+      // catalog refresh. Re-resolve their works by cast/name before filtering.
+      const matchedIds = explicitMatches.length ? explicitMatches : fallbackMatches;
       if (!matchedIds.length) continue;
       const current = merged.get(key);
+      const nextIds = [...new Set([...(current?.itemIds || []), ...matchedIds])];
       const next: FeaturedPerson = {
         ...(current || person),
         ...person,
-        itemIds: [...new Set([...(current?.itemIds || []), ...matchedIds])],
-        workCount: new Set([...(current?.itemIds || []), ...matchedIds]).size,
+        itemIds: nextIds,
+        workCount: nextIds.length,
         image: isSafeHttpUrl(person.image) ? person.image : current?.image,
       };
       merged.set(key, next);
     }
-    return [...merged.values()]
-      .sort((a, b) =>
-        Number(isSafeHttpUrl(b.image)) - Number(isSafeHttpUrl(a.image)) ||
-        Number(b.popularity || 0) - Number(a.popularity || 0) ||
-        Number(b.workCount || 0) - Number(a.workCount || 0),
-      )
-      .slice(0, 32);
+    return [...merged.entries()]
+      .sort(([aKey, a], [bKey, b]) => {
+        const aExplicit = explicitPriority.has(aKey);
+        const bExplicit = explicitPriority.has(bKey);
+        if (aExplicit !== bExplicit) return aExplicit ? -1 : 1;
+        if (aExplicit && bExplicit) return (explicitPriority.get(aKey) || 0) - (explicitPriority.get(bKey) || 0);
+        return Number(isSafeHttpUrl(b.image)) - Number(isSafeHttpUrl(a.image)) ||
+          Number(b.popularity || 0) - Number(a.popularity || 0) ||
+          Number(b.workCount || 0) - Number(a.workCount || 0);
+      })
+      .map(([, person]) => person)
+      .slice(0, 60);
   }, [catalog, catalogById, people]);
   const [selectedId, setSelectedId] = useState('');
   const peopleRailRef = useRef<FlatList<FeaturedPerson>>(null);
@@ -2423,11 +2458,10 @@ function HomeStarsSectionBase({
     const map = new Map<string, CatalogItem[]>();
     for (const person of resolvedPeople) {
       const explicitIds = new Set(person.itemIds || []);
-      const matched = explicitIds.size
-        ? [...explicitIds]
-            .map((itemId) => catalogById.get(String(itemId)))
-            .filter((item): item is CatalogItem => Boolean(item))
-        : personWorksFor(person, catalog);
+      const explicitMatched = [...explicitIds]
+        .map((itemId) => catalogById.get(String(itemId)))
+        .filter((item): item is CatalogItem => Boolean(item));
+      const matched = explicitMatched.length ? explicitMatched : personWorksFor(person, catalog);
       map.set(person.id, sortForCatalogFilter(matched, 'latest').slice(0, 18));
     }
     return map;
@@ -2557,18 +2591,29 @@ const imdbEntryTitles = (entry: ImdbTopEntry, item?: CatalogItem | null) => {
   return { primary, secondary };
 };
 
-function ImdbTopPoster({ entry, compact = false }: { entry: ImdbTopEntry; compact?: boolean }) {
+function ImdbTopPoster({
+  entry,
+  item,
+  compact = false,
+}: {
+  entry: ImdbTopEntry;
+  item?: CatalogItem | null;
+  compact?: boolean;
+}) {
+  const poster = entry.poster || item?.poster || item?.posterFallback || item?.backdrop;
   return (
-    <View style={[styles.imdbPosterWrap, compact && styles.imdbPosterWrapCompact]}>
-      {entry.poster ? (
-        <CatalogArtwork primary={entry.poster} style={styles.imdbPoster} contentFit="cover" />
-      ) : (
-        <View style={styles.imdbPosterFallback}>
-          <Ionicons name={entry.type === 'movie' ? 'film-outline' : 'tv-outline'} color={COLORS.gold} size={compact ? 23 : 28} />
-        </View>
-      )}
+    <View style={[styles.imdbPosterBlock, compact && styles.imdbPosterBlockCompact]}>
       <View style={[styles.imdbRankBadge, { backgroundColor: imdbRankColor(entry.rank) }]}>
         <Text style={styles.imdbRankBadgeText}>{toPersianDigits(entry.rank)}</Text>
+      </View>
+      <View style={[styles.imdbPosterWrap, compact && styles.imdbPosterWrapCompact]}>
+        {poster ? (
+          <CatalogArtwork primary={poster} fallback={item?.backdrop} style={styles.imdbPoster} contentFit="cover" />
+        ) : (
+          <View style={styles.imdbPosterFallback}>
+            <Ionicons name={entry.type === 'movie' ? 'film-outline' : 'tv-outline'} color={COLORS.gold} size={compact ? 23 : 28} />
+          </View>
+        )}
       </View>
     </View>
   );
@@ -2652,7 +2697,7 @@ function ImdbTop100Section({
           const titles = imdbEntryTitles(entry, availableItem);
           return (
             <Pressable key={`${entry.type}-${entry.imdb || entry.rank}`} onPress={() => openEntry(entry)} style={styles.imdbPodiumCard}>
-              <ImdbTopPoster entry={entry} />
+              <ImdbTopPoster entry={entry} item={availableItem} />
               <Text numberOfLines={2} style={styles.imdbPodiumTitle}>{titles.primary}</Text>
               {titles.secondary ? <Text numberOfLines={2} style={styles.imdbPodiumEnglish}>{titles.secondary}</Text> : null}
               <View style={styles.imdbRatingRow}>
@@ -2734,7 +2779,7 @@ function ImdbTop100Section({
               const titles = imdbEntryTitles(entry, availableItem);
               return (
                 <Pressable onPress={() => openEntry(entry, true)} style={styles.imdbFullRow}>
-                  <ImdbTopPoster entry={entry} compact />
+                  <ImdbTopPoster entry={entry} item={availableItem} compact />
                   <View style={styles.imdbFullRowText}>
                     <Text numberOfLines={2} style={styles.imdbFullRowTitle}>{titles.primary}</Text>
                     {titles.secondary ? <Text numberOfLines={1} style={styles.imdbFullRowEnglish}>{titles.secondary}</Text> : null}
@@ -4640,7 +4685,7 @@ function SeriesEpisodeShowcase({
           })}
         </ScrollView>
       ) : null}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled contentContainerStyle={styles.episodeShowcaseRail}>
+      <View style={styles.episodeShowcaseRail}>
         {visibleGroups.map((group) => {
           const canPlay = playableVersionsFor(item, group).length > 0;
           const operatorPlay = operatorFilesFor(group.files).find((file) => downloadModeFor(file) === 'operator-play');
@@ -4675,7 +4720,6 @@ function SeriesEpisodeShowcase({
               <View style={styles.episodeShowcaseCardFooter}>
                 <View style={styles.episodeShowcaseCardText}>
                   <Text numberOfLines={1} style={styles.episodeShowcaseCardTitle}>{cleanMediaLabel(group.subtitle) || group.title}</Text>
-                  <Text style={styles.episodeShowcaseCardMeta}>{toPersianDigits(group.files.length)} گزینه</Text>
                 </View>
                 <Pressable onPress={() => onOpenDownloads(group)} style={styles.episodeShowcaseDownloadButton}>
                   <Ionicons name="download-outline" color={COLORS.gold} size={18} />
@@ -4684,7 +4728,7 @@ function SeriesEpisodeShowcase({
             </View>
           );
         })}
-      </ScrollView>
+      </View>
     </View>
   );
 }
@@ -4730,14 +4774,10 @@ function DownloadOptionsModal({
     : '';
 
   useEffect(() => {
+    // Open only the requested episode shell. Language/quality accordions always
+    // start collapsed so the user explicitly chooses dubbed/subtitled/original.
     setOpenGroup(initialGroupId);
-    const selected = initialGroupId
-      ? groups.find((group) => group.id === initialGroupId)
-      : null;
-    const firstLanguage = selected
-      ? languageSectionsForFiles(selected.files, selected.id, isIranianItem(item))[0]?.id || null
-      : null;
-    setOpenLanguage(firstLanguage);
+    setOpenLanguage(null);
   }, [initialGroupId, item.id, visible]);
 
   return (
@@ -5599,16 +5639,16 @@ function VideoPlayerModal({
             {firstFrameReady && !switchingQuality ? (
               <View pointerEvents="box-none" style={[styles.playerCenterZone, frameRect]}>
                 <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
-                  <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton} accessibilityLabel="ده ثانیه عقب">
+                  <Pressable onPress={() => seekBy(-15)} style={styles.playerRoundButton} accessibilityLabel="پانزده ثانیه عقب">
                     <Ionicons name="play-back" color="#fff" size={26} />
-                    <Text style={styles.playerSkipText}>۱۰</Text>
+                    <Text style={styles.playerSkipText}>۱۵</Text>
                   </Pressable>
                   <Pressable onPress={togglePlayback} style={styles.playerPrimaryButton} accessibilityLabel={isPlaying ? 'توقف' : 'پخش'}>
                     <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={34} />
                   </Pressable>
-                  <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton} accessibilityLabel="ده ثانیه جلو">
+                  <Pressable onPress={() => seekBy(15)} style={styles.playerRoundButton} accessibilityLabel="پانزده ثانیه جلو">
                     <Ionicons name="play-forward" color="#fff" size={26} />
-                    <Text style={styles.playerSkipText}>۱۰</Text>
+                    <Text style={styles.playerSkipText}>۱۵</Text>
                   </Pressable>
                 </View>
               </View>
@@ -6166,11 +6206,11 @@ function AppContent() {
   );
   const contentRef = useRef(content);
   const contentRevisionRef = useRef(loadedContentRevision(content));
-  const [contentReady, setContentReady] = useState(false);
-  const [contentResolved, setContentResolved] = useState(false);
+  const [contentReady, setContentReady] = useState(() => content.items.length > 0);
+  const [contentResolved, setContentResolved] = useState(() => content.items.length > 0);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentOffline, setContentOffline] = useState(false);
-  const [startupVisible, setStartupVisible] = useState(true);
+  const [startupVisible, setStartupVisible] = useState(() => content.items.length === 0);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
@@ -6187,7 +6227,7 @@ function AppContent() {
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
   const startupStartedAtRef = useRef(Date.now());
-  const startupDismissedRef = useRef(false);
+  const startupDismissedRef = useRef(content.items.length > 0);
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vpnCheckSequenceRef = useRef(0);
   const vpnPausingDownloadsRef = useRef(false);
@@ -6341,7 +6381,29 @@ function AppContent() {
   };
 
   useEffect(() => {
-    reloadContent();
+    const hasBundledCatalog = contentRef.current.items.length > 0;
+    let startupFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let initialRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingIdleRefresh: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
+
+    const reloadContentWhenIdle = () => {
+      pendingIdleRefresh?.cancel();
+      pendingIdleRefresh = InteractionManager.runAfterInteractions(() => {
+        pendingIdleRefresh = null;
+        void reloadContent(false);
+      });
+    };
+
+    if (hasBundledCatalog) {
+      // Paint Home from the bundled catalog first; network/cache refreshes must
+      // never hold the branded startup screen for 15–25 seconds.
+      initialRefreshTimer = setTimeout(reloadContentWhenIdle, 180);
+    } else {
+      void reloadContent();
+      // Even on a cold/offline install, never trap the user behind Splash.
+      startupFallbackTimer = setTimeout(dismissStartup, 1400);
+    }
+
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
       .then((library) => {
@@ -6367,15 +6429,6 @@ function AppContent() {
     void refreshVpnState(true);
     const vpnRetryTimer = setTimeout(() => { void refreshVpnState(); }, 750);
 
-    let pendingIdleRefresh: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
-    const reloadContentWhenIdle = () => {
-      pendingIdleRefresh?.cancel();
-      pendingIdleRefresh = InteractionManager.runAfterInteractions(() => {
-        pendingIdleRefresh = null;
-        void reloadContent(false);
-      });
-    };
-
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         reloadContentWhenIdle();
@@ -6388,6 +6441,8 @@ function AppContent() {
 
     return () => {
       pendingIdleRefresh?.cancel();
+      if (initialRefreshTimer) clearTimeout(initialRefreshTimer);
+      if (startupFallbackTimer) clearTimeout(startupFallbackTimer);
       clearInterval(catalogRefreshTimer);
       clearTimeout(vpnRetryTimer);
       if (startupDismissTimerRef.current) clearTimeout(startupDismissTimerRef.current);
@@ -7427,12 +7482,14 @@ const styles = StyleSheet.create({
   imdbTabTextActive: { color: '#090B0F' },
   imdbPodiumRow: { marginTop: 14, flexDirection: 'row-reverse', alignItems: 'flex-start', justifyContent: 'space-between', gap: 9 },
   imdbPodiumCard: { minWidth: 0, flex: 1, alignItems: 'center' },
+  imdbPosterBlock: { width: '100%', alignItems: 'stretch' },
+  imdbPosterBlockCompact: { width: 68, flexShrink: 0 },
   imdbPosterWrap: { width: '100%', aspectRatio: 0.68, borderRadius: 12, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
   imdbPosterWrapCompact: { width: 68, height: 98, aspectRatio: undefined, flexShrink: 0 },
   imdbPoster: { width: '100%', height: '100%' },
   imdbPosterFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#181C23' },
-  imdbRankBadge: { position: 'absolute', top: 7, right: 7, minWidth: 28, height: 28, paddingHorizontal: 6, borderRadius: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.25)' },
-  imdbRankBadgeText: { color: '#111', fontSize: 10, fontWeight: '900' },
+  imdbRankBadge: { alignSelf: 'flex-end', minWidth: 21, height: 21, paddingHorizontal: 5, marginBottom: 4, borderRadius: 7, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.25)' },
+  imdbRankBadgeText: { color: '#111', fontSize: 8, fontWeight: '900' },
   imdbPodiumTitle: { ...rtlText, width: '100%', minHeight: 32, color: COLORS.text, fontSize: 9, lineHeight: 15, fontWeight: '900', textAlign: 'center', marginTop: 7 },
   imdbPodiumEnglish: { width: '100%', minHeight: 22, color: COLORS.muted, fontSize: 6.8, lineHeight: 10.5, textAlign: 'center', marginTop: 2 },
   imdbRatingRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 },
@@ -7617,9 +7674,9 @@ const styles = StyleSheet.create({
   scheduleFootnote: { ...rtlText, color: '#5E646D', fontSize: 8, lineHeight: 15, marginTop: 11 },
   catalogSection: { marginTop: 30 },
   sectionTitleRow: { paddingHorizontal: 18, flexDirection: 'row-reverse', alignItems: 'flex-end', justifyContent: 'space-between' },
-  sectionAction: { minWidth: 88, minHeight: 44, paddingHorizontal: 8, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 3 },
+  sectionAction: { minWidth: 112, minHeight: 48, paddingHorizontal: 13, borderRadius: 14, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(216,180,90,0.07)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.22)', overflow: 'hidden' },
   sectionActionPressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
-  sectionActionText: { color: COLORS.gold, fontSize: 10, fontWeight: '800' },
+  sectionActionText: { color: COLORS.gold, fontSize: 10.5, fontWeight: '900' },
   collectionSection: { marginTop: 24, paddingTop: 18, borderTopWidth: 1, borderTopColor: COLORS.border, gap: 13 },
   collectionHeader: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10 },
   collectionHeaderIcon: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(213,175,86,0.08)', borderWidth: 1, borderColor: 'rgba(213,175,86,0.28)' },
@@ -7768,19 +7825,18 @@ const styles = StyleSheet.create({
   episodeShowcaseSeasonActive: { backgroundColor: 'rgba(216,180,90,0.12)', borderColor: 'rgba(216,180,90,0.62)' },
   episodeShowcaseSeasonText: { color: COLORS.muted, fontSize: 8.5, fontWeight: '900' },
   episodeShowcaseSeasonTextActive: { color: COLORS.gold },
-  episodeShowcaseRail: { flexDirection: 'row-reverse', gap: 11, paddingTop: 13, paddingBottom: 5 },
-  episodeShowcaseCard: { width: 218, borderRadius: 16, overflow: 'hidden', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  episodeShowcaseArtworkWrap: { width: '100%', height: 123, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
+  episodeShowcaseRail: { gap: 10, paddingTop: 13, paddingBottom: 5 },
+  episodeShowcaseCard: { width: '100%', minHeight: 126, flexDirection: 'row-reverse', borderRadius: 16, overflow: 'hidden', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  episodeShowcaseArtworkWrap: { width: '58%', minHeight: 126, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
   episodeShowcaseArtwork: { width: '100%', height: '100%' },
   episodeShowcaseArtworkShade: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(3,5,8,0.46)' },
   episodeShowcaseArtworkForeground: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   episodeShowcasePlay: { position: 'absolute', left: '50%', top: '50%', width: 42, height: 42, marginLeft: -21, marginTop: -21, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)' },
   episodeShowcaseNumber: { ...rtlText, position: 'absolute', right: 12, bottom: 10, color: '#fff', fontSize: 12, fontWeight: '900', textShadowColor: '#000', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
-  episodeShowcaseCardFooter: { minHeight: 56, paddingHorizontal: 10, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
-  episodeShowcaseCardText: { minWidth: 0, flex: 1, alignItems: 'flex-end' },
-  episodeShowcaseCardTitle: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 9, fontWeight: '900' },
-  episodeShowcaseCardMeta: { color: COLORS.muted, fontSize: 7.5, marginTop: 4 },
-  episodeShowcaseDownloadButton: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
+  episodeShowcaseCardFooter: { minWidth: 0, flex: 1, minHeight: 126, padding: 11, alignItems: 'stretch', justifyContent: 'space-between', gap: 9 },
+  episodeShowcaseCardText: { minWidth: 0, flex: 1, alignItems: 'flex-end', justifyContent: 'center' },
+  episodeShowcaseCardTitle: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 9.5, lineHeight: 16, fontWeight: '900' },
+  episodeShowcaseDownloadButton: { width: 38, height: 38, borderRadius: 11, alignSelf: 'flex-start', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
   seasonSelectorWrap: { gap: 9, paddingBottom: 2 },
   seasonSelectorHeader: { minHeight: 28, paddingHorizontal: 4, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   seasonSelectorTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900' },
