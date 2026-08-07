@@ -86,7 +86,6 @@ type SearchFilter =
   | 'korean-movies'
   | 'korean-series'
   | 'indian-movies'
-  | 'japanese-movies'
   | 'anime-movies'
   | 'anime-series'
   | 'animation-movies'
@@ -273,32 +272,40 @@ const normalizeComparableText = (value?: string) =>
     .replace(/[^a-z0-9؀-ۿ]+/g, ' ')
     .trim();
 
-const titleVisualScore = (value?: string) => {
+const titleLayoutMetrics = (value?: string) => {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
-  const words = text ? text.split(' ').length : 0;
-  const latinCharacters = (text.match(/[A-Za-z0-9]/g) || []).length;
-  const wideCharacters = (text.match(/[آأإابتثجچحخدذرزژسشصضطظعغفقکگلمنوهی]/g) || []).length;
-  return text.length + Math.max(0, words - 3) * 2 + latinCharacters * 0.15 + wideCharacters * 0.08;
+  const words = text ? text.split(' ').filter(Boolean) : [];
+  const longestWord = words.reduce((max, word) => Math.max(max, word.length), 0);
+  return {
+    characters: text.length,
+    words: words.length,
+    longestWord,
+  };
 };
 
 const adaptiveTitleStyle = (value: string, context: 'hero' | 'detail') => {
-  const score = titleVisualScore(value);
+  const { characters, words, longestWord } = titleLayoutMetrics(value);
+
+  // Word count controls the main size step; character count and a very long
+  // token only nudge it down. Short titles stay bold and longer Persian titles
+  // remain inside the same clean two-line title area.
   if (context === 'hero') {
-    if (score <= 15) return { fontSize: 31, lineHeight: 39, letterSpacing: -1.05 };
-    if (score <= 24) return { fontSize: 27, lineHeight: 35, letterSpacing: -0.9 };
-    if (score <= 34) return { fontSize: 23, lineHeight: 30, letterSpacing: -0.72 };
-    if (score <= 48) return { fontSize: 20, lineHeight: 27, letterSpacing: -0.52 };
-    if (score <= 66) return { fontSize: 18, lineHeight: 24, letterSpacing: -0.4 };
-    return { fontSize: 16.5, lineHeight: 22, letterSpacing: -0.28 };
+    if (words <= 2 && characters <= 16 && longestWord <= 11) return { fontSize: 31, lineHeight: 38, letterSpacing: -1.0 };
+    if (words <= 3 && characters <= 24 && longestWord <= 13) return { fontSize: 27, lineHeight: 34, letterSpacing: -0.86 };
+    if (words <= 4 && characters <= 31) return { fontSize: 23, lineHeight: 30, letterSpacing: -0.66 };
+    if (words <= 6 && characters <= 44) return { fontSize: 20, lineHeight: 27, letterSpacing: -0.48 };
+    if (characters <= 62) return { fontSize: 18, lineHeight: 24, letterSpacing: -0.34 };
+    return { fontSize: 16, lineHeight: 22, letterSpacing: -0.24 };
   }
-  if (score <= 17) return { fontSize: 27, lineHeight: 35, letterSpacing: -0.82 };
-  if (score <= 28) return { fontSize: 23, lineHeight: 30, letterSpacing: -0.64 };
-  if (score <= 42) return { fontSize: 20, lineHeight: 27, letterSpacing: -0.48 };
-  if (score <= 60) return { fontSize: 18, lineHeight: 24, letterSpacing: -0.34 };
-  return { fontSize: 16.5, lineHeight: 22, letterSpacing: -0.24 };
+
+  if (words <= 2 && characters <= 18 && longestWord <= 12) return { fontSize: 27, lineHeight: 34, letterSpacing: -0.8 };
+  if (words <= 3 && characters <= 27 && longestWord <= 14) return { fontSize: 24, lineHeight: 31, letterSpacing: -0.62 };
+  if (words <= 4 && characters <= 36) return { fontSize: 21, lineHeight: 28, letterSpacing: -0.46 };
+  if (words <= 6 && characters <= 50) return { fontSize: 18.5, lineHeight: 25, letterSpacing: -0.32 };
+  return { fontSize: 16.5, lineHeight: 22, letterSpacing: -0.22 };
 };
 
-const adaptiveTitleLines = (value: string) => titleVisualScore(value) > 38 ? 3 : 2;
+const adaptiveTitleLines = (_value: string) => 2;
 
 function useDebouncedText(value: string, delay = 240) {
   const [debounced, setDebounced] = useState(value);
@@ -471,7 +478,7 @@ const COUNTRY_LABELS_FA: Record<string, string> = {
 };
 
 const COUNTRY_FILTER_PRIORITY = [
-  'IR', 'KR', 'IN', 'US', 'TR', 'JP', 'CN', 'GB', 'FR', 'DE', 'ES', 'IT', 'CA', 'AU', 'RU',
+  'IR', 'KR', 'IN', 'US', 'TR', 'CN', 'GB', 'FR', 'DE', 'ES', 'IT', 'CA', 'AU', 'RU',
 ];
 
 const countryFilter = (code: string): CountrySearchFilter =>
@@ -1092,7 +1099,7 @@ const filterTitle = (filter: SearchFilter) => {
     latest: 'جدیدترین‌ها', updated: 'به‌روزشده‌ها',
     'iranian-movies': 'فیلم‌های ایرانی', 'foreign-movies': 'فیلم‌های خارجی',
     'iranian-series': 'سریال‌های ایرانی', 'foreign-series': 'سریال‌های خارجی',
-    'korean-movies': 'فیلم‌های کره‌ای', 'korean-series': 'سریال‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی', 'japanese-movies': 'فیلم‌های ژاپنی',
+    'korean-movies': 'فیلم‌های کره‌ای', 'korean-series': 'سریال‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی',
     'anime-movies': 'انیمه‌های سینمایی', 'anime-series': 'انیمه‌های سریالی',
     'animation-movies': 'انیمیشن‌های سینمایی', 'animation-series': 'انیمیشن‌های سریالی',
     programs: 'برنامه‌ها و مسابقه‌ها', kids: 'کودکان', religious: 'مذهبی و مناسبتی', documentaries: 'مستندها', collections: 'کالکشن‌ها',
@@ -1124,7 +1131,6 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'korean-movies': return item.type === 'movie' && isKoreanItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
     case 'korean-series': return item.type === 'series' && isKoreanItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
     case 'indian-movies': return item.type === 'movie' && hasSpecificCountry(item, 'IN', 'hi') && !isAnimatedItem(item);
-    case 'japanese-movies': return item.type === 'movie' && hasSpecificCountry(item, 'JP', 'ja') && !isAnimatedItem(item);
     case 'anime-movies': return item.type === 'movie' && isAnimeItem(item);
     case 'anime-series': return item.type === 'series' && isAnimeItem(item);
     case 'animation-movies': return item.type === 'movie' && isAnimationItem(item);
@@ -1507,7 +1513,8 @@ function HeroSlide({
             </View>
             <Text
               numberOfLines={adaptiveTitleLines(item.nameFa)}
-              adjustsFontSizeToFit={false}
+              adjustsFontSizeToFit
+              minimumFontScale={0.78}
               style={[styles.heroTitle, adaptiveTitleStyle(item.nameFa, 'hero')]}
             >
               {item.nameFa}
@@ -2832,7 +2839,6 @@ const HomeScreen = memo(function HomeScreen({
       { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-movies').slice(0, 10) },
       { filter: 'korean-series', title: 'سریال‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-series').slice(0, 10) },
       { filter: 'indian-movies', title: 'فیلم‌های هندی', items: catalogItemsForFilter(catalog, 'indian-movies').slice(0, 10) },
-      { filter: 'japanese-movies', title: 'فیلم‌های ژاپنی', items: catalogItemsForFilter(catalog, 'japanese-movies').slice(0, 10) },
       { filter: 'anime-movies', title: 'انیمه‌های سینمایی', items: catalogItemsForFilter(catalog, 'anime-movies').slice(0, 10) },
       { filter: 'anime-series', title: 'انیمه‌های سریالی', items: catalogItemsForFilter(catalog, 'anime-series').slice(0, 10) },
       { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی', items: catalogItemsForFilter(catalog, 'animation-movies').slice(0, 10) },
@@ -2943,7 +2949,6 @@ const CATEGORY_CARDS: CategoryCardConfig[] = [
   { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', subtitle: 'سینمای کره جنوبی', icon: 'location-outline' },
   { filter: 'korean-series', title: 'سریال‌های کره‌ای', subtitle: 'مجموعه‌های کره جنوبی', icon: 'tv-outline' },
   { filter: 'indian-movies', title: 'فیلم‌های هندی', subtitle: 'سینمای هند', icon: 'location-outline' },
-  { filter: 'japanese-movies', title: 'فیلم‌های ژاپنی', subtitle: 'سینمای ژاپن', icon: 'location-outline' },
   { filter: 'collections', title: 'کالکشن‌ها', subtitle: 'قسمت‌های یک مجموعه', icon: 'layers-outline' },
   { filter: 'kids', title: 'کودکان', subtitle: 'برنامه‌ها و آثار مخصوص کودکان', icon: 'happy-outline' },
   { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها', subtitle: 'مسابقه، رئالیتی و گفت‌وگو', icon: 'mic-outline' },
@@ -2977,8 +2982,8 @@ const relatedCategoryFilters = (filter: SearchFilter): SearchFilter[] => {
   const map: Partial<Record<SearchFilter, SearchFilter[]>> = {
     movie: ['foreign-movies', 'iranian-movies'],
     series: ['foreign-series', 'iranian-series'],
-    'anime-movies': ['anime-series', 'japanese-movies', 'movie'],
-    'anime-series': ['anime-movies', 'japanese-movies', 'series'],
+    'anime-movies': ['anime-series', 'foreign-movies', 'movie'],
+    'anime-series': ['anime-movies', 'foreign-series', 'series'],
     'animation-movies': ['animation-series', 'movie'],
     'animation-series': ['animation-movies', 'series'],
     'iranian-movies': ['iranian-series', 'movie'],
@@ -2992,7 +2997,6 @@ const relatedCategoryFilters = (filter: SearchFilter): SearchFilter[] => {
     'korean-movies': ['korean-series', 'foreign-movies'],
     'korean-series': ['korean-movies', 'foreign-series'],
     'indian-movies': ['foreign-movies', 'movie'],
-    'japanese-movies': ['anime-movies', 'foreign-movies'],
     collections: ['movie', 'series'],
     documentaries: ['movie', 'series'],
     programs: ['series', 'foreign-series'],
@@ -3095,7 +3099,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   }, [deferredQuery, usableCatalog]);
 
   const topGenres = useMemo(() => [...new Set(usableCatalog.flatMap((item) => item.genres || []))].filter(Boolean).slice(0, 14), [usableCatalog]);
-  const topCountries = useMemo(() => [...new Set(usableCatalog.flatMap((item) => item.countryCodes || []))].slice(0, 12), [usableCatalog]);
+  const topCountries = useMemo(() => [...new Set(usableCatalog.flatMap((item) => item.countryCodes || []))].filter((code) => String(code).toUpperCase() !== 'JP').slice(0, 12), [usableCatalog]);
   const years = useMemo(() => [...new Set(usableCatalog.map((item) => item.year))].filter((year) => year > 1900).sort((a,b)=>b-a).slice(0, 12), [usableCatalog]);
   const gridGap = 10;
   const columnCount = screenWidth >= 760 ? 3 : 2;
@@ -3482,7 +3486,7 @@ function AdvancedSearchScreen({
 
   const availableCountryCodes = useMemo(() => advancedOpen ? [...new Set(
     searchableCatalog.flatMap((item) => item.countryCodes || []),
-  )].sort((a, b) => {
+  )].filter((code) => String(code).toUpperCase() !== 'JP').sort((a, b) => {
     const aIndex = COUNTRY_FILTER_PRIORITY.indexOf(a);
     const bIndex = COUNTRY_FILTER_PRIORITY.indexOf(b);
     if (aIndex >= 0 || bIndex >= 0) {
@@ -4914,7 +4918,8 @@ function DetailModal({
                 {itemHasOperatorAccess(item) ? <View style={styles.detailOperatorBadge}><Ionicons name="phone-portrait-outline" color={COLORS.gold} size={12} /><Text style={styles.detailOperatorBadgeText}>ویژه اینترنت همراه</Text></View> : null}
                 <Text
                   numberOfLines={adaptiveTitleLines(item.nameFa)}
-                  adjustsFontSizeToFit={false}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
                   style={[styles.detailTitle, adaptiveTitleStyle(item.nameFa, 'detail')]}
                 >
                   {item.nameFa}
@@ -4938,8 +4943,8 @@ function DetailModal({
             ) : (
               <>
             <View style={styles.detailActions}>
-              {!vpnActive && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
-              {hasDownloads ? (
+              {item.type === 'movie' && !vpnActive && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
+              {item.type === 'movie' && hasDownloads ? (
                 <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
                   <Ionicons name="download-outline" color={COLORS.gold} size={19} />
                   <Text style={styles.detailDownloadActionText}>دانلود</Text>
@@ -4949,7 +4954,7 @@ function DetailModal({
             </View>
 
             <View style={styles.genreRow}>
-              {(item.countryCodes || []).map((code, index) => <Pressable key={`country-${code}`} onPress={() => browseAndClose(countryFilter(code))}><Text style={styles.detailGenre}>{item.countryLabels?.[index] || countryLabel(code, catalog)}</Text></Pressable>)}
+              {(item.countryCodes || []).map((code, index) => ({ code, index })).filter(({ code }) => String(code).toUpperCase() !== 'JP').map(({ code, index }) => <Pressable key={`country-${code}`} onPress={() => browseAndClose(countryFilter(code))}><Text style={styles.detailGenre}>{item.countryLabels?.[index] || countryLabel(code, catalog)}</Text></Pressable>)}
               {item.genres.map((genre) => <Pressable key={genre} onPress={() => browseAndClose(genreFilter(genre))}><Text style={styles.detailGenre}>{genre}</Text></Pressable>)}
             </View>
 
@@ -5990,7 +5995,6 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
             { key: 'subtitled', title: 'زیرنویس فارسی', filter: 'subtitled' },
             { key: 'korean-movies', title: 'فیلم‌های کره‌ای', filter: 'korean-movies' },
             { key: 'indian-movies', title: 'فیلم‌های هندی', filter: 'indian-movies' },
-            { key: 'japanese-movies', title: 'فیلم‌های ژاپنی', filter: 'japanese-movies' },
           ],
         },
       ],
@@ -7770,7 +7774,7 @@ const styles = StyleSheet.create({
   episodeShowcaseArtwork: { width: '100%', height: '100%' },
   episodeShowcaseArtworkShade: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(3,5,8,0.46)' },
   episodeShowcaseArtworkForeground: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
-  episodeShowcasePlay: { position: 'absolute', left: 12, top: 42, width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)' },
+  episodeShowcasePlay: { position: 'absolute', left: '50%', top: '50%', width: 42, height: 42, marginLeft: -21, marginTop: -21, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)' },
   episodeShowcaseNumber: { ...rtlText, position: 'absolute', right: 12, bottom: 10, color: '#fff', fontSize: 12, fontWeight: '900', textShadowColor: '#000', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   episodeShowcaseCardFooter: { minHeight: 56, paddingHorizontal: 10, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
   episodeShowcaseCardText: { minWidth: 0, flex: 1, alignItems: 'flex-end' },
