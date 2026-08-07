@@ -182,7 +182,10 @@ export type ImdbTopEntry = {
   rank: number;
   itemId?: string;
   type: ContentType;
+  /** عنوان اصلی/انگلیسی IMDb. */
   title: string;
+  /** عنوان فارسی، در صورت وجود در کاتالوگ یا ترجمهٔ TMDB. */
+  titleFa?: string;
   imdb?: string;
   year?: number;
   rating: number;

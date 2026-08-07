@@ -148,18 +148,37 @@ const optimizedImageUrl = (
   _kind: 'poster' | 'backdrop' | 'person' = 'poster',
 ) => String(value || '').trim().replace(/^http:\/\//i, 'https://');
 
-const isTmdbImageUrl = (value?: string) =>
-  /^(?:https?:)?\/\/image\.tmdb\.org\//i.test(String(value || '').trim());
+const shouldProxyCatalogImage = (value?: string) =>
+  /^(?:https?:)?\/\/(?:image\.tmdb\.org|thumb\.upera\.tv)\//i.test(String(value || '').trim());
 
 const personImageCandidates = (value?: string) => {
   const image = optimizedImageUrl(value, 'person');
   if (!image) return [];
 
   const candidates: string[] = [];
-  if (isTmdbImageUrl(image)) {
+  if (shouldProxyCatalogImage(image)) {
     const sourceWithoutProtocol = image.replace(/^https?:\/\//i, '');
     candidates.push(
       `https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=500&output=webp`,
+    );
+  }
+  candidates.push(image);
+  return [...new Set(candidates)];
+};
+
+const catalogArtworkCandidates = (
+  value?: string,
+  kind: 'poster' | 'backdrop' = 'poster',
+) => {
+  const image = optimizedImageUrl(value, kind);
+  if (!isSafeHttpUrl(image) || isPlaceholderUrl(image)) return [];
+  const candidates: string[] = [];
+  // TMDB/Upera image hosts can be slow or blocked on some Iranian networks.
+  // Prefer a lightweight WebP proxy and retain the original as fallback.
+  if (shouldProxyCatalogImage(image)) {
+    const sourceWithoutProtocol = image.replace(/^https?:\/\//i, '');
+    candidates.push(
+      `https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=${kind === 'poster' ? 500 : 960}&output=webp`,
     );
   }
   candidates.push(image);
@@ -1320,26 +1339,19 @@ const CatalogArtwork = memo(function CatalogArtwork({
   transition?: number;
   imageKind?: 'poster' | 'backdrop';
 }) {
-  const primaryCandidate = optimizedImageUrl(primary, imageKind);
-  const fallbackCandidate = optimizedImageUrl(fallback, imageKind);
-  const primaryUrl = isSafeHttpUrl(primaryCandidate) && !isPlaceholderUrl(primaryCandidate)
-    ? primaryCandidate
-    : '';
-  const fallbackUrl =
-    isSafeHttpUrl(fallbackCandidate) &&
-    !isPlaceholderUrl(fallbackCandidate) &&
-    fallbackCandidate !== primaryUrl
-      ? fallbackCandidate
-      : '';
-  const [stage, setStage] = useState(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
+  const candidates = useMemo(() => [...new Set([
+    ...catalogArtworkCandidates(primary, imageKind),
+    ...catalogArtworkCandidates(fallback, imageKind),
+  ])], [fallback, imageKind, primary]);
+  const [stage, setStage] = useState(0);
   useEffect(() => {
-    setStage(primaryUrl ? 0 : fallbackUrl ? 1 : 2);
-  }, [primaryUrl, fallbackUrl]);
+    setStage(0);
+  }, [candidates.join('|')]);
 
-  const remoteUrl = stage === 0 ? primaryUrl : stage === 1 ? fallbackUrl : '';
+  const remoteUrl = candidates[stage] || '';
 
   const handleRemoteError = () => {
-    setStage((current) => current === 0 && fallbackUrl ? 1 : 2);
+    setStage((current) => current + 1);
   };
 
   return (
@@ -2525,6 +2537,19 @@ const findImdbTopItem = (
     ? byImdb.get(String(entry.imdb).toLowerCase()) || null
     : null;
 
+const imdbEntryTitles = (entry: ImdbTopEntry, item?: CatalogItem | null) => {
+  const rawTitle = String(entry.title || '').trim();
+  const rawTitleFa = String(entry.titleFa || '').trim();
+  const rawTitleIsPersian = /[\u0600-\u06FF]/.test(rawTitle);
+  const titleFa = String(item?.nameFa || rawTitleFa || (rawTitleIsPersian ? rawTitle : '')).trim();
+  const title = String(item?.name || (!rawTitleIsPersian ? rawTitle : '')).trim();
+  const primary = titleFa || title || rawTitle;
+  const secondary = title && normalizeComparableText(title) !== normalizeComparableText(primary)
+    ? title
+    : '';
+  return { primary, secondary };
+};
+
 function ImdbTopPoster({ entry, compact = false }: { entry: ImdbTopEntry; compact?: boolean }) {
   return (
     <View style={[styles.imdbPosterWrap, compact && styles.imdbPosterWrapCompact]}>
@@ -2562,9 +2587,10 @@ function ImdbTop100Section({
   const openEntry = useCallback((entry: ImdbTopEntry, closeFull = false) => {
     const item = findImdbTopItem(entry, byId, byImdb);
     if (!item) {
+      const titles = imdbEntryTitles(entry);
       Alert.alert(
         'هنوز در آپاراتچی نیست',
-        `«${entry.title}» هنوز به آپاراتچی اضافه نشده است. بعد از اضافه‌شدن، همین پوستر مستقیم صفحهٔ آن را باز می‌کند.`,
+        `«${titles.primary}» هنوز به آپاراتچی اضافه نشده است. بعد از اضافه‌شدن، همین پوستر مستقیم صفحهٔ آن را باز می‌کند.`,
       );
       return;
     }
@@ -2614,11 +2640,14 @@ function ImdbTop100Section({
 
       <View style={styles.imdbPodiumRow}>
         {topThree.map((entry) => {
-          const available = Boolean(findImdbTopItem(entry, byId, byImdb));
+          const availableItem = findImdbTopItem(entry, byId, byImdb);
+          const available = Boolean(availableItem);
+          const titles = imdbEntryTitles(entry, availableItem);
           return (
             <Pressable key={`${entry.type}-${entry.imdb || entry.rank}`} onPress={() => openEntry(entry)} style={styles.imdbPodiumCard}>
               <ImdbTopPoster entry={entry} />
-              <Text numberOfLines={2} style={styles.imdbPodiumTitle}>{entry.title}</Text>
+              <Text numberOfLines={2} style={styles.imdbPodiumTitle}>{titles.primary}</Text>
+              {titles.secondary ? <Text numberOfLines={2} style={styles.imdbPodiumEnglish}>{titles.secondary}</Text> : null}
               <View style={styles.imdbRatingRow}>
                 <Ionicons name="star" color="#F4C84D" size={12} />
                 <Text style={styles.imdbRatingText}>{toPersianDigits(entry.rating)}</Text>
@@ -2633,12 +2662,15 @@ function ImdbTop100Section({
 
       <View style={styles.imdbPreviewList}>
         {previewRows.map((entry) => {
-          const available = Boolean(findImdbTopItem(entry, byId, byImdb));
+          const availableItem = findImdbTopItem(entry, byId, byImdb);
+          const available = Boolean(availableItem);
+          const titles = imdbEntryTitles(entry, availableItem);
           return (
             <Pressable key={`${entry.type}-${entry.imdb || entry.rank}`} onPress={() => openEntry(entry)} style={styles.imdbPreviewRow}>
               <Text style={styles.imdbPreviewRank}>{toPersianDigits(entry.rank)}</Text>
               <View style={styles.imdbPreviewText}>
-                <Text numberOfLines={1} style={styles.imdbPreviewTitle}>{entry.title}</Text>
+                <Text numberOfLines={1} style={styles.imdbPreviewTitle}>{titles.primary}</Text>
+                {titles.secondary ? <Text numberOfLines={1} style={styles.imdbPreviewEnglish}>{titles.secondary}</Text> : null}
                 <Text style={styles.imdbPreviewMeta}>
                   {[
                     entry.year ? toPersianDigits(entry.year) : '',
@@ -2690,12 +2722,15 @@ function ImdbTop100Section({
             maxToRenderPerBatch={8}
             windowSize={7}
             renderItem={({ item: entry }) => {
-              const available = Boolean(findImdbTopItem(entry, byId, byImdb));
+              const availableItem = findImdbTopItem(entry, byId, byImdb);
+              const available = Boolean(availableItem);
+              const titles = imdbEntryTitles(entry, availableItem);
               return (
                 <Pressable onPress={() => openEntry(entry, true)} style={styles.imdbFullRow}>
                   <ImdbTopPoster entry={entry} compact />
                   <View style={styles.imdbFullRowText}>
-                    <Text numberOfLines={2} style={styles.imdbFullRowTitle}>{entry.title}</Text>
+                    <Text numberOfLines={2} style={styles.imdbFullRowTitle}>{titles.primary}</Text>
+                    {titles.secondary ? <Text numberOfLines={1} style={styles.imdbFullRowEnglish}>{titles.secondary}</Text> : null}
                     <Text style={styles.imdbFullRowMeta}>
                       {[entry.year ? toPersianDigits(entry.year) : '', `امتیاز ${toPersianDigits(entry.rating)}`].filter(Boolean).join(' • ')}
                     </Text>
@@ -4365,6 +4400,7 @@ function EpisodeDownloadGroup({
   onPlayLanguage,
   onOpenOperator,
   iranian,
+  showPlayActions = false,
   episodeNoun = 'قسمت',
 }: {
   group: DownloadSection;
@@ -4376,6 +4412,7 @@ function EpisodeDownloadGroup({
   onPlayLanguage: (language?: MediaLanguage) => void;
   onOpenOperator: (file: DownloadFile) => void;
   iranian: boolean;
+  showPlayActions?: boolean;
   episodeNoun?: string;
 }) {
   const languageGroups = languageSectionsForFiles(group.files, group.id, iranian);
@@ -4412,7 +4449,7 @@ function EpisodeDownloadGroup({
               open={openLanguage === languageGroup.id}
               onToggle={() => onToggleLanguage(languageGroup.id)}
               onOpenFile={(file) => onOpenFile(file, group)}
-              onPlay={playbackSourcesForFiles(group.files.filter((file) => file.language === languageGroup.language)).length
+              onPlay={showPlayActions && playbackSourcesForFiles(group.files.filter((file) => file.language === languageGroup.language)).length
                 ? () => onPlayLanguage(languageGroup.language)
                 : undefined}
             />
@@ -4440,6 +4477,7 @@ function SeriesEpisodeList({
   onOpenFile,
   onPlayLanguage,
   onOpenOperator,
+  showPlayActions = false,
   quran = false,
 }: {
   item: CatalogItem;
@@ -4450,6 +4488,7 @@ function SeriesEpisodeList({
   onOpenFile: (file: DownloadFile, group: DownloadSection) => void;
   onPlayLanguage: (group: DownloadSection, language?: MediaLanguage) => void;
   onOpenOperator: (file: DownloadFile) => void;
+  showPlayActions?: boolean;
   quran?: boolean;
 }) {
   const episodeGroups = [...(item.downloads || [])]
@@ -4536,6 +4575,7 @@ function SeriesEpisodeList({
             onPlayLanguage={(language) => onPlayLanguage(group, language)}
             onOpenOperator={onOpenOperator}
             iranian={isIranianItem(item)}
+            showPlayActions={showPlayActions}
             episodeNoun={quran ? 'جزء' : 'قسمت'}
           />
         ))}
@@ -4608,6 +4648,18 @@ function SeriesEpisodeShowcase({
                 style={styles.episodeShowcaseArtworkWrap}
               >
                 <CatalogArtwork primary={artwork} fallback={item.poster} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />
+                {group.artwork ? (
+                  <>
+                    <View pointerEvents="none" style={styles.episodeShowcaseArtworkShade} />
+                    <CatalogArtwork
+                      primary={group.artwork}
+                      fallback={item.poster}
+                      style={styles.episodeShowcaseArtworkForeground}
+                      contentFit="contain"
+                      imageKind="backdrop"
+                    />
+                  </>
+                ) : null}
                 <LinearGradient colors={['transparent', 'rgba(4,6,9,0.92)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.episodeShowcasePlay}>
                   <Ionicons name={canPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
@@ -4663,10 +4715,25 @@ function DownloadOptionsModal({
     .filter((file) => !isOperatorFile(file));
   const movieGroups = languageSectionsForFiles(directMovieFiles, `movie-${item.id}`, isIranianItem(item));
   const operatorGroups = groups.filter((group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0);
+  const selectedEpisodeGroup = initialGroupId
+    ? groups.find((group) => group.id === initialGroupId && isEpisodeSection(group)) || null
+    : null;
+  const visibleSeriesItem = selectedEpisodeGroup
+    ? { ...item, downloads: [selectedEpisodeGroup] }
+    : item;
+  const selectedEpisodeLabel = selectedEpisodeGroup
+    ? `${isQuranItem(item) ? 'جزء' : 'قسمت'} ${toPersianDigits(selectedEpisodeGroup.episodeNumber || 0)}`
+    : '';
 
   useEffect(() => {
     setOpenGroup(initialGroupId);
-    setOpenLanguage(null);
+    const selected = initialGroupId
+      ? groups.find((group) => group.id === initialGroupId)
+      : null;
+    const firstLanguage = selected
+      ? languageSectionsForFiles(selected.files, selected.id, isIranianItem(item))[0]?.id || null
+      : null;
+    setOpenLanguage(firstLanguage);
   }, [initialGroupId, item.id, visible]);
 
   return (
@@ -4680,8 +4747,10 @@ function DownloadOptionsModal({
               <Ionicons name="close" color={COLORS.text} size={21} />
             </Pressable>
             <View style={styles.downloadSheetHeaderText}>
-              <Text style={styles.downloadSheetTitle}>پخش و دانلود</Text>
-              <Text numberOfLines={1} style={styles.downloadSheetSubtitle}>{item.nameFa}</Text>
+              <Text style={styles.downloadSheetTitle}>لینک‌های دانلود</Text>
+              <Text numberOfLines={1} style={styles.downloadSheetSubtitle}>
+                {[item.nameFa, selectedEpisodeLabel].filter(Boolean).join(' • ')}
+              </Text>
             </View>
             <View style={styles.downloadSheetIcon}><Ionicons name="cloud-download-outline" color={COLORS.gold} size={23} /></View>
           </View>
@@ -4698,7 +4767,7 @@ function DownloadOptionsModal({
               </View>
             ) : item.type === 'series' ? (
               <SeriesEpisodeList
-                item={item}
+                item={visibleSeriesItem}
                 openGroup={openGroup}
                 openLanguage={openLanguage}
                 onToggleEpisode={(id, defaultLanguageId) => {
@@ -4710,6 +4779,7 @@ function DownloadOptionsModal({
                 onOpenFile={(file, group) => onDownload(item, file, group)}
                 onPlayLanguage={(group, language) => onStream(item, group, language)}
                 onOpenOperator={(file) => onOperatorOpen(item, file)}
+                showPlayActions={false}
                 quran={isQuranItem(item)}
               />
             ) : (
@@ -6204,9 +6274,11 @@ function AppContent() {
       if (!visibleContent.items.length) return false;
       contentRevisionRef.current = incomingRevision;
       contentRef.current = visibleContent;
-      // Replacing a large catalog can rebuild many virtualized rows. Mark it
-      // as non-urgent so taps and scrolling already in progress stay responsive.
-      startTransition(() => setContent(visibleContent));
+      // The first usable catalog must be committed before the startup cover is
+      // dismissed. Deferring this initial render could briefly expose the false
+      // "catalog is empty" screen. Only later background refreshes are non-urgent.
+      if (initialLoad || !hadVisibleCatalog) setContent(visibleContent);
+      else startTransition(() => setContent(visibleContent));
       lastContentLoadRef.current = Date.now();
       setContentReady(true);
       setContentResolved(true);
@@ -6659,7 +6731,7 @@ function AppContent() {
       initialSourceId: version.defaultSource.id,
       resumeKey: record.id,
       itemId: item.id,
-      artwork: item.backdrop || item.poster,
+      artwork: episodeGroup?.artwork || item.backdrop || item.poster,
       episodeId: episodeGroup?.id,
       language: version.language,
       resumeAt: record.position,
@@ -6760,7 +6832,7 @@ function AppContent() {
         initialSourceId: version.defaultSource.id,
         resumeKey,
         itemId: item.id,
-        artwork: item.backdrop || item.poster,
+        artwork: episodeGroup?.artwork || item.backdrop || item.poster,
         episodeId: episodeGroup?.id,
         language: version.language,
         resumeAt: 0,
@@ -6950,7 +7022,7 @@ function AppContent() {
         initialSourceId: source.id,
         resumeKey: `${item.id}:main:${file.language || 'direct'}`,
         itemId: item.id,
-        artwork: item.backdrop || item.poster,
+        artwork: episodeGroup?.artwork || item.backdrop || item.poster,
         language: file.language,
       });
       return;
@@ -6985,7 +7057,7 @@ function AppContent() {
       subtitle: item.name,
       quality: cleanQualityLabel(file.quality),
       sourceUrl: file.url,
-      artwork: item.backdrop || item.poster,
+      artwork: episodeGroup?.artwork || item.backdrop || item.poster,
       mediaType: item.type,
       seasonNumber: episodeGroup?.seasonNumber,
       episodeNumber: episodeGroup?.episodeNumber,
@@ -7358,6 +7430,7 @@ const styles = StyleSheet.create({
   imdbRankBadge: { position: 'absolute', top: 7, right: 7, minWidth: 28, height: 28, paddingHorizontal: 6, borderRadius: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(0,0,0,0.25)' },
   imdbRankBadgeText: { color: '#111', fontSize: 10, fontWeight: '900' },
   imdbPodiumTitle: { ...rtlText, width: '100%', minHeight: 32, color: COLORS.text, fontSize: 9, lineHeight: 15, fontWeight: '900', textAlign: 'center', marginTop: 7 },
+  imdbPodiumEnglish: { width: '100%', minHeight: 22, color: COLORS.muted, fontSize: 6.8, lineHeight: 10.5, textAlign: 'center', marginTop: 2 },
   imdbRatingRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 },
   imdbRatingText: { color: '#F4C84D', fontSize: 9, fontWeight: '900' },
   imdbAvailability: { color: COLORS.muted, fontSize: 7, fontWeight: '800', marginTop: 4 },
@@ -7367,6 +7440,7 @@ const styles = StyleSheet.create({
   imdbPreviewRank: { width: 24, color: COLORS.gold, fontSize: 12, fontWeight: '900', textAlign: 'center' },
   imdbPreviewText: { minWidth: 0, flex: 1, alignItems: 'flex-end' },
   imdbPreviewTitle: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 10.5, fontWeight: '900' },
+  imdbPreviewEnglish: { width: '100%', color: '#9197A0', fontSize: 7.2, textAlign: 'right', marginTop: 3 },
   imdbPreviewMeta: { ...rtlText, width: '100%', color: COLORS.muted, fontSize: 7.5, marginTop: 5 },
   imdbFullButton: { minHeight: 47, marginTop: 12, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#F5C518' },
   imdbFullButtonText: { color: '#090B0F', fontSize: 10, fontWeight: '900' },
@@ -7381,6 +7455,7 @@ const styles = StyleSheet.create({
   imdbFullRow: { minHeight: 116, padding: 8, borderRadius: 16, flexDirection: 'row-reverse', alignItems: 'center', gap: 11, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   imdbFullRowText: { minWidth: 0, flex: 1, alignItems: 'flex-end' },
   imdbFullRowTitle: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 12.5, lineHeight: 20, fontWeight: '900' },
+  imdbFullRowEnglish: { width: '100%', color: '#969CA5', fontSize: 8, textAlign: 'right', marginTop: 3 },
   imdbFullRowMeta: { ...rtlText, width: '100%', color: COLORS.gold, fontSize: 8.5, marginTop: 6 },
   imdbFullAvailabilityBadge: { minHeight: 25, marginTop: 8, paddingHorizontal: 8, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: COLORS.border },
   imdbFullAvailabilityBadgeReady: { backgroundColor: 'rgba(101,197,138,0.09)', borderColor: 'rgba(101,197,138,0.32)' },
@@ -7693,6 +7768,8 @@ const styles = StyleSheet.create({
   episodeShowcaseCard: { width: 218, borderRadius: 16, overflow: 'hidden', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   episodeShowcaseArtworkWrap: { width: '100%', height: 123, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
   episodeShowcaseArtwork: { width: '100%', height: '100%' },
+  episodeShowcaseArtworkShade: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(3,5,8,0.46)' },
+  episodeShowcaseArtworkForeground: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   episodeShowcasePlay: { position: 'absolute', left: 12, top: 42, width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)' },
   episodeShowcaseNumber: { ...rtlText, position: 'absolute', right: 12, bottom: 10, color: '#fff', fontSize: 12, fontWeight: '900', textShadowColor: '#000', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   episodeShowcaseCardFooter: { minHeight: 56, paddingHorizontal: 10, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },

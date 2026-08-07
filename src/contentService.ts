@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { CATALOG, VERIFIED_IRANIAN_SCHEDULE } from './data';
-import { REMOTE_CONTENT_URL } from './config';
+import { REMOTE_CONTENT_MANIFEST_URL, REMOTE_CONTENT_URL } from './config';
 import {
   CatalogItem,
   CatalogPerson,
@@ -41,6 +41,16 @@ const REMOTE_CACHE_META_URI = FileSystem.documentDirectory
 type RemoteCacheMetadata = {
   etag?: string;
   lastModified?: string;
+  manifestRevision?: string;
+  catalogVersion?: string;
+  catalogUpdatedAt?: string;
+};
+
+type RemoteCatalogManifest = {
+  revision: string;
+  catalogVersion?: string;
+  catalogUpdatedAt?: string;
+  sizeBytes?: number;
 };
 
 let memoryContent: CatalogPayload | null = null;
@@ -1143,7 +1153,16 @@ const normalizeImdbTop100 = (
       if (!identity || seen.has(identity)) continue;
       const rating = asNumber(entry.rating ?? entry.rate ?? item?.rate, Number.NaN);
       if (!Number.isFinite(rating) || rating <= 0) continue;
-      const title = asString(entry.title, item?.nameFa);
+      const rawTitle = asString(entry.title ?? entry.name);
+      const rawTitleFa = asString(entry.titleFa ?? entry.title_fa ?? entry.nameFa ?? entry.name_fa);
+      const rawTitleIsPersian = /[\u0600-\u06FF]/.test(rawTitle);
+      const title = asString(
+        item?.name,
+        rawTitleIsPersian
+          ? asString(entry.originalTitle ?? entry.original_title, rawTitle)
+          : rawTitle,
+      );
+      const titleFa = asString(item?.nameFa, rawTitleFa || (rawTitleIsPersian ? rawTitle : ''));
       if (!title) continue;
       seen.add(identity);
       normalized.push({
@@ -1151,6 +1170,9 @@ const normalizeImdbTop100 = (
         ...(item ? { itemId: item.id } : {}),
         type,
         title,
+        ...(titleFa && normalizeIdentityText(titleFa) !== normalizeIdentityText(title)
+          ? { titleFa }
+          : {}),
         ...(asString(entry.imdb ?? item?.imdb) ? { imdb: asString(entry.imdb ?? item?.imdb) } : {}),
         ...(asNumber(entry.year ?? item?.year, 0) > 0
           ? { year: asNumber(entry.year ?? item?.year, 0) }
@@ -1179,7 +1201,10 @@ const normalizeImdbTop100 = (
         rank: normalized.length + 1,
         itemId: item.id,
         type,
-        title: item.nameFa,
+        title: item.name,
+        ...(item.nameFa && normalizeIdentityText(item.nameFa) !== normalizeIdentityText(item.name)
+          ? { titleFa: item.nameFa }
+          : {}),
         ...(item.imdb ? { imdb: item.imdb } : {}),
         year: item.year,
         rating: Number(item.rate),
@@ -1312,12 +1337,68 @@ const readCacheMetadata = async () => {
       cacheMetadata = {
         ...(asString(value.etag) ? { etag: asString(value.etag) } : {}),
         ...(asString(value.lastModified) ? { lastModified: asString(value.lastModified) } : {}),
+        ...(asString(value.manifestRevision) ? { manifestRevision: asString(value.manifestRevision) } : {}),
+        ...(asString(value.catalogVersion) ? { catalogVersion: asString(value.catalogVersion) } : {}),
+        ...(asString(value.catalogUpdatedAt) ? { catalogUpdatedAt: asString(value.catalogUpdatedAt) } : {}),
       };
     }
   } catch {
     cacheMetadata = {};
   }
 };
+
+const writeCacheMetadata = async (metadata: RemoteCacheMetadata) => {
+  if (!REMOTE_CACHE_META_URI) return;
+  try {
+    await FileSystem.writeAsStringAsync(REMOTE_CACHE_META_URI, JSON.stringify(metadata));
+  } catch {
+    // Metadata is only an optimization; the catalog cache remains usable without it.
+  }
+};
+
+const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
+  const manifestUrl = REMOTE_CONTENT_MANIFEST_URL.trim();
+  if (!manifestUrl) return null;
+  const separator = manifestUrl.includes('?') ? '&' : '?';
+  // Only this tiny file gets a five-minute cache key. The 8+ MB catalog never
+  // receives a time-based cache-buster.
+  const requestUrl = `${manifestUrl}${separator}_aparatchi_manifest=${Math.floor(Date.now() / 300_000)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6_000);
+  const response = await fetch(requestUrl, {
+    headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
+  if (!response.ok) throw new Error(`Manifest HTTP ${response.status}`);
+  const value = await response.json();
+  if (!value || typeof value !== 'object') throw new Error('Invalid catalog manifest');
+  const record = value as Record<string, unknown>;
+  const revision = asString(record.revision);
+  if (!revision) throw new Error('Catalog manifest has no revision');
+  return {
+    revision,
+    ...(asString(record.catalogVersion ?? record.version)
+      ? { catalogVersion: asString(record.catalogVersion ?? record.version) }
+      : {}),
+    ...(asString(record.catalogUpdatedAt ?? record.updatedAt)
+      ? { catalogUpdatedAt: asString(record.catalogUpdatedAt ?? record.updatedAt) }
+      : {}),
+    ...(asNumber(record.sizeBytes, 0) > 0 ? { sizeBytes: asNumber(record.sizeBytes, 0) } : {}),
+  };
+};
+
+const manifestMatchesCachedContent = (
+  manifest: RemoteCatalogManifest,
+  cached: CatalogPayload,
+) => Boolean(
+  (cacheMetadata.manifestRevision && cacheMetadata.manifestRevision === manifest.revision) ||
+  (
+    manifest.catalogVersion &&
+    manifest.catalogUpdatedAt &&
+    cached.version === manifest.catalogVersion &&
+    cached.updatedAt === manifest.catalogUpdatedAt
+  )
+);
 
 const writeCachedContent = async (
   rawPayload: string,
@@ -1353,8 +1434,29 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     };
   }
 
+  await readCacheMetadata();
+  const cached = await readCachedContent();
+  let manifest: RemoteCatalogManifest | null = null;
+
   try {
-    await readCacheMetadata();
+    manifest = await fetchRemoteManifest();
+    if (manifest && cached && manifestMatchesCachedContent(manifest, cached)) {
+      cacheMetadata = {
+        ...cacheMetadata,
+        manifestRevision: manifest.revision,
+        ...(manifest.catalogVersion ? { catalogVersion: manifest.catalogVersion } : {}),
+        ...(manifest.catalogUpdatedAt ? { catalogUpdatedAt: manifest.catalogUpdatedAt } : {}),
+      };
+      void writeCacheMetadata(cacheMetadata);
+      return { ...cached, source: 'remote' };
+    }
+  } catch {
+    // A temporary manifest/CDN error must not trigger another multi-megabyte
+    // download. Keep the last valid catalog and retry the tiny check later.
+    if (cached) return { ...cached, source: 'cache' };
+  }
+
+  try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12_000);
     const requestHeaders: Record<string, string> = {
@@ -1365,7 +1467,10 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     if (cacheMetadata.lastModified) {
       requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
     }
-    const response = await fetch(remoteUrl, {
+    const catalogRequestUrl = manifest?.revision
+      ? `${remoteUrl}${remoteUrl.includes('?') ? '&' : '?'}revision=${encodeURIComponent(manifest.revision.slice(0, 24))}`
+      : remoteUrl;
+    const response = await fetch(catalogRequestUrl, {
       headers: {
         ...requestHeaders,
       },
@@ -1388,6 +1493,9 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     const rawPayload = JSON.parse(rawText);
     const parsed = parsePayload(rawPayload);
     if (!parsed) throw new Error('Invalid catalog payload');
+    if (manifest?.catalogUpdatedAt && parsed.updatedAt !== manifest.catalogUpdatedAt) {
+      throw new Error('Catalog and manifest are temporarily out of sync');
+    }
 
     memoryContent = parsed;
     const responseEtag = response.headers.get('etag') || cacheMetadata.etag;
@@ -1396,11 +1504,13 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     cacheMetadata = {
       ...(responseEtag ? { etag: responseEtag } : {}),
       ...(responseLastModified ? { lastModified: responseLastModified } : {}),
+      ...(manifest?.revision ? { manifestRevision: manifest.revision } : {}),
+      ...(manifest?.catalogVersion ? { catalogVersion: manifest.catalogVersion } : {}),
+      ...(manifest?.catalogUpdatedAt ? { catalogUpdatedAt: manifest.catalogUpdatedAt } : {}),
     };
     void writeCachedContent(rawText, cacheMetadata);
     return { ...parsed, source: 'remote' };
   } catch {
-    const cached = await readCachedContent();
     if (cached) return { ...cached, source: 'cache' };
     return {
       ...normalizedLocalPayload(),
