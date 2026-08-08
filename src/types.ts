@@ -61,10 +61,6 @@ export type DownloadSection = {
   episodeNumber?: number;
   sourceUpdatedAt?: string;
   tmdbValidationVersion?: number;
-  /** مسیر فایل جزئیات سبک؛ تنها هنگام بازکردن عنوان دریافت می‌شود. */
-  detailPath?: string;
-  /** true وقتی لینک‌ها و عوامل کامل این عنوان بارگذاری شده‌اند. */
-  detailLoaded?: boolean;
 };
 
 export type LatestEpisode = {
@@ -166,6 +162,10 @@ export type CatalogItem = {
   sourceCreatedAt?: string;
   sourceUpdatedAt?: string;
   tmdbValidationVersion?: number;
+  /** مسیر فایل جزئیات سبک؛ تنها هنگام بازکردن عنوان دریافت می‌شود. */
+  detailPath?: string;
+  /** true وقتی لینک‌ها و عوامل کامل این عنوان بارگذاری شده‌اند. */
+  detailLoaded?: boolean;
 };
 
 export type ScheduleEntry = {
