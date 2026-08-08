@@ -1187,31 +1187,11 @@ const normalizeImdbTop100 = (
       });
     }
 
-    const fallback = items
-      .filter((item) => item.type === type && Number(item.rate || 0) > 0 && !seen.has(item.id))
-      .sort((a, b) =>
-        Number(b.rate || 0) - Number(a.rate || 0) ||
-        Number(b.imdbVotes || 0) - Number(a.imdbVotes || 0) ||
-        Number(b.year || 0) - Number(a.year || 0) ||
-        a.nameFa.localeCompare(b.nameFa, 'fa'),
-      );
-    for (const item of fallback) {
-      if (normalized.length >= 100) break;
-      normalized.push({
-        rank: normalized.length + 1,
-        itemId: item.id,
-        type,
-        title: item.name,
-        ...(item.nameFa && normalizeIdentityText(item.nameFa) !== normalizeIdentityText(item.name)
-          ? { titleFa: item.nameFa }
-          : {}),
-        ...(item.imdb ? { imdb: item.imdb } : {}),
-        year: item.year,
-        rating: Number(item.rate),
-        ...(item.imdbVotes ? { votes: item.imdbVotes } : {}),
-        ...(item.poster ? { poster: item.poster } : {}),
-      });
-    }
+    // Never manufacture an IMDb ranking from the app catalog. On a first
+    // install the bundled payload may not contain imdbTop100 yet; filling the
+    // empty list with ordinary app titles made Home briefly show a fake Top
+    // 100 until the remote catalog arrived. Keep the section empty/partial
+    // until authoritative ranking entries are actually present.
     return normalized.slice(0, 100).map((entry, index) => ({ ...entry, rank: index + 1 }));
   };
 

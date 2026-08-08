@@ -922,26 +922,33 @@ const mediaKindLabel = (item: CatalogItem) => {
 
 const itemHasUsableContent = (item: CatalogItem) => {
   if (!isSeriesPublished(item)) return false;
-  const files = (item.downloads || []).flatMap((section) => section.files || []);
-  const hasOperator = files.some((file) =>
-    isOperatorFile(file) && isSafeHttpUrl(file.url) && isOperatorPortalUrl(file.url),
-  );
-  if (hasOperator) return true;
 
-  const directFiles = files.filter((file) =>
-    !isOperatorFile(file) &&
-    isSafeHttpUrl(file.url) &&
-    !isPlaceholderUrl(file.url) &&
-    isDirectMediaUrl(file.url),
-  );
+  const iranian = isIranianItem(item);
   const hasStream = isSafeHttpUrl(item.streamUrl) && isDirectMediaUrl(item.streamUrl || '');
+  if (iranian && hasStream) return true;
 
-  if (isIranianItem(item)) return Boolean(hasStream || directFiles.length);
-  const languages = itemLanguages(item);
-  return Boolean(
-    (hasStream && languages.length) ||
-    directFiles.some((file) => Boolean(file.language)),
-  );
+  // This runs while a large catalog is admitted into the UI. Avoid allocating a
+  // flattened copy of every episode/file: repeating that work across Home and
+  // category filters was enough to block Android's JS thread and swallow taps.
+  let hasDirect = false;
+  let hasLocalizedDirect = false;
+  for (const section of item.downloads || []) {
+    for (const file of section.files || []) {
+      if (isOperatorFile(file)) {
+        if (isSafeHttpUrl(file.url) && isOperatorPortalUrl(file.url)) return true;
+        continue;
+      }
+      if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url) || !isDirectMediaUrl(file.url)) continue;
+      hasDirect = true;
+      if (file.language) hasLocalizedDirect = true;
+      if (iranian || hasLocalizedDirect) return true;
+    }
+  }
+
+  if (iranian) return hasDirect;
+  if (hasLocalizedDirect) return true;
+  if (!hasStream) return false;
+  return itemLanguages(item).length > 0;
 };
 
 const visibleLoadedContent = (loaded: LoadedContent): LoadedContent => ({
@@ -1174,8 +1181,11 @@ const catalogItemsForFilter = (catalog: CatalogItem[], filter: SearchFilter) => 
   const cached = cache.get(filter);
   if (cached) return cached;
 
+  // The App only exposes `visibleLoadedContent`, so these items already passed
+  // the expensive media-usability check. Rechecking every episode here for each
+  // Home section caused severe startup/navigation stalls on large catalogs.
   const result = sortForCatalogFilter(
-    catalog.filter((item) => itemHasUsableContent(item) && matchesCatalogFilter(item, filter)),
+    catalog.filter((item) => matchesCatalogFilter(item, filter)),
     filter,
   );
   cache.set(filter, result);
@@ -2568,6 +2578,73 @@ const HomeStarsSection = memo(HomeStarsSectionBase);
 const imdbRankColor = (rank: number) =>
   rank === 1 ? '#D9B24C' : rank === 2 ? '#AEB7C2' : rank === 3 ? '#B87845' : COLORS.gold;
 
+
+const IMDB_PERSIAN_TITLE_OVERRIDES: Record<string, string> = {
+  'breaking bad': 'بریکینگ بد',
+  'steel ball run jojo s bizarre adventure': 'استیل بال ران: ماجراجویی عجیب جوجو',
+  'band of brothers': 'جوخه برادران',
+  'planet earth': 'سیاره زمین',
+  'sapne vs everyone': 'رویاها در برابر همه',
+  'the world at war': 'جهان در جنگ',
+  'bb ki vines': 'بی بی کی واینز',
+  'the chaos class': 'کلاس شلوغ',
+  'punjab 95': 'پنجاب ۹۵',
+  'david attenborough a life on our planet': 'دیوید اتنبرو: یک زندگی روی سیاره ما',
+  'tosun pasha': 'توسون پاشا',
+  'rocketry the nambi effect': 'راکتری: اثر نامبی',
+  'anbe sivam': 'آنبه سیوام',
+  'nayakan': 'نایاکان',
+  'jai bhim': 'جای بهیم',
+  'soorarai pottru': 'سورارای پوترو',
+  'baraka': 'باراکا',
+  'jersey': 'جرسی',
+  'mahavatar narsimha': 'ماهاواتار نارسیما',
+  'dear zachary a letter to a son about his father': 'زکری عزیز: نامه ای به پسری درباره پدرش',
+  '96': '۹۶',
+  '777 charlie': 'چارلی ۷۷۷',
+  'mirror game': 'بازی آینه',
+  '20 days in mariupol': '۲۰ روز در ماریوپل',
+  'the kashmir files': 'پرونده های کشمیر',
+};
+
+const transliterateLatinTitleToPersian = (value: string) => {
+  const source = String(value || '').trim();
+  if (!source) return '';
+  const overridden = IMDB_PERSIAN_TITLE_OVERRIDES[normalizeComparableText(source)];
+  if (overridden) return overridden;
+
+  const latin = source
+    .replace(/0/g, '۰').replace(/1/g, '۱').replace(/2/g, '۲').replace(/3/g, '۳').replace(/4/g, '۴')
+    .replace(/5/g, '۵').replace(/6/g, '۶').replace(/7/g, '۷').replace(/8/g, '۸').replace(/9/g, '۹');
+  if (/^[^A-Za-z]*$/.test(latin)) return latin;
+
+  const replacements: Array<[RegExp, string]> = [
+    [/sh/gi, 'ش'], [/ch/gi, 'چ'], [/zh/gi, 'ژ'], [/kh/gi, 'خ'], [/gh/gi, 'غ'],
+    [/ph/gi, 'ف'], [/th/gi, 'ت'], [/ck/gi, 'ک'], [/qu/gi, 'کو'], [/oo/gi, 'و'],
+    [/ee/gi, 'ی'], [/ea/gi, 'ی'], [/ou/gi, 'او'], [/ai/gi, 'ای'], [/ay/gi, 'ای'],
+  ];
+  let text = latin.toLowerCase();
+  const placeholders: string[] = [];
+  for (const [pattern, replacement] of replacements) {
+    text = text.replace(pattern, () => {
+      const index = placeholders.push(replacement) - 1;
+      return `§${index}§`;
+    });
+  }
+  const letters: Record<string, string> = {
+    a: 'ا', b: 'ب', c: 'ک', d: 'د', e: 'ِ', f: 'ف', g: 'گ', h: 'ه', i: 'ی',
+    j: 'ج', k: 'ک', l: 'ل', m: 'م', n: 'ن', o: 'و', p: 'پ', q: 'ق', r: 'ر',
+    s: 'س', t: 'ت', u: 'و', v: 'و', w: 'و', x: 'کس', y: 'ی', z: 'ز',
+  };
+  text = text.replace(/[a-z]/g, (letter) => letters[letter] || letter);
+  text = text.replace(/§(\d+)§/g, (_match, index) => placeholders[Number(index)] || '');
+  return text
+    .replace(/ِ+/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([:،؛!?])/g, '$1')
+    .trim();
+};
+
 const findImdbTopItem = (
   entry: ImdbTopEntry,
   byId: Map<string, CatalogItem>,
@@ -2582,8 +2659,10 @@ const imdbEntryTitles = (entry: ImdbTopEntry, item?: CatalogItem | null) => {
   const rawTitle = String(entry.title || '').trim();
   const rawTitleFa = String(entry.titleFa || '').trim();
   const rawTitleIsPersian = /[\u0600-\u06FF]/.test(rawTitle);
-  const titleFa = String(item?.nameFa || rawTitleFa || (rawTitleIsPersian ? rawTitle : '')).trim();
+  const itemTitleFa = /[\u0600-\u06FF]/.test(String(item?.nameFa || '')) ? String(item?.nameFa || '').trim() : '';
+  const entryTitleFa = /[\u0600-\u06FF]/.test(rawTitleFa) ? rawTitleFa : '';
   const title = String(item?.name || (!rawTitleIsPersian ? rawTitle : '')).trim();
+  const titleFa = itemTitleFa || entryTitleFa || (rawTitleIsPersian ? rawTitle : '') || transliterateLatinTitleToPersian(title || rawTitle);
   const primary = titleFa || title || rawTitle;
   const secondary = title && normalizeComparableText(title) !== normalizeComparableText(primary)
     ? title
@@ -2608,7 +2687,7 @@ function ImdbTopPoster({
       </View>
       <View style={[styles.imdbPosterWrap, compact && styles.imdbPosterWrapCompact]}>
         {poster ? (
-          <CatalogArtwork primary={poster} fallback={item?.backdrop} style={styles.imdbPoster} contentFit="cover" />
+          <CatalogArtwork primary={poster} fallback={item?.posterFallback || item?.poster || item?.backdrop} style={styles.imdbPoster} contentFit="cover" />
         ) : (
           <View style={styles.imdbPosterFallback}>
             <Ionicons name={entry.type === 'movie' ? 'film-outline' : 'tv-outline'} color={COLORS.gold} size={compact ? 23 : 28} />
@@ -2630,11 +2709,15 @@ function ImdbTop100Section({
 }) {
   const [selectedType, setSelectedType] = useState<CatalogItem['type']>('movie');
   const [fullVisible, setFullVisible] = useState(false);
+  const fullScrollOffsetsRef = useRef<Record<CatalogItem['type'], number>>({ movie: 0, series: 0 });
   const byId = useMemo(() => new Map(catalog.map((item) => [String(item.id), item])), [catalog]);
   const byImdb = useMemo(() => new Map(
     catalog.filter((item) => Boolean(item.imdb)).map((item) => [String(item.imdb).toLowerCase(), item]),
   ), [catalog]);
   const entries = selectedType === 'movie' ? ranking?.movies || [] : ranking?.series || [];
+  const rememberFullListOffset = useCallback((event: any) => {
+    fullScrollOffsetsRef.current[selectedType] = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
+  }, [selectedType]);
 
   const openEntry = useCallback((entry: ImdbTopEntry, closeFull = false) => {
     const item = findImdbTopItem(entry, byId, byImdb);
@@ -2766,8 +2849,12 @@ function ImdbTop100Section({
             })}
           </View>
           <FlatList
+            key={`imdb-full-${selectedType}`}
             data={entries}
             keyExtractor={(entry) => `${entry.type}-${entry.imdb || entry.rank}`}
+            contentOffset={{ x: 0, y: fullScrollOffsetsRef.current[selectedType] || 0 }}
+            onScrollEndDrag={rememberFullListOffset}
+            onMomentumScrollEnd={rememberFullListOffset}
             contentContainerStyle={styles.imdbFullList}
             showsVerticalScrollIndicator={false}
             initialNumToRender={8}
@@ -2961,9 +3048,10 @@ const HomeScreen = memo(function HomeScreen({
         showsVerticalScrollIndicator={false}
         initialNumToRender={2}
         maxToRenderPerBatch={2}
-        updateCellsBatchingPeriod={56}
+        updateCellsBatchingPeriod={40}
         windowSize={4}
-        removeClippedSubviews
+        removeClippedSubviews={false}
+        keyboardShouldPersistTaps="handled"
         onScrollEndDrag={rememberVisibleOffset}
         onMomentumScrollEnd={rememberVisibleOffset}
         ListHeaderComponent={homeHeader}
@@ -3067,7 +3155,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const [query, setQuery] = useState('');
   const deferredQuery = normalizeComparableText(useDebouncedText(query, 220));
   const { width: screenWidth } = useWindowDimensions();
-  const usableCatalog = useMemo(() => catalog.filter(itemHasUsableContent), [catalog]);
+  const usableCatalog = catalog;
   const categoryPreviewPool = useMemo(
     () => sortForCatalogFilter(usableCatalog, 'latest').slice(0, 220),
     [usableCatalog],
@@ -3375,7 +3463,6 @@ function SimpleSearchScreen({
   const cardWidth = Math.floor((screenWidth - 32 - gap * (columnCount - 1)) / columnCount);
   const searchIndex = useMemo(
     () => catalog
-      .filter(itemHasUsableContent)
       .map((item) => ({
         item,
         text: normalizeComparableText([
@@ -3499,7 +3586,7 @@ function AdvancedSearchScreen({
   const [selectedPersonId, setSelectedPersonId] = useState('');
   const [personRole, setPersonRole] = useState<PersonRoleFilter>('all');
   const { width: screenWidth } = useWindowDimensions();
-  const searchableCatalog = useMemo(() => catalog.filter(itemHasUsableContent), [catalog]);
+  const searchableCatalog = catalog;
 
   useEffect(() => {
     const nextCountry = countryCodeFromFilter(initialFilter);
@@ -3966,11 +4053,11 @@ function FavoritesScreen({
 }) {
   const [view, setView] = useState<'favorites' | 'history'>('favorites');
   const items = catalog.filter(
-    (item) => itemHasUsableContent(item) && favorites.includes(item.id),
+    (item) => favorites.includes(item.id),
   );
   const history = watchHistory
     .filter((record) =>
-      catalog.some((item) => itemHasUsableContent(item) && item.id === record.itemId) ||
+      catalog.some((item) => item.id === record.itemId) ||
       record.downloadId,
     )
     .slice(0, 100);
@@ -7826,14 +7913,14 @@ const styles = StyleSheet.create({
   episodeShowcaseSeasonText: { color: COLORS.muted, fontSize: 8.5, fontWeight: '900' },
   episodeShowcaseSeasonTextActive: { color: COLORS.gold },
   episodeShowcaseRail: { gap: 10, paddingTop: 13, paddingBottom: 5 },
-  episodeShowcaseCard: { width: '100%', minHeight: 126, flexDirection: 'row-reverse', borderRadius: 16, overflow: 'hidden', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  episodeShowcaseArtworkWrap: { width: '58%', minHeight: 126, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
+  episodeShowcaseCard: { width: '100%', height: 132, flexDirection: 'row-reverse', borderRadius: 16, overflow: 'hidden', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  episodeShowcaseArtworkWrap: { width: '58%', height: 132, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
   episodeShowcaseArtwork: { width: '100%', height: '100%' },
   episodeShowcaseArtworkShade: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(3,5,8,0.46)' },
   episodeShowcaseArtworkForeground: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   episodeShowcasePlay: { position: 'absolute', left: '50%', top: '50%', width: 42, height: 42, marginLeft: -21, marginTop: -21, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)' },
   episodeShowcaseNumber: { ...rtlText, position: 'absolute', right: 12, bottom: 10, color: '#fff', fontSize: 12, fontWeight: '900', textShadowColor: '#000', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
-  episodeShowcaseCardFooter: { minWidth: 0, flex: 1, minHeight: 126, padding: 11, alignItems: 'stretch', justifyContent: 'space-between', gap: 9 },
+  episodeShowcaseCardFooter: { minWidth: 0, flex: 1, height: 132, padding: 11, alignItems: 'stretch', justifyContent: 'space-between', gap: 9 },
   episodeShowcaseCardText: { minWidth: 0, flex: 1, alignItems: 'flex-end', justifyContent: 'center' },
   episodeShowcaseCardTitle: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 9.5, lineHeight: 16, fontWeight: '900' },
   episodeShowcaseDownloadButton: { width: 38, height: 38, borderRadius: 11, alignSelf: 'flex-start', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
