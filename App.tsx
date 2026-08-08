@@ -37,7 +37,7 @@ import {
 import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
-import { getBundledContent, loadContent, LoadedContent } from './src/contentService';
+import { getBundledContent, loadCatalogItemDetail, loadContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
   checkMobileOperatorAccess,
@@ -417,7 +417,12 @@ const operatorFilesFor = (files: DownloadFile[]) =>
   files.filter((file) => isOperatorFile(file) && isOperatorPortalUrl(file.url));
 
 const itemHasOperatorAccess = (item: CatalogItem) =>
-  (item.downloads || []).some((section) => operatorFilesFor(section.files).length > 0);
+  Boolean(
+    item.operatorOnly ||
+    item.operatorAccess ||
+    (item.supportedOperators || []).length ||
+    (item.downloads || []).some((section) => operatorFilesFor(section.files).length > 0),
+  );
 
 const LANGUAGE_ORDER: MediaLanguage[] = ['dubbed', 'subtitled'];
 
@@ -1187,6 +1192,23 @@ const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
 
 
 const catalogFilterCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem[]>>();
+const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
+  'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
+  'korean-movies', 'korean-series', 'indian-movies',
+  'anime-movies', 'anime-series', 'animation-movies', 'animation-series',
+  'programs', 'kids', 'religious', 'documentaries',
+]);
+
+const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
+  if (filter === 'all' || filter === 'latest') return true;
+  if (filter === 'movie' || filter === 'series') return item.type === filter;
+  if (filter === 'updated') return item.type === 'series' && Boolean(meaningfulUpdateLabel(item));
+  if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
+  if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length) {
+    return (item.categoryKeys || []).includes(filter);
+  }
+  return matchesCatalogFilter(item, filter);
+};
 
 const catalogItemsForFilter = (catalog: CatalogItem[], filter: SearchFilter) => {
   let cache = catalogFilterCache.get(catalog);
@@ -1197,13 +1219,11 @@ const catalogItemsForFilter = (catalog: CatalogItem[], filter: SearchFilter) => 
   const cached = cache.get(filter);
   if (cached) return cached;
 
-  // Publication/media admission is handled once when content enters the app.
-  // Rechecking every episode for every Home section caused severe
-  // startup/navigation stalls on large catalogs.
-  const result = sortForCatalogFilter(
-    catalog.filter((item) => matchesCatalogFilter(item, filter)),
-    filter,
-  );
+  // The server already writes the catalog newest-first and provides categoryKeys.
+  // Keep that order for browse/search instead of sorting the whole archive after
+  // every "مشاهده همه" tap. Only the episode-update feed has its own timestamp.
+  const filtered = catalog.filter((item) => fastCatalogFilterMatch(item, filter));
+  const result = filter === 'updated' ? sortForCatalogFilter(filtered, filter) : filtered;
   cache.set(filter, result);
   return result;
 };
@@ -1583,7 +1603,7 @@ function HeroSlide({
             </Text>
           </View>
         </View>
-        <Pressable onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
+        <Pressable onPressIn={() => { if (item.detailPath) void loadCatalogItemDetail(item); }} onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
           <Ionicons name="play" color="#fff" size={18} />
           <Text style={styles.primaryButtonText}>مشاهده و دریافت</Text>
         </Pressable>
@@ -2116,7 +2136,7 @@ const PosterCard = memo(function PosterCard({
   const latestEpisode = item.type === 'series' ? newestEpisodeGroup(item) : null;
 
   return (
-    <Pressable onPress={onOpen} unstable_pressDelay={0} hitSlop={7} style={({ pressed }) => [styles.posterCard, { width }, pressed && styles.posterCardPressed]}>
+    <Pressable onPressIn={() => { if (item.detailPath) void loadCatalogItemDetail(item); }} onPress={onOpen} unstable_pressDelay={0} hitSlop={7} style={({ pressed }) => [styles.posterCard, { width }, pressed && styles.posterCardPressed]}>
       <View style={[styles.posterImageWrap, { width, height: Math.round(width * 1.42) }]}>
         <CatalogArtwork
           primary={item.poster}
@@ -2348,7 +2368,6 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
   return (
     <FlatList
       horizontal
-      inverted
       data={items}
       keyExtractor={(item) => item.id}
       renderItem={renderPoster}
@@ -2356,12 +2375,13 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
       initialNumToRender={3}
-      maxToRenderPerBatch={3}
-      updateCellsBatchingPeriod={55}
-      windowSize={5}
+      maxToRenderPerBatch={2}
+      updateCellsBatchingPeriod={70}
+      windowSize={3}
       removeClippedSubviews={false}
       getItemLayout={(_, index) => ({ length: 148, offset: 148 * index, index })}
       nestedScrollEnabled
+      keyboardShouldPersistTaps="always"
     />
   );
 });
@@ -2921,6 +2941,74 @@ function ImdbTop100Section({
 type HomeCatalogRow = {
   filter: SearchFilter;
   title: string;
+  items: CatalogItem[];
+};
+
+const HOME_CATALOG_ROWS: Array<Omit<HomeCatalogRow, 'items'>> = [
+  { filter: 'latest', title: 'جدیدترین‌ها' },
+  { filter: 'updated', title: 'به‌روزشده‌ها' },
+  { filter: 'mobile-operator', title: 'ویژه اینترنت همراه' },
+  { filter: 'iranian-movies', title: 'فیلم‌های ایرانی' },
+  { filter: 'foreign-movies', title: 'فیلم‌های خارجی' },
+  { filter: 'iranian-series', title: 'سریال‌های ایرانی' },
+  { filter: 'foreign-series', title: 'سریال‌های خارجی' },
+  { filter: 'korean-movies', title: 'فیلم‌های کره‌ای' },
+  { filter: 'korean-series', title: 'سریال‌های کره‌ای' },
+  { filter: 'indian-movies', title: 'فیلم‌های هندی' },
+  { filter: 'anime-movies', title: 'انیمه‌های سینمایی' },
+  { filter: 'anime-series', title: 'انیمه‌های سریالی' },
+  { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی' },
+  { filter: 'animation-series', title: 'انیمیشن‌های سریالی' },
+  { filter: 'kids', title: 'کودکان' },
+  { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها' },
+  { filter: 'religious', title: 'مذهبی و مناسبتی' },
+  { filter: 'documentaries', title: 'مستندها' },
+];
+
+const summaryMatchesHomeFilter = (item: CatalogItem, filter: SearchFilter) => {
+  if (filter === 'latest') return true;
+  if (filter === 'updated') {
+    return item.type === 'series' && Boolean(meaningfulUpdateLabel(item));
+  }
+  if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
+
+  // The Content job writes categoryKeys once on the server. Reading those keys
+  // is intentionally O(1) compared with re-running country/genre/title
+  // classification for every Home row on every phone.
+  const keys = item.categoryKeys || [];
+  if (keys.length) return keys.includes(filter);
+
+  // Tiny bundled fallback from older APKs may not have categoryKeys yet.
+  return matchesCatalogFilter(item, filter);
+};
+
+const buildHomeCatalogRows = (catalog: CatalogItem[]): HomeCatalogRow[] => {
+  const buckets = new Map<SearchFilter, CatalogItem[]>();
+  for (const row of HOME_CATALOG_ROWS) buckets.set(row.filter, []);
+
+  const updatedCandidates: CatalogItem[] = [];
+  for (const item of catalog) {
+    for (const row of HOME_CATALOG_ROWS) {
+      const bucket = buckets.get(row.filter)!;
+      if (row.filter === 'updated') {
+        if (summaryMatchesHomeFilter(item, row.filter)) updatedCandidates.push(item);
+        continue;
+      }
+      if (bucket.length >= 10) continue;
+      if (summaryMatchesHomeFilter(item, row.filter)) bucket.push(item);
+    }
+  }
+
+  updatedCandidates
+    .sort((a, b) => {
+      const aTime = Date.parse(a.meaningfulUpdatedAt || a.updatedAt || '') || 0;
+      const bTime = Date.parse(b.meaningfulUpdatedAt || b.updatedAt || '') || 0;
+      return bTime - aTime;
+    })
+    .slice(0, 10)
+    .forEach((item) => buckets.get('updated')!.push(item));
+
+  return HOME_CATALOG_ROWS.map((row) => ({ ...row, items: buckets.get(row.filter) || [] }));
 };
 
 const HomeCatalogSection = memo(function HomeCatalogSection({
@@ -2936,17 +3024,13 @@ const HomeCatalogSection = memo(function HomeCatalogSection({
   onOpen: (item: CatalogItem) => void;
   onBrowse: (filter: SearchFilter) => void;
 }) {
-  const items = useMemo(
-    () => catalogItemsForFilter(catalog, row.filter).slice(0, 10),
-    [catalog, row.filter],
-  );
-  if (!items.length) return null;
+  if (!row.items.length) return null;
 
   return (
     <View>
       <View style={styles.catalogSection}>
         <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
-        <HorizontalCatalog items={items} onOpen={onOpen} />
+        <HorizontalCatalog items={row.items} onOpen={onOpen} />
       </View>
       {row.filter === 'foreign-movies' ? (
         <HomeStarsSection people={featuredPeople} catalog={catalog} onOpen={onOpen} />
@@ -2983,34 +3067,17 @@ const HomeScreen = memo(function HomeScreen({
   contentOffline: boolean;
 }) {
   const listRef = useRef<FlatList<HomeCatalogRow>>(null);
-  const newest = useMemo(() => catalogItemsForFilter(catalog, 'latest'), [catalog]);
+  // One linear pass builds every Home preview. Previously each visible section
+  // filtered and sorted the complete catalog independently, which multiplied
+  // startup work as the archive grew and blocked taps on the JS thread.
+  const rows = useMemo(() => buildHomeCatalogRows(catalog), [catalog]);
+  const newest = rows[0]?.items || [];
 
   useEffect(() => {
     if (initialScrollOffset > 0) {
       requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: initialScrollOffset, animated: false }));
     }
   }, []);
-
-  const rows = useMemo<HomeCatalogRow[]>(() => [
-    { filter: 'latest', title: 'جدیدترین‌ها' },
-    { filter: 'updated', title: 'به‌روزشده‌ها' },
-    { filter: 'mobile-operator', title: 'ویژه اینترنت همراه' },
-    { filter: 'iranian-movies', title: 'فیلم‌های ایرانی' },
-    { filter: 'foreign-movies', title: 'فیلم‌های خارجی' },
-    { filter: 'iranian-series', title: 'سریال‌های ایرانی' },
-    { filter: 'foreign-series', title: 'سریال‌های خارجی' },
-    { filter: 'korean-movies', title: 'فیلم‌های کره‌ای' },
-    { filter: 'korean-series', title: 'سریال‌های کره‌ای' },
-    { filter: 'indian-movies', title: 'فیلم‌های هندی' },
-    { filter: 'anime-movies', title: 'انیمه‌های سینمایی' },
-    { filter: 'anime-series', title: 'انیمه‌های سریالی' },
-    { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی' },
-    { filter: 'animation-series', title: 'انیمیشن‌های سریالی' },
-    { filter: 'kids', title: 'کودکان' },
-    { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها' },
-    { filter: 'religious', title: 'مذهبی و مناسبتی' },
-    { filter: 'documentaries', title: 'مستندها' },
-  ], []);
 
   const homeHeader = useMemo(() => (
     <>
@@ -3037,7 +3104,7 @@ const HomeScreen = memo(function HomeScreen({
     onScrollOffset(event.nativeEvent.contentOffset.y);
   }, [onScrollOffset]);
 
-  if (!newest.length) return (
+  if (!catalog.length) return (
     <View style={styles.screen}>
       <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
       <View style={[styles.screen, styles.contentUnavailable]}>
@@ -3075,12 +3142,12 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={1}
-        maxToRenderPerBatch={1}
-        updateCellsBatchingPeriod={70}
-        windowSize={3}
+        initialNumToRender={2}
+        maxToRenderPerBatch={2}
+        updateCellsBatchingPeriod={45}
+        windowSize={4}
         removeClippedSubviews={false}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         onScrollEndDrag={rememberVisibleOffset}
         onMomentumScrollEnd={rememberVisibleOffset}
         ListHeaderComponent={homeHeader}
@@ -5011,23 +5078,24 @@ function DetailModal({
     setDownloadSheetOpen(false);
     setDownloadInitialGroup(null);
     if (!visible || !item) return undefined;
+    // Summary rows from catalog-index deliberately omit downloads/people. Do
+    // not render an empty detail body while the one small detail shard is still
+    // loading. The parent hydrates only this selected title.
+    if (item.detailPath && item.detailLoaded !== true) return undefined;
     let cancelled = false;
     const reveal = () => {
       if (cancelled) return;
       cancelled = true;
       setDetailBodyReady(true);
     };
-    // Open the modal immediately and build long episode/download trees after
-    // the tap/fade interaction. The timeout guarantees that a continuously
-    // moving carousel can never postpone the body indefinitely.
     const interaction = InteractionManager.runAfterInteractions(reveal);
-    const fallback = setTimeout(reveal, 140);
+    const fallback = setTimeout(reveal, 80);
     return () => {
       cancelled = true;
       interaction.cancel();
       clearTimeout(fallback);
     };
-  }, [item?.id, visible]);
+  }, [item?.detailLoaded, item?.detailPath, item?.id, visible]);
   if (!item) return null;
 
   const downloadGroups = detailBodyReady ? item.downloads || [] : [];
@@ -5052,7 +5120,7 @@ function DetailModal({
         <StatusBar style="light" />
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.detailContent}>
           <View style={styles.detailHero}>
-            <Image source={{ uri: item.backdrop || item.poster }} style={StyleSheet.absoluteFill} contentFit="cover" />
+            <CatalogArtwork primary={item.backdrop} fallback={item.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="backdrop" />
             <LinearGradient colors={['rgba(7,9,12,0.06)', COLORS.background]} style={StyleSheet.absoluteFill} />
             <View style={styles.detailTopBar}>
               <Pressable onPress={onClose} unstable_pressDelay={0} hitSlop={14} style={styles.detailCircleButton}><Ionicons name="arrow-forward" color="#fff" size={21} /></Pressable>
@@ -5062,7 +5130,7 @@ function DetailModal({
               </View>
             </View>
             <View style={styles.detailIdentity}>
-              <Image source={{ uri: item.poster }} style={styles.detailPoster} contentFit="cover" />
+              <CatalogArtwork primary={item.poster} fallback={item.backdrop} style={styles.detailPoster} contentFit="cover" imageKind="poster" />
               <View style={styles.detailTitleBlock}>
                 <Text style={styles.detailType}>{mediaKindLabel(item)}</Text>
                 {itemHasOperatorAccess(item) ? <View style={styles.detailOperatorBadge}><Ionicons name="phone-portrait-outline" color={COLORS.gold} size={12} /><Text style={styles.detailOperatorBadgeText}>ویژه اینترنت همراه</Text></View> : null}
@@ -6508,7 +6576,7 @@ function AppContent() {
       // Paint Home from the bundled catalog first; network/cache refreshes must
       // never hold the branded startup screen for 15–25 seconds.
       // Keep the first Home interaction free of multi-megabyte catalog parsing.
-      initialRefreshTimer = setTimeout(reloadContentWhenIdle, 7000);
+      initialRefreshTimer = setTimeout(reloadContentWhenIdle, 650);
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
@@ -6548,7 +6616,7 @@ function AppContent() {
     });
     const catalogRefreshTimer = setInterval(() => {
       if (AppState.currentState === 'active') reloadContentWhenIdle();
-    }, 5 * 60 * 1000);
+    }, 30 * 60 * 1000);
 
     return () => {
       pendingIdleRefresh?.cancel();
@@ -6668,6 +6736,26 @@ function AppContent() {
   }, [content, pendingDeepLink]);
 
   useEffect(() => {
+    const summary = selectedItem;
+    if (!summary?.detailPath || summary.detailLoaded === true) return undefined;
+
+    let cancelled = false;
+    void loadCatalogItemDetail(summary)
+      .then((fullItem) => {
+        if (cancelled || !fullItem) return;
+        setSelectedItem((current) => {
+          if (!current) return current;
+          if (current.type !== summary.type || String(current.id) !== String(summary.id)) return current;
+          if (current.detailPath !== summary.detailPath) return current;
+          return fullItem;
+        });
+      })
+      .catch(() => undefined);
+
+    return () => { cancelled = true; };
+  }, [selectedItem?.detailLoaded, selectedItem?.detailPath, selectedItem?.id, selectedItem?.type]);
+
+  useEffect(() => {
     if (!selectedItem) return;
 
     const currentItem = content.items.find(
@@ -6682,6 +6770,14 @@ function AppContent() {
     }
 
     if (currentItem !== selectedItem) {
+      // Keep an already-hydrated detail object until the lightweight index says
+      // its content-addressed detailPath changed. Otherwise every background
+      // catalog refresh would downgrade the open screen back to a summary.
+      if (
+        selectedItem.detailLoaded === true &&
+        selectedItem.detailPath &&
+        selectedItem.detailPath === currentItem.detailPath
+      ) return;
       setSelectedItem(currentItem);
     }
   }, [content.items, selectedItem]);
@@ -7506,11 +7602,18 @@ function AppContent() {
         <VideoPlayerModal
           key={`${videoRequest.itemId || 'local'}:${videoRequest.episodeId || 'main'}:${videoRequest.language || 'default'}`}
           request={videoRequest}
-          item={content.items.find((item) => item.id === videoRequest.itemId) || null}
+          item={
+            selectedItem && selectedItem.id === videoRequest.itemId && selectedItem.detailLoaded === true
+              ? selectedItem
+              : content.items.find((item) => item.id === videoRequest.itemId) || null
+          }
           onClose={() => setVideoRequest(null)}
           onProgress={updateWatchProgress}
           onEpisodeSelect={(group, language) => {
-            const item = content.items.find((candidate) => candidate.id === videoRequest.itemId);
+            const item =
+              selectedItem && selectedItem.id === videoRequest.itemId && selectedItem.detailLoaded === true
+                ? selectedItem
+                : content.items.find((candidate) => candidate.id === videoRequest.itemId);
             if (item) void openStreamInsideApp(item, group, language);
           }}
         />
@@ -7808,7 +7911,7 @@ const styles = StyleSheet.create({
   collectionCurrentText: { ...rtlText, color: '#fff', fontSize: 7.5, fontWeight: '900', textAlign: 'center' },
   collectionYear: { position: 'absolute', right: 8, bottom: 7, color: '#fff', fontSize: 8.5, fontWeight: '900' },
   collectionMovieName: { ...rtlText, color: COLORS.text, fontSize: 10, lineHeight: 16, fontWeight: '800', marginTop: 7, minHeight: 31 },
-  horizontalCatalogList: { direction: 'ltr' },
+  horizontalCatalogList: { direction: 'rtl' },
   horizontalCatalog: { gap: 11, paddingHorizontal: 18, paddingTop: 14 },
   posterCard: { width: 137, alignItems: 'flex-end' },
   posterCardPressed: { opacity: 0.86, transform: [{ scale: 0.985 }] },

@@ -1,6 +1,11 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { CATALOG, VERIFIED_IRANIAN_SCHEDULE } from './data';
-import { REMOTE_CONTENT_MANIFEST_URL, REMOTE_CONTENT_URL } from './config';
+import {
+  REMOTE_CONTENT_DETAIL_BASE_URL,
+  REMOTE_CONTENT_INDEX_URL,
+  REMOTE_CONTENT_MANIFEST_URL,
+  REMOTE_CONTENT_URL,
+} from './config';
 import {
   CatalogItem,
   CatalogPerson,
@@ -32,10 +37,10 @@ const LOCAL_PAYLOAD: CatalogPayload = {
 };
 
 const REMOTE_CACHE_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}aparatchi-catalog-cache.json`
+  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v2-cache.json`
   : '';
 const REMOTE_CACHE_META_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}aparatchi-catalog-cache-meta.json`
+  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v2-cache-meta.json`
   : '';
 
 type RemoteCacheMetadata = {
@@ -48,14 +53,20 @@ type RemoteCacheMetadata = {
 
 type RemoteCatalogManifest = {
   revision: string;
+  clientRevision?: string;
   catalogVersion?: string;
   catalogUpdatedAt?: string;
   sizeBytes?: number;
+  clientSizeBytes?: number;
+  clientIndex?: string;
+  detailBase?: string;
 };
 
 let memoryContent: CatalogPayload | null = null;
 let cacheMetadataLoaded = false;
 let cacheMetadata: RemoteCacheMetadata = {};
+const detailMemoryCache = new Map<string, CatalogItem>();
+const detailRequestCache = new Map<string, Promise<CatalogItem | null>>();
 
 const DAY_IDS: DayId[] = [
   'saturday',
@@ -768,6 +779,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const item = value as Record<string, unknown>;
   const id = asString(item.id ?? item.t_id);
   const type = item.type === 'series' || item.type === 'movie' ? item.type : null;
+  const detailPath = asString(item.detailPath ?? item.detail_path);
   const nameFa = asString(item.nameFa ?? item.name_fa ?? item.name);
   const name = asString(item.name ?? item.nameFa ?? item.name_fa, nameFa);
   const posterFallback = resolveCatalogAsset(item.posterFallback ?? item.poster_fallback);
@@ -791,6 +803,139 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   }
 
   if (!id || !type || !nameFa) return null;
+
+  // catalog-index summaries are already normalized by the Content job. Keep
+  // their client-side path deliberately shallow: no download-tree walk, no
+  // people normalization and no episode reconstruction on the startup thread.
+  if (detailPath) {
+    const rawAccess = asString(item.access);
+    const access: CatalogItem['access'] = rawAccess === 'paid'
+      ? 'paid'
+      : rawAccess === 'operator'
+        ? 'operator'
+        : 'free';
+    const declaredOperatorAccess = asString(item.operatorAccess ?? item.operator_access);
+    const operatorAccess = ['stream', 'download', 'both'].includes(declaredOperatorAccess)
+      ? declaredOperatorAccess as OperatorAccessKind
+      : undefined;
+    const declaredLanguages = stringArray(item.availableLanguages)
+      .filter((language): language is MediaLanguage => language === 'dubbed' || language === 'subtitled');
+    const rawLatest = item.latestEpisode ?? item.latest_episode;
+    const latestEpisode = normalizeLatestEpisode(rawLatest, []);
+    const publicationValue = asString(item.publicationStatus ?? item.publication_status);
+    const categoryKeys = stringArray(item.categoryKeys);
+    const categoryLabels = stringArray(item.categoryLabels);
+    const rate = asNumber(item.rate, Number.NaN);
+    const collectionId = asString(item.collectionId ?? item.collection_id);
+    const collectionNameFa = asString(
+      item.collectionNameFa ?? item.collection_name_fa ?? item.collectionName ?? item.collection_name,
+    );
+    const collectionName = asString(
+      item.collectionName ?? item.collection_name ?? item.collectionNameFa ?? item.collection_name_fa,
+      collectionNameFa,
+    );
+    const collectionOrder = asNumber(
+      item.collectionOrder ?? item.collection_order ?? item.collectionPart ?? item.collection_part,
+      0,
+    );
+
+    return {
+      id,
+      slug: asString(item.slug, `${type}-${id}`),
+      type,
+      ir: iranian,
+      year: asNumber(item.year, new Date().getUTCFullYear()),
+      nameFa,
+      name,
+      ...(asString(item.imdb) ? { imdb: asString(item.imdb) } : {}),
+      ...(asNumber(item.imdbVotes ?? item.imdb_votes, 0) > 0
+        ? { imdbVotes: asNumber(item.imdbVotes ?? item.imdb_votes, 0) }
+        : {}),
+      ...(countryMetadata.countryCodes.length ? { countryCodes: countryMetadata.countryCodes } : {}),
+      ...(countryMetadata.countryLabels.length ? { countryLabels: countryMetadata.countryLabels } : {}),
+      ...(countryMetadata.countryNames.length ? { countryNames: countryMetadata.countryNames } : {}),
+      ...(originalLanguage ? { originalLanguage } : {}),
+      ...(collectionId ? { collectionId } : {}),
+      ...(collectionNameFa ? { collectionNameFa } : {}),
+      ...(collectionName ? { collectionName } : {}),
+      ...(collectionOrder > 0 ? { collectionOrder } : {}),
+      poster,
+      ...(posterFallback ? { posterFallback } : {}),
+      backdrop,
+      ...(backdropFallback ? { backdropFallback } : {}),
+      overview: asString(item.overview, 'توضیحی ثبت نشده است.'),
+      genres: stringArray(item.genres),
+      ...(Number.isFinite(rate) ? { rate } : {}),
+      access,
+      ...(asBoolean(item.operatorOnly ?? item.operator_only) ? { operatorOnly: true } : {}),
+      ...(operatorAccess ? { operatorAccess } : {}),
+      ...(stringArray(item.supportedOperators ?? item.supported_operators).length
+        ? { supportedOperators: stringArray(item.supportedOperators ?? item.supported_operators) }
+        : {}),
+      ...(declaredLanguages.length ? { availableLanguages: declaredLanguages } : {}),
+      ...(type === 'series'
+        ? {
+            episodeCount: asNumber(item.episodeCount ?? item.episode_count, 0),
+            seasonCount: asNumber(item.seasonCount ?? item.season_count, 0),
+            ...(latestEpisode ? { latestEpisode } : {}),
+            airDays: stringArray(item.airDays ?? item.air_days ?? item.scheduleDays ?? item.schedule_days)
+              .map(normalizeDayId)
+              .filter((day): day is DayId => Boolean(day)),
+            ...(asString(item.airTime ?? item.air_time ?? item.scheduleTime ?? item.schedule_time)
+              ? { airTime: asString(item.airTime ?? item.air_time ?? item.scheduleTime ?? item.schedule_time) }
+              : {}),
+            ...(asString(item.nextEpisodeAirDate ?? item.next_episode_air_date)
+              ? { nextEpisodeAirDate: asString(item.nextEpisodeAirDate ?? item.next_episode_air_date) }
+              : {}),
+            ...(asNumber(item.nextEpisodeSeasonNumber ?? item.next_episode_season_number, 0) > 0
+              ? { nextEpisodeSeasonNumber: asNumber(item.nextEpisodeSeasonNumber ?? item.next_episode_season_number, 0) }
+              : {}),
+            ...(asNumber(item.nextEpisodeNumber ?? item.next_episode_number, 0) > 0
+              ? { nextEpisodeNumber: asNumber(item.nextEpisodeNumber ?? item.next_episode_number, 0) }
+              : {}),
+            ...(item.isAiring !== undefined || item.is_airing !== undefined
+              ? { isAiring: asBoolean(item.isAiring ?? item.is_airing) }
+              : {}),
+            publicationStatus: publicationValue === 'published' || asBoolean(item.archiveComplete ?? item.archive_complete)
+              ? 'published' as const
+              : 'building-archive' as const,
+            ...(item.archiveComplete !== undefined || item.archive_complete !== undefined
+              ? { archiveComplete: asBoolean(item.archiveComplete ?? item.archive_complete) }
+              : {}),
+            ...(asNumber(item.archivePendingEpisodeCount ?? item.archive_pending_episode_count, -1) >= 0
+              ? { archivePendingEpisodeCount: asNumber(item.archivePendingEpisodeCount ?? item.archive_pending_episode_count, 0) }
+              : {}),
+            ...(asNumber(item.sourceEpisodeCount ?? item.source_episode_count, -1) >= 0
+              ? { sourceEpisodeCount: asNumber(item.sourceEpisodeCount ?? item.source_episode_count, 0) }
+              : {}),
+            ...(asString(item.archiveAuditStatus ?? item.archive_audit_status)
+              ? { archiveAuditStatus: asString(item.archiveAuditStatus ?? item.archive_audit_status) as 'pending' | 'checked' | 'blocked' }
+              : {}),
+            ...(item.archiveEpisodeDiscoveryComplete !== undefined || item.archive_episode_discovery_complete !== undefined
+              ? { archiveEpisodeDiscoveryComplete: asBoolean(item.archiveEpisodeDiscoveryComplete ?? item.archive_episode_discovery_complete) }
+              : {}),
+          }
+        : {}),
+      ...(asString(item.updateLabel) ? { updateLabel: asString(item.updateLabel) } : {}),
+      ...(asString(item.meaningfulUpdatedAt) ? { meaningfulUpdatedAt: asString(item.meaningfulUpdatedAt) } : {}),
+      categoryKeys,
+      categoryLabels,
+      ...(asString(item.contentKind) ? { contentKind: asString(item.contentKind) } : {}),
+      isAnimation: asBoolean(item.isAnimation),
+      isAnime: asBoolean(item.isAnime),
+      isTalkShow: asBoolean(item.isTalkShow),
+      isDocumentary: asBoolean(item.isDocumentary),
+      ...(asString(item.createdAt) ? { createdAt: asString(item.createdAt) } : {}),
+      ...(asString(item.updatedAt) ? { updatedAt: asString(item.updatedAt) } : {}),
+      ...(asString(item.sourceCreatedAt) ? { sourceCreatedAt: asString(item.sourceCreatedAt) } : {}),
+      ...(asString(item.sourceUpdatedAt) ? { sourceUpdatedAt: asString(item.sourceUpdatedAt) } : {}),
+      ...(asNumber(item.tmdbValidationVersion ?? item.tmdb_validation_version, 0) > 0
+        ? { tmdbValidationVersion: asNumber(item.tmdbValidationVersion ?? item.tmdb_validation_version, 0) }
+        : {}),
+      detailPath,
+      detailLoaded: false,
+    };
+  }
 
   const downloads = normalizeDownloads(item.downloads, iranian);
   const episodeSections = downloads.filter((section) => (section.episodeNumber || 0) > 0);
@@ -991,6 +1136,8 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     ...(asNumber(item.tmdbValidationVersion ?? item.tmdb_validation_version, 0) > 0
       ? { tmdbValidationVersion: asNumber(item.tmdbValidationVersion ?? item.tmdb_validation_version, 0) }
       : {}),
+    ...(detailPath ? { detailPath } : {}),
+    detailLoaded: detailPath ? asBoolean(item.detailLoaded ?? item.detail_loaded) : true,
   };
 };
 
@@ -1365,6 +1512,9 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
   if (!revision) throw new Error('Catalog manifest has no revision');
   return {
     revision,
+    ...(asString(record.clientRevision ?? record.client_revision)
+      ? { clientRevision: asString(record.clientRevision ?? record.client_revision) }
+      : {}),
     ...(asString(record.catalogVersion ?? record.version)
       ? { catalogVersion: asString(record.catalogVersion ?? record.version) }
       : {}),
@@ -1372,21 +1522,33 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
       ? { catalogUpdatedAt: asString(record.catalogUpdatedAt ?? record.updatedAt) }
       : {}),
     ...(asNumber(record.sizeBytes, 0) > 0 ? { sizeBytes: asNumber(record.sizeBytes, 0) } : {}),
+    ...(asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) > 0
+      ? { clientSizeBytes: asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) }
+      : {}),
+    ...(asString(record.clientIndex ?? record.client_index)
+      ? { clientIndex: asString(record.clientIndex ?? record.client_index) }
+      : {}),
+    ...(asString(record.detailBase ?? record.detail_base)
+      ? { detailBase: asString(record.detailBase ?? record.detail_base) }
+      : {}),
   };
 };
 
 const manifestMatchesCachedContent = (
   manifest: RemoteCatalogManifest,
   cached: CatalogPayload,
-) => Boolean(
-  (cacheMetadata.manifestRevision && cacheMetadata.manifestRevision === manifest.revision) ||
-  (
-    manifest.catalogVersion &&
-    manifest.catalogUpdatedAt &&
-    cached.version === manifest.catalogVersion &&
-    cached.updatedAt === manifest.catalogUpdatedAt
-  )
-);
+) => {
+  const revision = manifest.clientRevision || manifest.revision;
+  return Boolean(
+    (cacheMetadata.manifestRevision && cacheMetadata.manifestRevision === revision) ||
+    (
+      manifest.catalogVersion &&
+      manifest.catalogUpdatedAt &&
+      cached.version === manifest.catalogVersion &&
+      cached.updatedAt === manifest.catalogUpdatedAt
+    )
+  );
+};
 
 const writeCachedContent = async (
   rawPayload: string,
@@ -1404,7 +1566,7 @@ const writeCachedContent = async (
 };
 
 export async function loadContent(preferCache = false): Promise<LoadedContent> {
-  const remoteUrl = REMOTE_CONTENT_URL.trim();
+  const remoteUrl = (REMOTE_CONTENT_INDEX_URL || REMOTE_CONTENT_URL).trim();
   if (!remoteUrl) {
     return {
       ...normalizedLocalPayload(),
@@ -1431,7 +1593,7 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     if (manifest && cached && manifestMatchesCachedContent(manifest, cached)) {
       cacheMetadata = {
         ...cacheMetadata,
-        manifestRevision: manifest.revision,
+        manifestRevision: manifest.clientRevision || manifest.revision,
         ...(manifest.catalogVersion ? { catalogVersion: manifest.catalogVersion } : {}),
         ...(manifest.catalogUpdatedAt ? { catalogUpdatedAt: manifest.catalogUpdatedAt } : {}),
       };
@@ -1455,8 +1617,9 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     if (cacheMetadata.lastModified) {
       requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
     }
-    const catalogRequestUrl = manifest?.revision
-      ? `${remoteUrl}${remoteUrl.includes('?') ? '&' : '?'}revision=${encodeURIComponent(manifest.revision.slice(0, 24))}`
+    const catalogRevision = manifest?.clientRevision || manifest?.revision || '';
+    const catalogRequestUrl = catalogRevision
+      ? `${remoteUrl}${remoteUrl.includes('?') ? '&' : '?'}revision=${encodeURIComponent(catalogRevision.slice(0, 24))}`
       : remoteUrl;
     const response = await fetch(catalogRequestUrl, {
       headers: {
@@ -1492,7 +1655,7 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     cacheMetadata = {
       ...(responseEtag ? { etag: responseEtag } : {}),
       ...(responseLastModified ? { lastModified: responseLastModified } : {}),
-      ...(manifest?.revision ? { manifestRevision: manifest.revision } : {}),
+      ...(manifest?.revision ? { manifestRevision: manifest.clientRevision || manifest.revision } : {}),
       ...(manifest?.catalogVersion ? { catalogVersion: manifest.catalogVersion } : {}),
       ...(manifest?.catalogUpdatedAt ? { catalogUpdatedAt: manifest.catalogUpdatedAt } : {}),
     };
@@ -1506,3 +1669,79 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     };
   }
 }
+
+const detailCacheUriFor = (detailPath: string) => {
+  if (!FileSystem.documentDirectory) return '';
+  const key = detailPath.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-120);
+  return `${FileSystem.documentDirectory}aparatchi-detail-${key}`;
+};
+
+const detailUrlFor = (detailPath: string) => {
+  const raw = asString(detailPath).replace(/^\/+/, '');
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  try {
+    return new URL(raw, REMOTE_CONTENT_DETAIL_BASE_URL).toString();
+  } catch {
+    return `${REMOTE_CONTENT_DETAIL_BASE_URL.replace(/\/+$/, '')}/${raw}`;
+  }
+};
+
+export async function loadCatalogItemDetail(summary: CatalogItem): Promise<CatalogItem | null> {
+  const detailPath = asString(summary?.detailPath);
+  if (!detailPath || summary.detailLoaded) return { ...summary, detailLoaded: true };
+
+  const memoryKey = `${summary.type}:${summary.id}:${detailPath}`;
+  const memory = detailMemoryCache.get(memoryKey);
+  if (memory) return memory;
+  const pending = detailRequestCache.get(memoryKey);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const cacheUri = detailCacheUriFor(detailPath);
+    const parseDetail = (value: unknown) => {
+      const normalized = normalizeCatalogItem(value);
+      if (!normalized || normalized.id !== summary.id || normalized.type !== summary.type) return null;
+      return { ...normalized, detailPath, detailLoaded: true } as CatalogItem;
+    };
+
+    if (cacheUri) {
+      try {
+        const info = await FileSystem.getInfoAsync(cacheUri);
+        if (info.exists) {
+          const cached = parseDetail(JSON.parse(await FileSystem.readAsStringAsync(cacheUri)));
+          if (cached) {
+            detailMemoryCache.set(memoryKey, cached);
+            return cached;
+          }
+        }
+      } catch {
+        // Broken one-item cache: fetch a clean copy below.
+      }
+    }
+
+    const url = detailUrlFor(detailPath);
+    if (!url) return null;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8_000);
+      const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(detailPath)}`, {
+        headers: { Accept: 'application/json', 'Cache-Control': 'public, max-age=31536000, immutable' },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeout));
+      if (!response.ok) return null;
+      const raw = await response.text();
+      const parsed = parseDetail(JSON.parse(raw));
+      if (!parsed) return null;
+      detailMemoryCache.set(memoryKey, parsed);
+      if (cacheUri) void FileSystem.writeAsStringAsync(cacheUri, raw).catch(() => undefined);
+      return parsed;
+    } catch {
+      return null;
+    }
+  })().finally(() => detailRequestCache.delete(memoryKey));
+
+  detailRequestCache.set(memoryKey, request);
+  return request;
+}
+
