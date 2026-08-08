@@ -94,6 +94,7 @@ type SearchFilter =
   | 'kids'
   | 'religious'
   | 'documentaries'
+  | 'wildlife'
   | 'collections'
   | 'mobile-operator'
   | CountrySearchFilter
@@ -858,7 +859,10 @@ const hasSpecificCountry = (item: CatalogItem, code: string, originalLanguage: s
   const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
   const language = String(item.originalLanguage || '').toLowerCase();
   if (language === originalLanguage) return true;
-  return countryCodes.includes(code);
+  // A co-production should not enter a country shelf only because that country
+  // appears somewhere in the production list. The primary country (first
+  // normalized country) is the fallback when original language is inconclusive.
+  return countryCodes[0] === code;
 };
 
 const isKoreanItem = (item: CatalogItem) =>
@@ -877,7 +881,19 @@ const looksLikeAnimeTitle = (item: CatalogItem) => {
   return hasJapaneseScript || knownAnimeFranchise;
 };
 
+const hasForcedLiveActionIdentity = (item: CatalogItem) => {
+  const title = normalizeComparableText([item.nameFa, item.name].join(' '));
+  return [
+    'عشق احتمالی', 'muhtemel ask', 'muhtemel aşk',
+    'خاله نسرین', 'aunt nasrin', 'ترانه های کودکانه خاله نسرین',
+  ].some((term) => title.includes(normalizeComparableText(term)));
+};
+
 const isAnimeItem = (item: CatalogItem) => {
+  if (hasForcedLiveActionIdentity(item)) return false;
+  if (Number(item.tmdbValidationVersion || 0) >= 3) {
+    return item.isAnimation === true && item.isAnime === true;
+  }
   const animated = Boolean(
     item.isAnimation ||
     item.genres.some((genre) => /انیمیشن|animation|anime/i.test(genre)) ||
@@ -901,14 +917,18 @@ const isAnimeItem = (item: CatalogItem) => {
   );
 };
 
-const isAnimatedItem = (item: CatalogItem) => Boolean(
-  item.isAnimation ||
-  isAnimeItem(item) ||
-  item.contentKind === 'animation-movie' ||
-  item.contentKind === 'animation-series' ||
-  hasCategory(item, 'animation-movies') ||
-  hasCategory(item, 'animation-series')
-);
+const isAnimatedItem = (item: CatalogItem) => {
+  if (hasForcedLiveActionIdentity(item)) return false;
+  if (Number(item.tmdbValidationVersion || 0) >= 3) return item.isAnimation === true;
+  return Boolean(
+    item.isAnimation ||
+    isAnimeItem(item) ||
+    item.contentKind === 'animation-movie' ||
+    item.contentKind === 'animation-series' ||
+    hasCategory(item, 'animation-movies') ||
+    hasCategory(item, 'animation-series')
+  );
+};
 
 const isAnimationItem = (item: CatalogItem) => isAnimatedItem(item) && !isAnimeItem(item);
 
@@ -1102,6 +1122,7 @@ const isDocumentaryItem = (item: CatalogItem) => {
   const knownNarrativeWhistle = hasStandaloneTerm(title, ['سوت', 'whistle']) &&
     hasStandaloneTerm(genres, ['ترسناک', 'وحشت', 'هیجان انگیز', 'horror', 'thriller', 'drama']);
   if (knownNarrativeWhistle) return false;
+  if (Number(item.tmdbValidationVersion || 0) >= 3) return item.isDocumentary === true;
   const genreConfirmed = item.genres.some((genre) => /مستند|documentary/i.test(genre));
   if (genreConfirmed) return true;
 
@@ -1111,6 +1132,16 @@ const isDocumentaryItem = (item: CatalogItem) => {
     item.isDocumentary === true ||
     hasCategory(item, 'documentaries');
   return Boolean(hasCurrentExplicitMetadata && item.genres.length === 0);
+};
+
+const isWildlifeDocumentaryItem = (item: CatalogItem) => {
+  if (!isDocumentaryItem(item)) return false;
+  if (hasCategory(item, 'wildlife')) return true;
+  const text = `${catalogTitleText(item)} ${catalogGenreText(item)} ${catalogMetadataText(item)}`;
+  return hasStandaloneTerm(text, [
+    'حیات وحش', 'طبیعت', 'جانوران', 'حیوانات', 'اقیانوس', 'زیست بوم',
+    'wildlife', 'nature', 'animals', 'animal', 'natural history', 'ocean', 'planet earth',
+  ]);
 };
 
 const meaningfulUpdateLabel = (item: CatalogItem) => {
@@ -1136,7 +1167,7 @@ const filterTitle = (filter: SearchFilter) => {
     'korean-movies': 'فیلم‌های کره‌ای', 'korean-series': 'سریال‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی',
     'anime-movies': 'انیمه‌های سینمایی', 'anime-series': 'انیمه‌های سریالی',
     'animation-movies': 'انیمیشن‌های سینمایی', 'animation-series': 'انیمیشن‌های سریالی',
-    programs: 'برنامه‌ها و مسابقه‌ها', kids: 'کودکان', religious: 'مذهبی و مناسبتی', documentaries: 'مستندها', collections: 'کالکشن‌ها',
+    programs: 'برنامه‌ها و مسابقه‌ها', kids: 'کودکان', religious: 'مذهبی و مناسبتی', documentaries: 'مستندها', wildlife: 'حیات وحش', collections: 'کالکشن‌ها',
     'mobile-operator': 'ویژه اینترنت همراه',
   };
   return titles[filter] || 'همه محتوا';
@@ -1173,6 +1204,7 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'kids': return isKidsItem(item);
     case 'religious': return isReligiousItem(item);
     case 'documentaries': return isDocumentaryItem(item);
+    case 'wildlife': return isWildlifeDocumentaryItem(item);
     case 'collections': return item.type === 'movie' && Boolean(item.collectionId);
     case 'mobile-operator': return itemHasOperatorAccess(item);
     default: return true;
@@ -1192,11 +1224,19 @@ const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
 
 
 const catalogFilterCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem[]>>();
+const catalogListScrollOffsets = new Map<string, number>();
+const detailScrollOffsets = new Map<string, number>();
 const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
   'korean-movies', 'korean-series', 'indian-movies',
   'anime-movies', 'anime-series', 'animation-movies', 'animation-series',
-  'programs', 'kids', 'religious', 'documentaries',
+  'programs', 'kids', 'religious', 'documentaries', 'wildlife',
+]);
+const STRICT_DYNAMIC_CATEGORY_FILTERS = new Set<SearchFilter>([
+  'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
+  'korean-movies', 'korean-series', 'indian-movies',
+  'anime-movies', 'anime-series', 'animation-movies', 'animation-series',
+  'programs', 'kids', 'religious', 'documentaries', 'wildlife', 'collections',
 ]);
 
 const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
@@ -1204,7 +1244,7 @@ const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
   if (filter === 'movie' || filter === 'series') return item.type === filter;
   if (filter === 'updated') return item.type === 'series' && Boolean(meaningfulUpdateLabel(item));
   if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
-  if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length) {
+  if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length && !STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)) {
     return (item.categoryKeys || []).includes(filter);
   }
   return matchesCatalogFilter(item, filter);
@@ -2134,6 +2174,7 @@ const PosterCard = memo(function PosterCard({
 }) {
   const posterBadges = itemPosterBadges(item);
   const latestEpisode = item.type === 'series' ? newestEpisodeGroup(item) : null;
+  const latestEpisodeMeta = latestEpisode || item.latestEpisode || null;
 
   return (
     <Pressable onPressIn={() => { if (item.detailPath) void loadCatalogItemDetail(item); }} onPress={onOpen} unstable_pressDelay={0} hitSlop={7} style={({ pressed }) => [styles.posterCard, { width }, pressed && styles.posterCardPressed]}>
@@ -2169,10 +2210,12 @@ const PosterCard = memo(function PosterCard({
             ))}
           </View>
         ) : null}
-        {latestEpisode ? (
+        {item.type === 'series' && (latestEpisodeMeta || Number(item.episodeCount || 0) > 0) ? (
           <View style={styles.posterEpisodeBadge}>
             <Text style={styles.posterEpisodeText}>
-              قسمت {toPersianDigits(latestEpisode.episodeNumber || 0)}
+              {Number(item.seasonCount || 0) > 1 && latestEpisodeMeta
+                ? `فصل ${toPersianDigits(latestEpisodeMeta.seasonNumber || item.seasonCount || 1)} - قسمت ${toPersianDigits(latestEpisodeMeta.episodeNumber || 0)}`
+                : `${toPersianDigits(item.episodeCount || latestEpisodeMeta?.episodeNumber || 0)} قسمت`}
             </Text>
           </View>
         ) : null}
@@ -2374,12 +2417,11 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-      initialNumToRender={3}
-      maxToRenderPerBatch={2}
-      updateCellsBatchingPeriod={70}
-      windowSize={3}
+      initialNumToRender={6}
+      maxToRenderPerBatch={6}
+      updateCellsBatchingPeriod={35}
+      windowSize={5}
       removeClippedSubviews={false}
-      getItemLayout={(_, index) => ({ length: 148, offset: 148 * index, index })}
       nestedScrollEnabled
       keyboardShouldPersistTaps="always"
     />
@@ -2495,6 +2537,7 @@ function HomeStarsSectionBase({
   }, [catalog, catalogById, people]);
   const [selectedId, setSelectedId] = useState('');
   const peopleRailRef = useRef<FlatList<FeaturedPerson>>(null);
+  const worksRailRef = useRef<FlatList<CatalogItem>>(null);
 
   useEffect(() => {
     if (!resolvedPeople.length) return;
@@ -2521,6 +2564,14 @@ function HomeStarsSectionBase({
   const selectPerson = useCallback((personId: string) => {
     setSelectedId((current) => current === personId ? current : personId);
   }, []);
+
+  useEffect(() => {
+    if (!selectedIdForRender) return;
+    const frame = requestAnimationFrame(() => {
+      worksRailRef.current?.scrollToOffset({ offset: 0, animated: false });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedIdForRender]);
   const renderStarPerson = useCallback(({ item: person }: { item: FeaturedPerson }) => (
     <StarPersonButton
       person={person}
@@ -2557,7 +2608,6 @@ function HomeStarsSectionBase({
       <FlatList
         ref={peopleRailRef}
         horizontal
-        inverted
         style={styles.starPeopleRail}
         data={resolvedPeople}
         keyExtractor={(person) => person.tmdbId ? `tmdb:${person.tmdbId}` : person.id}
@@ -2589,19 +2639,18 @@ function HomeStarsSectionBase({
         </View>
 
         <FlatList
+          ref={worksRailRef}
           horizontal
-          inverted
           style={styles.starWorksRail}
           data={works}
           keyExtractor={(item) => item.id}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.starWorksList}
-          initialNumToRender={2}
-          maxToRenderPerBatch={2}
-          updateCellsBatchingPeriod={48}
-          windowSize={3}
-          removeClippedSubviews
-          getItemLayout={(_, index) => ({ length: 113, offset: 113 * index, index })}
+          initialNumToRender={6}
+          maxToRenderPerBatch={6}
+          updateCellsBatchingPeriod={35}
+          windowSize={5}
+          removeClippedSubviews={false}
           nestedScrollEnabled
           renderItem={renderStarWork}
         />
@@ -2766,12 +2815,9 @@ function ImdbTop100Section({
       );
       return;
     }
-    if (closeFull) {
-      setFullVisible(false);
-      requestAnimationFrame(() => onOpen(item));
-    } else {
-      onOpen(item);
-    }
+    // Keep the full ranking mounted underneath the detail modal so Back returns
+    // to the exact same IMDb tab and scroll position.
+    onOpen(item);
   }, [byId, byImdb, onOpen]);
 
   const rankingReady = Boolean(ranking?.movies?.length || ranking?.series?.length);
@@ -3183,6 +3229,7 @@ const CATEGORY_CARDS: CategoryCardConfig[] = [
   { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها', subtitle: 'مسابقه، رئالیتی و گفت‌وگو', icon: 'mic-outline' },
   { filter: 'religious', title: 'مذهبی و مناسبتی', subtitle: 'آثار مذهبی، قرآنی و مناسبتی', icon: 'book-outline' },
   { filter: 'documentaries', title: 'مستندها', subtitle: 'آثار مستند', icon: 'camera-outline' },
+  { filter: 'wildlife', title: 'حیات وحش', subtitle: 'مستندهای طبیعت و حیات وحش', icon: 'leaf-outline' },
 ];
 
 
@@ -3228,6 +3275,7 @@ const relatedCategoryFilters = (filter: SearchFilter): SearchFilter[] => {
     'indian-movies': ['foreign-movies', 'movie'],
     collections: ['movie', 'series'],
     documentaries: ['movie', 'series'],
+    wildlife: ['documentaries', 'movie'],
     programs: ['series', 'foreign-series'],
     kids: ['animation-series', 'series'],
     religious: ['series', 'iranian-series'],
@@ -3466,6 +3514,9 @@ function CatalogListScreen({
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(normalizeComparableText(query));
   const { width: screenWidth } = useWindowDimensions();
+  const listRef = useRef<FlatList<CatalogItem>>(null);
+  const scrollKey = String(initialFilter);
+  const initialOffset = catalogListScrollOffsets.get(scrollKey) || 0;
 
   // Filter results are cached per catalog. Waiting for InteractionManager here
   // made a normal tap feel ignored whenever an image list or slider animation
@@ -3513,8 +3564,10 @@ function CatalogListScreen({
 
   return (
     <FlatList
+      ref={listRef}
       key={`${initialFilter}-${columnCount}`}
       style={styles.screen}
+      contentOffset={{ x: 0, y: initialOffset }}
       contentContainerStyle={styles.catalogListContent}
       keyboardShouldPersistTaps="handled"
       data={results}
@@ -3540,6 +3593,8 @@ function CatalogListScreen({
       updateCellsBatchingPeriod={48}
       removeClippedSubviews
       showsVerticalScrollIndicator={false}
+      onScrollEndDrag={(event) => catalogListScrollOffsets.set(scrollKey, Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
+      onMomentumScrollEnd={(event) => catalogListScrollOffsets.set(scrollKey, Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
     />
   );
 }
@@ -4816,15 +4871,30 @@ function SeriesEpisodeList({
   );
 }
 
-const episodeShowcaseLabel = (group: DownloadSection, quran: boolean) => {
+const episodeShowcaseLabel = (item: CatalogItem, group: DownloadSection, quran: boolean) => {
   const noun = quran ? 'جزء' : 'قسمت';
-  const number = toPersianDigits(group.episodeNumber || 0);
-  const raw = cleanMediaLabel(group.subtitle);
+  const episodeNumber = Number(group.episodeNumber || 0);
+  const number = toPersianDigits(episodeNumber);
+  const raw = cleanMediaLabel(group.subtitle || '').trim();
+  if (!raw) return `${noun} ${number}`;
+
   const normalized = normalizeComparableText(raw);
-  const generic = !raw ||
-    normalized === normalizeComparableText(`${noun} ${group.episodeNumber || 0}`) ||
-    /^(?:فصل|season)\s*\d+.*(?:قسمت|episode|ep)\s*\d+$/i.test(normalized);
-  return generic ? `${noun} ${number}` : `${noun} ${number} - ${raw}`;
+  const seriesNames = [item.nameFa, item.name]
+    .map((value) => normalizeComparableText(String(value || '')))
+    .filter(Boolean);
+  const ordinal = '(?:اول|دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم|دهم|یازدهم|دوازدهم|سیزدهم|چهاردهم|پانزدهم|شانزدهم|هفدهم|هجدهم|نوزدهم|بیستم|\\d+)';
+  const purePersianEpisode = new RegExp(`^(?:قسمت|اپیزود)\\s*${ordinal}$`, 'i').test(normalized);
+  const genericEnglishEpisode = /(?:^|\s)(?:episode|ep|part)\s*\d+\s*$/i.test(normalized);
+  const seasonEpisodeBoilerplate = /^(?:season|فصل)\s*\d+.*(?:episode|ep|قسمت|اپیزود)\s*\d+\s*$/i.test(normalized);
+  const seriesNameBoilerplate = seriesNames.some((name) => {
+    if (!name || !normalized.startsWith(name)) return false;
+    const suffix = normalized.slice(name.length).trim();
+    return new RegExp(`^(?:(?:قسمت|اپیزود)\\s*${ordinal}|(?:episode|ep|part)\\s*\\d+)$`, 'i').test(suffix);
+  });
+
+  return purePersianEpisode || genericEnglishEpisode || seasonEpisodeBoilerplate || seriesNameBoilerplate
+    ? `${noun} ${number}`
+    : `${noun} ${number} - ${raw}`;
 };
 
 function SeriesEpisodeShowcase({
@@ -4896,7 +4966,7 @@ function SeriesEpisodeShowcase({
                   <Ionicons name={canPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
                 </View>
                 <Text numberOfLines={2} style={styles.episodeShowcaseNumber}>
-                  {episodeShowcaseLabel(group, quran)}
+                  {episodeShowcaseLabel(item, group, quran)}
                 </Text>
               </Pressable>
               <Pressable onPress={() => onOpenDownloads(group)} style={styles.episodeShowcaseDownloadButton}>
@@ -5118,7 +5188,14 @@ function DetailModal({
     <Modal visible={visible} animationType="fade" hardwareAccelerated statusBarTranslucent={false} onRequestClose={() => downloadSheetOpen ? setDownloadSheetOpen(false) : onClose()}>
       <SafeAreaView style={styles.detailScreen} edges={['top','right','bottom','left']}>
         <StatusBar style="light" />
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.detailContent}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.detailContent}
+          contentOffset={{ x: 0, y: detailScrollOffsets.get(String(item.id)) || 0 }}
+          scrollEventThrottle={48}
+          onScrollEndDrag={(event) => detailScrollOffsets.set(String(item.id), Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
+          onMomentumScrollEnd={(event) => detailScrollOffsets.set(String(item.id), Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
+        >
           <View style={styles.detailHero}>
             <CatalogArtwork primary={item.backdrop} fallback={item.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="backdrop" />
             <LinearGradient colors={['rgba(7,9,12,0.06)', COLORS.background]} style={StyleSheet.absoluteFill} />
@@ -6401,6 +6478,8 @@ function AppContent() {
   const [vpnChecking, setVpnChecking] = useState(false);
   const [searchReturnTab, setSearchReturnTab] = useState<MainTab>('home');
   const [searchReturnItem, setSearchReturnItem] = useState<CatalogItem | null>(null);
+  const [downloadsReturnItem, setDownloadsReturnItem] = useState<CatalogItem | null>(null);
+  const [downloadsReturnTab, setDownloadsReturnTab] = useState<MainTab>('home');
   const homeScrollOffsetRef = useRef(0);
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
@@ -6419,6 +6498,8 @@ function AppContent() {
     searchReturnTab,
     selectedItem,
     selectedPerson,
+    downloadsReturnItem,
+    downloadsReturnTab,
     videoRequest,
     vpnActive,
     vpnWarningVisible,
@@ -6435,6 +6516,8 @@ function AppContent() {
     searchReturnTab,
     selectedItem,
     selectedPerson,
+    downloadsReturnItem,
+    downloadsReturnTab,
     videoRequest,
     vpnActive,
     vpnWarningVisible,
@@ -6641,6 +6724,14 @@ function AppContent() {
       if (state.selectedPerson) { setSelectedPerson(null); return true; }
       if (state.videoRequest) { setVideoRequest(null); return true; }
       if (state.selectedItem) { setSelectedItem(null); return true; }
+
+      if (state.activeTab === 'downloads' && state.downloadsReturnItem) {
+        navigateToTab(state.downloadsReturnTab || 'home');
+        setSelectedItem(state.downloadsReturnItem);
+        setDownloadsReturnItem(null);
+        setDownloadsReturnTab('home');
+        return true;
+      }
 
       if (state.activeTab === 'search') {
         const destination = state.searchReturnTab === 'search' ? 'home' : state.searchReturnTab;
@@ -7037,6 +7128,10 @@ function AppContent() {
     setMenuOpen(false);
     setSearchReturnItem(null);
     setSearchReturnTab('home');
+    // Only the automatic jump that happens when a download starts keeps a
+    // return target. A deliberate bottom-tab tap starts a fresh navigation path.
+    setDownloadsReturnItem(null);
+    setDownloadsReturnTab('home');
     navigateToTab(tab);
   }, [navigateToTab]);
 
@@ -7310,6 +7405,8 @@ function AppContent() {
       return;
     }
     if (existing && (existing.status === 'paused' || existing.status === 'failed')) {
+      setDownloadsReturnItem(item);
+      setDownloadsReturnTab(activeTabRef.current === 'downloads' ? 'home' : activeTabRef.current);
       navigateToTab('downloads');
       setSelectedItem(null);
       void executeDownload(existing);
@@ -7336,6 +7433,8 @@ function AppContent() {
     };
 
     setDownloads((current) => [pending, ...current.filter((record) => record.id !== recordId)]);
+    setDownloadsReturnItem(item);
+    setDownloadsReturnTab(activeTabRef.current === 'downloads' ? 'home' : activeTabRef.current);
     navigateToTab('downloads');
     setSelectedItem(null);
     void executeDownload(pending);
@@ -7767,7 +7866,7 @@ const styles = StyleSheet.create({
   starMiniFacts: { width: '100%', marginTop: 5, gap: 2 },
   starMiniFactText: { width: '100%', color: '#D4D7DD', fontSize: 7.3, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
   starMiniLocation: { width: '100%', color: COLORS.gold, fontSize: 7.1, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
-  starPeopleRail: { height: 82, flexGrow: 0, marginTop: 10, minWidth: 0 },
+  starPeopleRail: { height: 82, flexGrow: 0, marginTop: 10, minWidth: 0, direction: 'rtl' },
   starsPeopleList: { gap: 8, paddingLeft: 14, paddingRight: 14, paddingVertical: 3 },
   starPersonCard: { width: 58, alignItems: 'center' },
   starPersonAvatarWrap: { width: 53, height: 53, borderRadius: 27, padding: 1.5, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1.2, borderColor: 'rgba(255,255,255,0.12)' },
@@ -7775,7 +7874,7 @@ const styles = StyleSheet.create({
   starPersonAvatar: { width: '100%', height: '100%', borderRadius: 25 },
   starPersonName: { width: '100%', minHeight: 21, color: COLORS.muted, fontSize: 7.1, lineHeight: 10, fontWeight: '800', textAlign: 'center', marginTop: 5, writingDirection: 'ltr' },
   starPersonNameActive: { color: COLORS.text },
-  starWorksRail: { flex: 1, height: 184, minWidth: 0 },
+  starWorksRail: { flex: 1, height: 184, minWidth: 0, direction: 'rtl' },
   starWorksList: { flexDirection: 'row-reverse', gap: 9, paddingHorizontal: 1, paddingTop: 0, paddingBottom: 1 },
   starWorkCard: { width: 104 },
   starWorkPoster: { width: 104, height: 142, borderRadius: 13, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
@@ -7911,7 +8010,7 @@ const styles = StyleSheet.create({
   collectionCurrentText: { ...rtlText, color: '#fff', fontSize: 7.5, fontWeight: '900', textAlign: 'center' },
   collectionYear: { position: 'absolute', right: 8, bottom: 7, color: '#fff', fontSize: 8.5, fontWeight: '900' },
   collectionMovieName: { ...rtlText, color: COLORS.text, fontSize: 10, lineHeight: 16, fontWeight: '800', marginTop: 7, minHeight: 31 },
-  horizontalCatalogList: { direction: 'rtl' },
+  horizontalCatalogList: { flexGrow: 0, direction: 'rtl' },
   horizontalCatalog: { gap: 11, paddingHorizontal: 18, paddingTop: 14 },
   posterCard: { width: 137, alignItems: 'flex-end' },
   posterCardPressed: { opacity: 0.86, transform: [{ scale: 0.985 }] },
@@ -8042,17 +8141,17 @@ const styles = StyleSheet.create({
   episodeShowcaseSeasonText: { color: COLORS.muted, fontSize: 8.5, fontWeight: '900' },
   episodeShowcaseSeasonTextActive: { color: COLORS.gold },
   episodeShowcaseRail: { gap: 10, paddingTop: 13, paddingBottom: 5 },
-  episodeShowcaseCard: { width: '100%', height: 150, borderRadius: 16, overflow: 'hidden', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  episodeShowcaseArtworkWrap: { width: '100%', height: 150, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
+  episodeShowcaseCard: { width: '100%', minHeight: 132, borderRadius: 16, overflow: 'hidden', flexDirection: 'row-reverse', alignItems: 'stretch', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  episodeShowcaseArtworkWrap: { flex: 1, aspectRatio: 16 / 9, minHeight: 132, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
   episodeShowcaseArtwork: { width: '100%', height: '100%' },
   episodeShowcaseArtworkShade: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(3,5,8,0.46)' },
   episodeShowcaseArtworkForeground: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   episodeShowcasePlay: { position: 'absolute', left: '50%', top: '50%', width: 42, height: 42, marginLeft: -21, marginTop: -21, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)' },
-  episodeShowcaseNumber: { ...rtlText, position: 'absolute', right: 12, left: 64, bottom: 11, color: '#fff', fontSize: 11.5, lineHeight: 19, fontWeight: '900', textShadowColor: '#000', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
+  episodeShowcaseNumber: { ...rtlText, position: 'absolute', right: 12, left: 12, bottom: 11, color: '#fff', fontSize: 11.5, lineHeight: 19, fontWeight: '900', textShadowColor: '#000', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   episodeShowcaseCardFooter: { display: 'none' },
   episodeShowcaseCardText: { display: 'none' },
   episodeShowcaseCardTitle: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 9.5, lineHeight: 16, fontWeight: '900' },
-  episodeShowcaseDownloadButton: { position: 'absolute', left: 12, bottom: 11, zIndex: 4, width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(8,10,14,0.82)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.45)' },
+  episodeShowcaseDownloadButton: { width: 54, minHeight: 132, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(8,10,14,0.96)', borderLeftWidth: 1, borderLeftColor: 'rgba(216,180,90,0.28)' },
   seasonSelectorWrap: { gap: 9, paddingBottom: 2 },
   seasonSelectorHeader: { minHeight: 28, paddingHorizontal: 4, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   seasonSelectorTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900' },
