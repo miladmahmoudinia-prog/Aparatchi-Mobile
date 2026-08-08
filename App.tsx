@@ -147,21 +147,26 @@ const optimizedImageUrl = (
   _kind: 'poster' | 'backdrop' | 'person' = 'poster',
 ) => String(value || '').trim().replace(/^http:\/\//i, 'https://');
 
-const shouldProxyCatalogImage = (value?: string) =>
-  /^(?:https?:)?\/\/(?:image\.tmdb\.org|thumb\.upera\.tv)\//i.test(String(value || '').trim());
 
 const personImageCandidates = (value?: string) => {
   const image = optimizedImageUrl(value, 'person');
   if (!image) return [];
 
   const candidates: string[] = [];
-  if (shouldProxyCatalogImage(image)) {
-    const sourceWithoutProtocol = image.replace(/^https?:\/\//i, '');
-    candidates.push(
-      `https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=500&output=webp`,
-    );
+  const sourceWithoutProtocol = image.replace(/^https?:\/\//i, '');
+  const isTmdb = /^https?:\/\/image\.tmdb\.org\//i.test(image);
+  const isUpera = /^https?:\/\/thumb\.upera\.tv\//i.test(image);
+
+  if (isTmdb) {
+    candidates.push(image.replace(/\/t\/p\/(?:original|w\d+)\//i, '/t/p/w185/'));
+    candidates.push(`https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=190&output=webp`);
+    candidates.push(image);
+  } else if (isUpera) {
+    candidates.push(image);
+    candidates.push(`https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=190&output=webp`);
+  } else {
+    candidates.push(image);
   }
-  candidates.push(image);
   return [...new Set(candidates)];
 };
 
@@ -174,18 +179,20 @@ const catalogArtworkCandidates = (
 
   const candidates: string[] = [];
   const sourceWithoutProtocol = image.replace(/^https?:\/\//i, '');
-  const proxied = `https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=${kind === 'poster' ? 420 : 900}&output=webp`;
+  const targetWidth = kind === 'poster' ? 320 : 640;
+  const proxied = `https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=${targetWidth}&output=webp`;
   const isUperaArtwork = /^https?:\/\/thumb\.upera\.tv\//i.test(image);
   const isTmdbArtwork = /^https?:\/\/image\.tmdb\.org\//i.test(image);
 
-  // Upera thumbnails are already purpose-built for cards and are usually the
-  // fastest source. Try them directly first; the proxy is only a fallback for
-  // networks where that host is blocked. TMDB originals can be larger, so its
-  // lightweight WebP proxy remains the preferred candidate.
   if (isUperaArtwork) {
     candidates.push(image, proxied);
   } else if (isTmdbArtwork) {
-    candidates.push(proxied, image);
+    const tmdbWidth = kind === 'poster' ? 'w342' : 'w780';
+    candidates.push(
+      image.replace(/\/t\/p\/(?:original|w\d+)\//i, `/t/p/${tmdbWidth}/`),
+      proxied,
+      image,
+    );
   } else {
     candidates.push(image);
   }
@@ -953,7 +960,16 @@ const itemHasUsableContent = (item: CatalogItem) => {
 
 const visibleLoadedContent = (loaded: LoadedContent): LoadedContent => ({
   ...loaded,
-  items: (loaded.items || []).filter(itemHasUsableContent),
+  // Remote/cache catalogs are already validated by the Content job. Rewalking
+  // every quality of every episode on the phone is O(all media files) and was
+  // the biggest JS-thread spike as the library grew. Keep only the cheap
+  // publication gate here; the small bundled fallback still gets the stricter
+  // legacy media validation.
+  items: (loaded.items || []).filter(
+    loaded.source === 'remote' || loaded.source === 'cache'
+      ? isSeriesPublished
+      : itemHasUsableContent,
+  ),
 });
 
 // Avoid rebuilding the whole app tree every time the periodic catalog check
@@ -1181,9 +1197,9 @@ const catalogItemsForFilter = (catalog: CatalogItem[], filter: SearchFilter) => 
   const cached = cache.get(filter);
   if (cached) return cached;
 
-  // The App only exposes `visibleLoadedContent`, so these items already passed
-  // the expensive media-usability check. Rechecking every episode here for each
-  // Home section caused severe startup/navigation stalls on large catalogs.
+  // Publication/media admission is handled once when content enters the app.
+  // Rechecking every episode for every Home section caused severe
+  // startup/navigation stalls on large catalogs.
   const result = sortForCatalogFilter(
     catalog.filter((item) => matchesCatalogFilter(item, filter)),
     filter,
@@ -2296,23 +2312,24 @@ function PeopleSection({
           <Text style={styles.peopleSectionSubtitle}>برای دیدن همه آثار، روی هر نفر بزنید.</Text>
         </View>
       </View>
-      <ScrollView
+      <FlatList
         horizontal
+        inverted
+        data={people}
+        keyExtractor={(person) => person.tmdbId
+          ? `tmdb:${person.tmdbId}:${person.role}`
+          : `person:${normalizeComparableText(personName(person))}:${person.role}`}
+        renderItem={({ item: person }) => <CastPersonCard person={person} onOpen={onOpen} />}
         showsHorizontalScrollIndicator={false}
         nestedScrollEnabled
         style={styles.peopleRail}
         contentContainerStyle={styles.peopleList}
-      >
-        {people.map((person) => (
-          <CastPersonCard
-            key={person.tmdbId
-              ? `tmdb:${person.tmdbId}:${person.role}`
-              : `person:${normalizeComparableText(personName(person))}:${person.role}`}
-            person={person}
-            onOpen={onOpen}
-          />
-        ))}
-      </ScrollView>
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
+        updateCellsBatchingPeriod={60}
+        windowSize={4}
+        removeClippedSubviews={false}
+      />
     </View>
   );
 }
@@ -2338,11 +2355,11 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-      initialNumToRender={2}
-      maxToRenderPerBatch={2}
-      updateCellsBatchingPeriod={48}
-      windowSize={3}
-      removeClippedSubviews
+      initialNumToRender={3}
+      maxToRenderPerBatch={3}
+      updateCellsBatchingPeriod={55}
+      windowSize={5}
+      removeClippedSubviews={false}
       getItemLayout={(_, index) => ({ length: 148, offset: 148 * index, index })}
       nestedScrollEnabled
     />
@@ -2737,7 +2754,7 @@ function ImdbTop100Section({
     }
   }, [byId, byImdb, onOpen]);
 
-  if (!entries.length && !(ranking?.movies?.length || ranking?.series?.length)) return null;
+  const rankingReady = Boolean(ranking?.movies?.length || ranking?.series?.length);
 
   const topThree = entries.slice(0, 3);
   const previewRows = entries.slice(3, 7);
@@ -2772,6 +2789,13 @@ function ImdbTop100Section({
           );
         })}
       </View>
+
+      {!entries.length ? (
+        <View style={styles.imdbLoadingState}>
+          <ActivityIndicator color={COLORS.gold} size="small" />
+          <Text style={styles.imdbLoadingText}>در حال آماده‌سازی رتبه‌بندی IMDb…</Text>
+        </View>
+      ) : null}
 
       <View style={styles.imdbPodiumRow}>
         {topThree.map((entry) => {
@@ -2820,7 +2844,11 @@ function ImdbTop100Section({
         })}
       </View>
 
-      <Pressable onPress={() => setFullVisible(true)} style={styles.imdbFullButton}>
+      <Pressable
+        disabled={!rankingReady}
+        onPress={() => setFullVisible(true)}
+        style={[styles.imdbFullButton, !rankingReady && { opacity: 0.45 }]}
+      >
         <Ionicons name="trophy-outline" color="#090B0F" size={18} />
         <Text style={styles.imdbFullButtonText}>مشاهده رتبه‌های ۱ تا ۱۰۰</Text>
       </Pressable>
@@ -2893,7 +2921,6 @@ function ImdbTop100Section({
 type HomeCatalogRow = {
   filter: SearchFilter;
   title: string;
-  items: CatalogItem[];
 };
 
 const HomeCatalogSection = memo(function HomeCatalogSection({
@@ -2909,11 +2936,17 @@ const HomeCatalogSection = memo(function HomeCatalogSection({
   onOpen: (item: CatalogItem) => void;
   onBrowse: (filter: SearchFilter) => void;
 }) {
+  const items = useMemo(
+    () => catalogItemsForFilter(catalog, row.filter).slice(0, 10),
+    [catalog, row.filter],
+  );
+  if (!items.length) return null;
+
   return (
     <View>
       <View style={styles.catalogSection}>
         <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
-        <HorizontalCatalog items={row.items} onOpen={onOpen} />
+        <HorizontalCatalog items={items} onOpen={onOpen} />
       </View>
       {row.filter === 'foreign-movies' ? (
         <HomeStarsSection people={featuredPeople} catalog={catalog} onOpen={onOpen} />
@@ -2951,7 +2984,6 @@ const HomeScreen = memo(function HomeScreen({
 }) {
   const listRef = useRef<FlatList<HomeCatalogRow>>(null);
   const newest = useMemo(() => catalogItemsForFilter(catalog, 'latest'), [catalog]);
-  const updated = useMemo(() => catalogItemsForFilter(catalog, 'updated'), [catalog]);
 
   useEffect(() => {
     if (initialScrollOffset > 0) {
@@ -2959,29 +2991,26 @@ const HomeScreen = memo(function HomeScreen({
     }
   }, []);
 
-  const rows = useMemo<HomeCatalogRow[]>(() => {
-    const candidates: HomeCatalogRow[] = [
-      { filter: 'latest', title: 'جدیدترین‌ها', items: newest.slice(0, 10) },
-      { filter: 'updated', title: 'به‌روزشده‌ها', items: updated.slice(0, 10) },
-      { filter: 'mobile-operator', title: 'ویژه اینترنت همراه', items: catalogItemsForFilter(catalog, 'mobile-operator').slice(0, 10) },
-      { filter: 'iranian-movies', title: 'فیلم‌های ایرانی', items: catalogItemsForFilter(catalog, 'iranian-movies').slice(0, 10) },
-      { filter: 'foreign-movies', title: 'فیلم‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-movies').slice(0, 10) },
-      { filter: 'iranian-series', title: 'سریال‌های ایرانی', items: catalogItemsForFilter(catalog, 'iranian-series').slice(0, 10) },
-      { filter: 'foreign-series', title: 'سریال‌های خارجی', items: catalogItemsForFilter(catalog, 'foreign-series').slice(0, 10) },
-      { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-movies').slice(0, 10) },
-      { filter: 'korean-series', title: 'سریال‌های کره‌ای', items: catalogItemsForFilter(catalog, 'korean-series').slice(0, 10) },
-      { filter: 'indian-movies', title: 'فیلم‌های هندی', items: catalogItemsForFilter(catalog, 'indian-movies').slice(0, 10) },
-      { filter: 'anime-movies', title: 'انیمه‌های سینمایی', items: catalogItemsForFilter(catalog, 'anime-movies').slice(0, 10) },
-      { filter: 'anime-series', title: 'انیمه‌های سریالی', items: catalogItemsForFilter(catalog, 'anime-series').slice(0, 10) },
-      { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی', items: catalogItemsForFilter(catalog, 'animation-movies').slice(0, 10) },
-      { filter: 'animation-series', title: 'انیمیشن‌های سریالی', items: catalogItemsForFilter(catalog, 'animation-series').slice(0, 10) },
-      { filter: 'kids', title: 'کودکان', items: catalogItemsForFilter(catalog, 'kids').slice(0, 10) },
-      { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها', items: catalogItemsForFilter(catalog, 'programs').slice(0, 10) },
-      { filter: 'religious', title: 'مذهبی و مناسبتی', items: catalogItemsForFilter(catalog, 'religious').slice(0, 10) },
-      { filter: 'documentaries', title: 'مستندها', items: catalogItemsForFilter(catalog, 'documentaries').slice(0, 10) },
-    ];
-    return candidates.filter((row) => row.items.length > 0);
-  }, [catalog, newest, updated]);
+  const rows = useMemo<HomeCatalogRow[]>(() => [
+    { filter: 'latest', title: 'جدیدترین‌ها' },
+    { filter: 'updated', title: 'به‌روزشده‌ها' },
+    { filter: 'mobile-operator', title: 'ویژه اینترنت همراه' },
+    { filter: 'iranian-movies', title: 'فیلم‌های ایرانی' },
+    { filter: 'foreign-movies', title: 'فیلم‌های خارجی' },
+    { filter: 'iranian-series', title: 'سریال‌های ایرانی' },
+    { filter: 'foreign-series', title: 'سریال‌های خارجی' },
+    { filter: 'korean-movies', title: 'فیلم‌های کره‌ای' },
+    { filter: 'korean-series', title: 'سریال‌های کره‌ای' },
+    { filter: 'indian-movies', title: 'فیلم‌های هندی' },
+    { filter: 'anime-movies', title: 'انیمه‌های سینمایی' },
+    { filter: 'anime-series', title: 'انیمه‌های سریالی' },
+    { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی' },
+    { filter: 'animation-series', title: 'انیمیشن‌های سریالی' },
+    { filter: 'kids', title: 'کودکان' },
+    { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها' },
+    { filter: 'religious', title: 'مذهبی و مناسبتی' },
+    { filter: 'documentaries', title: 'مستندها' },
+  ], []);
 
   const homeHeader = useMemo(() => (
     <>
@@ -3046,10 +3075,10 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={2}
-        maxToRenderPerBatch={2}
-        updateCellsBatchingPeriod={40}
-        windowSize={4}
+        initialNumToRender={1}
+        maxToRenderPerBatch={1}
+        updateCellsBatchingPeriod={70}
+        windowSize={3}
         removeClippedSubviews={false}
         keyboardShouldPersistTaps="handled"
         onScrollEndDrag={rememberVisibleOffset}
@@ -4720,6 +4749,17 @@ function SeriesEpisodeList({
   );
 }
 
+const episodeShowcaseLabel = (group: DownloadSection, quran: boolean) => {
+  const noun = quran ? 'جزء' : 'قسمت';
+  const number = toPersianDigits(group.episodeNumber || 0);
+  const raw = cleanMediaLabel(group.subtitle);
+  const normalized = normalizeComparableText(raw);
+  const generic = !raw ||
+    normalized === normalizeComparableText(`${noun} ${group.episodeNumber || 0}`) ||
+    /^(?:فصل|season)\s*\d+.*(?:قسمت|episode|ep)\s*\d+$/i.test(normalized);
+  return generic ? `${noun} ${number}` : `${noun} ${number} - ${raw}`;
+};
+
 function SeriesEpisodeShowcase({
   item,
   onPlay,
@@ -4784,34 +4824,17 @@ function SeriesEpisodeShowcase({
                 style={styles.episodeShowcaseArtworkWrap}
               >
                 <CatalogArtwork primary={artwork} fallback={item.poster} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />
-                {group.artwork ? (
-                  <>
-                    <View pointerEvents="none" style={styles.episodeShowcaseArtworkShade} />
-                    <CatalogArtwork
-                      primary={group.artwork}
-                      fallback={item.poster}
-                      style={styles.episodeShowcaseArtworkForeground}
-                      contentFit="contain"
-                      imageKind="backdrop"
-                    />
-                  </>
-                ) : null}
                 <LinearGradient colors={['transparent', 'rgba(4,6,9,0.92)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.episodeShowcasePlay}>
                   <Ionicons name={canPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
                 </View>
-                <Text style={styles.episodeShowcaseNumber}>
-                  {quran ? 'جزء' : 'قسمت'} {toPersianDigits(group.episodeNumber || 0)}
+                <Text numberOfLines={2} style={styles.episodeShowcaseNumber}>
+                  {episodeShowcaseLabel(group, quran)}
                 </Text>
               </Pressable>
-              <View style={styles.episodeShowcaseCardFooter}>
-                <View style={styles.episodeShowcaseCardText}>
-                  <Text numberOfLines={1} style={styles.episodeShowcaseCardTitle}>{cleanMediaLabel(group.subtitle) || group.title}</Text>
-                </View>
-                <Pressable onPress={() => onOpenDownloads(group)} style={styles.episodeShowcaseDownloadButton}>
-                  <Ionicons name="download-outline" color={COLORS.gold} size={18} />
-                </Pressable>
-              </View>
+              <Pressable onPress={() => onOpenDownloads(group)} style={styles.episodeShowcaseDownloadButton}>
+                <Ionicons name="download-outline" color={COLORS.gold} size={18} />
+              </Pressable>
             </View>
           );
         })}
@@ -6484,7 +6507,8 @@ function AppContent() {
     if (hasBundledCatalog) {
       // Paint Home from the bundled catalog first; network/cache refreshes must
       // never hold the branded startup screen for 15–25 seconds.
-      initialRefreshTimer = setTimeout(reloadContentWhenIdle, 180);
+      // Keep the first Home interaction free of multi-megabyte catalog parsing.
+      initialRefreshTimer = setTimeout(reloadContentWhenIdle, 7000);
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
@@ -6513,8 +6537,8 @@ function AppContent() {
       .then((state) => setEpisodeAlertSeriesIds(state.subscribedSeriesIds))
       .catch(() => undefined);
 
-    void refreshVpnState(true);
-    const vpnRetryTimer = setTimeout(() => { void refreshVpnState(); }, 750);
+    void refreshVpnState(false);
+    const vpnRetryTimer = setTimeout(() => { void refreshVpnState(false); }, 1600);
 
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
@@ -7562,6 +7586,8 @@ const styles = StyleSheet.create({
   imdbSectionEyebrow: { ...rtlText, color: COLORS.red, fontSize: 8, fontWeight: '900' },
   imdbSectionTitle: { ...rtlText, color: COLORS.text, fontSize: 19, lineHeight: 28, fontWeight: '900', marginTop: 2 },
   imdbSectionSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8, lineHeight: 15, marginTop: 3 },
+  imdbLoadingState: { minHeight: 96, alignItems: 'center', justifyContent: 'center', gap: 9 },
+  imdbLoadingText: { ...rtlText, color: COLORS.muted, fontSize: 10 },
   imdbTabs: { minHeight: 45, marginTop: 14, padding: 4, borderRadius: 13, flexDirection: 'row-reverse', gap: 5, backgroundColor: '#080A0E', borderWidth: 1, borderColor: COLORS.border },
   imdbTab: { flex: 1, borderRadius: 9, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 7 },
   imdbTabActive: { backgroundColor: '#F5C518' },
@@ -7913,17 +7939,17 @@ const styles = StyleSheet.create({
   episodeShowcaseSeasonText: { color: COLORS.muted, fontSize: 8.5, fontWeight: '900' },
   episodeShowcaseSeasonTextActive: { color: COLORS.gold },
   episodeShowcaseRail: { gap: 10, paddingTop: 13, paddingBottom: 5 },
-  episodeShowcaseCard: { width: '100%', height: 132, flexDirection: 'row-reverse', borderRadius: 16, overflow: 'hidden', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
-  episodeShowcaseArtworkWrap: { width: '58%', height: 132, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
+  episodeShowcaseCard: { width: '100%', height: 150, borderRadius: 16, overflow: 'hidden', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  episodeShowcaseArtworkWrap: { width: '100%', height: 150, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
   episodeShowcaseArtwork: { width: '100%', height: '100%' },
   episodeShowcaseArtworkShade: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(3,5,8,0.46)' },
   episodeShowcaseArtworkForeground: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   episodeShowcasePlay: { position: 'absolute', left: '50%', top: '50%', width: 42, height: 42, marginLeft: -21, marginTop: -21, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)' },
-  episodeShowcaseNumber: { ...rtlText, position: 'absolute', right: 12, bottom: 10, color: '#fff', fontSize: 12, fontWeight: '900', textShadowColor: '#000', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
-  episodeShowcaseCardFooter: { minWidth: 0, flex: 1, height: 132, padding: 11, alignItems: 'stretch', justifyContent: 'space-between', gap: 9 },
-  episodeShowcaseCardText: { minWidth: 0, flex: 1, alignItems: 'flex-end', justifyContent: 'center' },
+  episodeShowcaseNumber: { ...rtlText, position: 'absolute', right: 12, left: 64, bottom: 11, color: '#fff', fontSize: 11.5, lineHeight: 19, fontWeight: '900', textShadowColor: '#000', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
+  episodeShowcaseCardFooter: { display: 'none' },
+  episodeShowcaseCardText: { display: 'none' },
   episodeShowcaseCardTitle: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 9.5, lineHeight: 16, fontWeight: '900' },
-  episodeShowcaseDownloadButton: { width: 38, height: 38, borderRadius: 11, alignSelf: 'flex-start', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.08)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.30)' },
+  episodeShowcaseDownloadButton: { position: 'absolute', left: 12, bottom: 11, zIndex: 4, width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(8,10,14,0.82)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.45)' },
   seasonSelectorWrap: { gap: 9, paddingBottom: 2 },
   seasonSelectorHeader: { minHeight: 28, paddingHorizontal: 4, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
   seasonSelectorTitle: { ...rtlText, color: COLORS.text, fontSize: 12, fontWeight: '900' },

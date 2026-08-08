@@ -281,7 +281,7 @@ const normalizePersonImage = (value: unknown, source: 'tmdb' | 'upera' = 'upera'
   if (source === 'tmdb') {
     const path = raw.startsWith('/') ? raw : `/${raw}`;
     if (/\.(?:jpe?g|png|webp)(?:$|[?#])/i.test(path)) {
-      return `https://image.tmdb.org/t/p/w500${path}`;
+      return `https://image.tmdb.org/t/p/w185${path}`;
     }
     return '';
   }
@@ -1134,6 +1134,15 @@ const normalizeImdbTop100 = (
   const record = value && typeof value === 'object'
     ? value as Record<string, unknown>
     : {};
+  const hasRankingPayload = Array.isArray(record.movies) || Array.isArray(record.series);
+  if (!hasRankingPayload) {
+    return {
+      updatedAt: asString(record.updatedAt ?? record.updated_at, fallbackUpdatedAt),
+      source: 'catalog',
+      movies: [],
+      series: [],
+    };
+  }
   const byId = new Map(items.map((item) => [String(item.id), item]));
   const byImdb = new Map(items
     .filter((item) => Boolean(item.imdb))
@@ -1254,18 +1263,19 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
   if (!items.length) return null;
 
   const featuredPeople = normalizeFeaturedPeople(payload.featuredPeople ?? payload.featured_people);
-  const indexedItems = hydratePeopleFromFeaturedIndex(newestFirst(items), featuredPeople);
-  const hydrated = hydrateSharedPersonImages(indexedItems, featuredPeople);
   const updatedAt = asString(payload.updatedAt, new Date().toISOString());
 
   return {
     version: asString(payload.version, 'remote'),
     updatedAt,
-    items: hydrated.items,
+    // The content sync already writes newest-first items and enriched people.
+    // Rebuilding a global person index and cloning every item on the phone made
+    // large catalogs freeze the JS thread during startup.
+    items,
     iranianSchedule: normalizeSchedule(payload.iranianSchedule),
     weeklySchedule: normalizeSchedule(payload.weeklySchedule),
-    featuredPeople: hydrated.featuredPeople,
-    imdbTop100: normalizeImdbTop100(payload.imdbTop100 ?? payload.imdb_top_100, hydrated.items, updatedAt),
+    featuredPeople,
+    imdbTop100: normalizeImdbTop100(payload.imdbTop100 ?? payload.imdb_top_100, items, updatedAt),
   };
 };
 
@@ -1274,14 +1284,12 @@ const normalizedLocalPayload = (): CatalogPayload => {
     .map((item) => normalizeCatalogItem(item))
     .filter((item): item is CatalogItem => Boolean(item));
   const featuredPeople = normalizeFeaturedPeople(LOCAL_PAYLOAD.featuredPeople);
-  const indexedItems = hydratePeopleFromFeaturedIndex(newestFirst(items), featuredPeople);
-  const hydrated = hydrateSharedPersonImages(indexedItems, featuredPeople);
 
   return {
     ...LOCAL_PAYLOAD,
-    items: hydrated.items,
-    featuredPeople: hydrated.featuredPeople,
-    imdbTop100: normalizeImdbTop100(LOCAL_PAYLOAD.imdbTop100, hydrated.items, LOCAL_PAYLOAD.updatedAt),
+    items,
+    featuredPeople,
+    imdbTop100: normalizeImdbTop100(LOCAL_PAYLOAD.imdbTop100, items, LOCAL_PAYLOAD.updatedAt),
   };
 };
 
