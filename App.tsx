@@ -846,14 +846,18 @@ const catalogItemTimestamp = (item: CatalogItem) => {
 const hasCategory = (item: CatalogItem, key: string) =>
   Boolean(item.categoryKeys?.includes(key));
 
-const isIranianItem = (item: CatalogItem) =>
-  Boolean(
-    item.ir ||
-    item.countryCodes?.includes('IR') ||
-    item.originalLanguage === 'fa' ||
-    (item.countryLabels || []).some((value) => normalizeComparableText(value) === 'ایران') ||
-    (item.countryNames || []).some((value) => /iran/i.test(normalizeComparableText(value))),
-  );
+const isIranianItem = (item: CatalogItem) => {
+  const language = String(item.originalLanguage || '').toLowerCase();
+  const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
+  const primaryCountry = countryCodes[0] || '';
+  // Prefer authoritative language/primary-country metadata over a stale legacy
+  // `ir` flag. Co-productions do not become Iranian only because IR appears
+  // later in the country list.
+  if (language === 'fa' || primaryCountry === 'IR') return true;
+  if (language && language !== 'fa') return false;
+  if (primaryCountry && primaryCountry !== 'IR') return false;
+  return Boolean(item.ir);
+};
 
 const hasSpecificCountry = (item: CatalogItem, code: string, originalLanguage: string) => {
   const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
@@ -1140,7 +1144,10 @@ const isWildlifeDocumentaryItem = (item: CatalogItem) => {
   const text = `${catalogTitleText(item)} ${catalogGenreText(item)} ${catalogMetadataText(item)}`;
   return hasStandaloneTerm(text, [
     'حیات وحش', 'طبیعت', 'جانوران', 'حیوانات', 'اقیانوس', 'زیست بوم',
+    'پلنگ', 'یوز', 'شیر', 'ببر', 'گرگ', 'خرس', 'پرندگان', 'جنگل', 'ساوانا',
     'wildlife', 'nature', 'animals', 'animal', 'natural history', 'ocean', 'planet earth',
+    'leopard', 'leopards', 'cheetah', 'cheetahs', 'lion', 'lions', 'tiger', 'tigers',
+    'wolf', 'wolves', 'bear', 'bears', 'birds', 'forest', 'savanna',
   ]);
 };
 
@@ -1225,6 +1232,7 @@ const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
 
 const catalogFilterCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem[]>>();
 const catalogListScrollOffsets = new Map<string, number>();
+let categoriesScreenScrollOffset = 0;
 const detailScrollOffsets = new Map<string, number>();
 const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
@@ -2559,6 +2567,10 @@ function HomeStarsSectionBase({
 
   const selected = resolvedPeople.find((person) => person.id === selectedId) || resolvedPeople[0];
   const works = selected ? (worksByPersonId.get(selected.id) || []) : [];
+  // Render a reversed data array and stay at the physical end. This keeps the
+  // first logical work on the right without FlatList `inverted`, which had
+  // caused clipped/black horizontal rails on Android.
+  const displayedWorks = useMemo(() => [...works].reverse(), [works]);
 
   const selectedIdForRender = selected?.id || '';
   const selectPerson = useCallback((personId: string) => {
@@ -2568,9 +2580,10 @@ function HomeStarsSectionBase({
   useEffect(() => {
     if (!selectedIdForRender) return;
     const frame = requestAnimationFrame(() => {
-      worksRailRef.current?.scrollToOffset({ offset: 0, animated: false });
+      worksRailRef.current?.scrollToEnd({ animated: false });
     });
-    return () => cancelAnimationFrame(frame);
+    const retry = setTimeout(() => worksRailRef.current?.scrollToEnd({ animated: false }), 80);
+    return () => { cancelAnimationFrame(frame); clearTimeout(retry); };
   }, [selectedIdForRender]);
   const renderStarPerson = useCallback(({ item: person }: { item: FeaturedPerson }) => (
     <StarPersonButton
@@ -2642,7 +2655,7 @@ function HomeStarsSectionBase({
           ref={worksRailRef}
           horizontal
           style={styles.starWorksRail}
-          data={works}
+          data={displayedWorks}
           keyExtractor={(item) => item.id}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.starWorksList}
@@ -2796,6 +2809,7 @@ function ImdbTop100Section({
   const [selectedType, setSelectedType] = useState<CatalogItem['type']>('movie');
   const [fullVisible, setFullVisible] = useState(false);
   const fullScrollOffsetsRef = useRef<Record<CatalogItem['type'], number>>({ movie: 0, series: 0 });
+  const fullListRef = useRef<FlatList<ImdbTopEntry>>(null);
   const byId = useMemo(() => new Map(catalog.map((item) => [String(item.id), item])), [catalog]);
   const byImdb = useMemo(() => new Map(
     catalog.filter((item) => Boolean(item.imdb)).map((item) => [String(item.imdb).toLowerCase(), item]),
@@ -2804,6 +2818,17 @@ function ImdbTop100Section({
   const rememberFullListOffset = useCallback((event: any) => {
     fullScrollOffsetsRef.current[selectedType] = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
   }, [selectedType]);
+
+  useEffect(() => {
+    if (!fullVisible) return undefined;
+    const offset = fullScrollOffsetsRef.current[selectedType] || 0;
+    const frame = requestAnimationFrame(() => fullListRef.current?.scrollToOffset({ offset, animated: false }));
+    const retry = setTimeout(() => fullListRef.current?.scrollToOffset({ offset, animated: false }), 70);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(retry);
+    };
+  }, [fullVisible, selectedType]);
 
   const openEntry = useCallback((entry: ImdbTopEntry, closeFull = false) => {
     const item = findImdbTopItem(entry, byId, byImdb);
@@ -2943,10 +2968,12 @@ function ImdbTop100Section({
             })}
           </View>
           <FlatList
+            ref={fullListRef}
             key={`imdb-full-${selectedType}`}
             data={entries}
             keyExtractor={(entry) => `${entry.type}-${entry.imdb || entry.rank}`}
-            contentOffset={{ x: 0, y: fullScrollOffsetsRef.current[selectedType] || 0 }}
+            scrollEventThrottle={96}
+            onScroll={rememberFullListOffset}
             onScrollEndDrag={rememberFullListOffset}
             onMomentumScrollEnd={rememberFullListOffset}
             contentContainerStyle={styles.imdbFullList}
@@ -3150,33 +3177,39 @@ const HomeScreen = memo(function HomeScreen({
     onScrollOffset(event.nativeEvent.contentOffset.y);
   }, [onScrollOffset]);
 
-  if (!catalog.length) return (
-    <View style={styles.screen}>
-      <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
-      <View style={[styles.screen, styles.contentUnavailable]}>
-        {!contentResolved ? (
-          <>
-            <ActivityIndicator color={COLORS.gold} size="small" />
-            <Text style={styles.initialLoadingTitle}>در حال بازکردن فهرست…</Text>
-            <Text style={styles.initialLoadingText}>نسخه ذخیره‌شده و فهرست تازه در پس‌زمینه بررسی می‌شوند.</Text>
-          </>
-        ) : contentOffline ? (
-          <>
-            <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={42} />
-            <Text style={styles.largeEmptyTitle}>اتصال اینترنت برقرار نیست</Text>
-            <Text style={styles.largeEmptyText}>برای دریافت فهرست فیلم‌ها و سریال‌ها، اینترنت را روشن کنید.</Text>
-            <Pressable onPress={onReloadContent} hitSlop={10} style={styles.retryButton}><Text style={styles.retryButtonText}>تلاش دوباره</Text></Pressable>
-          </>
-        ) : (
-          <>
-            <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={42} />
-            <Text style={styles.largeEmptyTitle}>فهرست محتوا خالی است</Text>
-            <Pressable onPress={onReloadContent} hitSlop={10} style={styles.retryButton}><Text style={styles.retryButtonText}>تلاش دوباره</Text></Pressable>
-          </>
-        )}
+  if (!catalog.length) {
+    if (!contentResolved) {
+      // Cold first install: expose the real Home shell immediately. The remote
+      // catalog can finish in the background without a second full-screen
+      // "restoring catalog" gate after Splash.
+      return (
+        <View style={styles.screen}>
+          <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
+          <ScrollView contentContainerStyle={styles.homeColdSkeleton} showsVerticalScrollIndicator={false}>
+            {[0, 1, 2].map((row) => (
+              <View key={`cold-row-${row}`} style={styles.homeColdSkeletonSection}>
+                <View style={styles.homeColdSkeletonHeading} />
+                <View style={styles.homeColdSkeletonRail}>
+                  {[0, 1, 2].map((card) => <View key={`cold-${row}-${card}`} style={styles.homeColdSkeletonCard} />)}
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.screen}>
+        <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
+        <View style={[styles.screen, styles.contentUnavailable]}>
+          <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={42} />
+          <Text style={styles.largeEmptyTitle}>{contentOffline ? 'اتصال اینترنت برقرار نیست' : 'فهرست محتوا خالی است'}</Text>
+          {contentOffline ? <Text style={styles.largeEmptyText}>برای دریافت فهرست فیلم‌ها و سریال‌ها، اینترنت را روشن کنید.</Text> : null}
+          <Pressable onPress={onReloadContent} hitSlop={10} style={styles.retryButton}><Text style={styles.retryButtonText}>تلاش دوباره</Text></Pressable>
+        </View>
       </View>
-    </View>
-  );
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -3299,6 +3332,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const [query, setQuery] = useState('');
   const deferredQuery = normalizeComparableText(useDebouncedText(query, 220));
   const { width: screenWidth } = useWindowDimensions();
+  const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
   const usableCatalog = catalog;
   const categoryPreviewPool = useMemo(
     () => sortForCatalogFilter(usableCatalog, 'latest').slice(0, 220),
@@ -3383,6 +3417,22 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const categoryWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
   const posterWidth = Math.max(132, Math.floor((screenWidth - 36 - 12) / 2));
 
+  useEffect(() => {
+    if (deferredQuery || categoriesScreenScrollOffset <= 0) return undefined;
+    const frame = requestAnimationFrame(() => {
+      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
+    });
+    const retry = setTimeout(() => {
+      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
+    }, 90);
+    return () => { cancelAnimationFrame(frame); clearTimeout(retry); };
+  }, [columnCount, deferredQuery]);
+
+  const rememberCategoriesOffset = useCallback((event: any) => {
+    if (deferredQuery) return;
+    categoriesScreenScrollOffset = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
+  }, [deferredQuery]);
+
   const searchHeader = (
     <>
       <View style={styles.simpleHeader}><Logo /><Text style={styles.simpleHeaderTitle}>دسته‌بندی</Text></View>
@@ -3434,6 +3484,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
 
   return (
     <FlatList
+      ref={categoriesListRef}
       key={`category-grid-${columnCount}`}
       data={CATEGORY_CARDS}
       numColumns={columnCount}
@@ -3498,6 +3549,10 @@ const CategoriesScreen = memo(function CategoriesScreen({
       updateCellsBatchingPeriod={48}
       windowSize={4}
       removeClippedSubviews
+      scrollEventThrottle={96}
+      onScroll={rememberCategoriesOffset}
+      onScrollEndDrag={rememberCategoriesOffset}
+      onMomentumScrollEnd={rememberCategoriesOffset}
     />
   );
 });
@@ -3516,7 +3571,6 @@ function CatalogListScreen({
   const { width: screenWidth } = useWindowDimensions();
   const listRef = useRef<FlatList<CatalogItem>>(null);
   const scrollKey = String(initialFilter);
-  const initialOffset = catalogListScrollOffsets.get(scrollKey) || 0;
 
   // Filter results are cached per catalog. Waiting for InteractionManager here
   // made a normal tap feel ignored whenever an image list or slider animation
@@ -3539,6 +3593,26 @@ function CatalogListScreen({
   const columnCount = screenWidth >= 720 ? 5 : screenWidth >= 590 ? 4 : screenWidth >= 480 ? 3 : 2;
   const gridGap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
+
+  useEffect(() => {
+    const offset = catalogListScrollOffsets.get(scrollKey) || 0;
+    if (offset <= 0) return undefined;
+    const frame = requestAnimationFrame(() => {
+      listRef.current?.scrollToOffset({ offset, animated: false });
+    });
+    const retry = setTimeout(() => {
+      listRef.current?.scrollToOffset({ offset, animated: false });
+    }, 90);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(retry);
+    };
+  }, [columnCount, scrollKey]);
+
+  const rememberCatalogOffset = useCallback((event: any) => {
+    if (query) return;
+    catalogListScrollOffsets.set(scrollKey, Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)));
+  }, [query, scrollKey]);
 
   const header = (
     <View>
@@ -3567,7 +3641,6 @@ function CatalogListScreen({
       ref={listRef}
       key={`${initialFilter}-${columnCount}`}
       style={styles.screen}
-      contentOffset={{ x: 0, y: initialOffset }}
       contentContainerStyle={styles.catalogListContent}
       keyboardShouldPersistTaps="handled"
       data={results}
@@ -3593,8 +3666,10 @@ function CatalogListScreen({
       updateCellsBatchingPeriod={48}
       removeClippedSubviews
       showsVerticalScrollIndicator={false}
-      onScrollEndDrag={(event) => catalogListScrollOffsets.set(scrollKey, Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
-      onMomentumScrollEnd={(event) => catalogListScrollOffsets.set(scrollKey, Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
+      scrollEventThrottle={96}
+      onScroll={rememberCatalogOffset}
+      onScrollEndDrag={rememberCatalogOffset}
+      onMomentumScrollEnd={rememberCatalogOffset}
     />
   );
 }
@@ -3703,14 +3778,150 @@ function SimpleSearchScreen({
   );
 }
 
+type CatalogCollectionGroup = {
+  id: string;
+  title: string;
+  members: CatalogItem[];
+  cover: string;
+};
+
+const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGroup[] => {
+  const byCollection = new Map<string, CatalogItem[]>();
+  for (const item of catalog) {
+    if (item.type !== 'movie' || !item.collectionId) continue;
+    const current = byCollection.get(item.collectionId) || [];
+    current.push(item);
+    byCollection.set(item.collectionId, current);
+  }
+  return [...byCollection.entries()]
+    .map(([id, rawMembers]) => {
+      const members = [...rawMembers].sort((a, b) => {
+        const aOrder = Number(a.collectionOrder || 0);
+        const bOrder = Number(b.collectionOrder || 0);
+        if (aOrder > 0 && bOrder > 0 && aOrder !== bOrder) return aOrder - bOrder;
+        if (a.year !== b.year) return a.year - b.year;
+        return a.id.localeCompare(b.id);
+      });
+      const first = members[0];
+      return {
+        id,
+        title: first?.collectionNameFa || first?.collectionName || `کالکشن ${members[0]?.nameFa || ''}`,
+        members,
+        cover: first?.poster || first?.backdrop || '',
+      };
+    })
+    .filter((group) => group.members.length >= 2)
+    .sort((a, b) => b.members.length - a.members.length || a.title.localeCompare(b.title, 'fa'));
+};
+
+function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (item: CatalogItem) => void }) {
+  const groups = useMemo(() => collectionGroupsForCatalog(catalog), [catalog]);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
+  const { width: screenWidth } = useWindowDimensions();
+  const selected = groups.find((group) => group.id === selectedCollectionId) || null;
+  const columns = screenWidth >= 720 ? 4 : screenWidth >= 520 ? 3 : 2;
+  const gap = 12;
+  const cardWidth = Math.floor((screenWidth - 32 - gap * (columns - 1)) / columns);
+
+  useEffect(() => {
+    if (selectedCollectionId && !groups.some((group) => group.id === selectedCollectionId)) {
+      setSelectedCollectionId(null);
+    }
+  }, [groups, selectedCollectionId]);
+
+  if (selected) {
+    return (
+      <FlatList
+        key={`collection-members-${selected.id}-${columns}`}
+        data={selected.members}
+        numColumns={columns}
+        keyExtractor={(item) => item.id}
+        style={styles.screen}
+        contentContainerStyle={styles.catalogListContent}
+        columnWrapperStyle={columns > 1 ? { gap, flexDirection: 'row-reverse' } : undefined}
+        ListHeaderComponent={(
+          <View>
+            <View style={styles.simpleHeader}>
+              <Logo />
+              <View style={styles.collectionMemberHeaderTitle}>
+                <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{selected.title}</Text>
+                <Text style={styles.collectionFolderCount}>{toPersianDigits(selected.members.length)} فیلم</Text>
+              </View>
+              <Pressable onPress={() => setSelectedCollectionId(null)} hitSlop={12} style={styles.detailCircleButton}>
+                <Ionicons name="arrow-forward" color="#fff" size={21} />
+              </Pressable>
+            </View>
+          </View>
+        )}
+        renderItem={({ item }) => (
+          <View style={{ width: cardWidth, marginBottom: 16 }}>
+            <PosterCard item={item} width={cardWidth} onOpen={() => onOpen(item)} />
+          </View>
+        )}
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        windowSize={5}
+        removeClippedSubviews
+        showsVerticalScrollIndicator={false}
+      />
+    );
+  }
+
+  return (
+    <FlatList
+      key={`collection-folders-${columns}`}
+      data={groups}
+      numColumns={columns}
+      keyExtractor={(group) => group.id}
+      style={styles.screen}
+      contentContainerStyle={styles.catalogListContent}
+      columnWrapperStyle={columns > 1 ? { gap, flexDirection: 'row-reverse' } : undefined}
+      ListHeaderComponent={(
+        <View>
+          <View style={styles.simpleHeader}>
+            <Logo />
+            <Text numberOfLines={1} style={styles.simpleHeaderTitle}>کالکشن‌ها</Text>
+          </View>
+          <Text style={styles.resultCount}>{toPersianDigits(groups.length)} کالکشن با حداقل ۲ فیلم</Text>
+        </View>
+      )}
+      ListEmptyComponent={(
+        <View style={styles.searchEmptyState}>
+          <Ionicons name="layers-outline" color={COLORS.gold} size={34} />
+          <Text style={styles.largeEmptyTitle}>هنوز کالکشن کاملی نداریم</Text>
+          <Text style={styles.largeEmptyText}>با اضافه‌شدن فیلم دوم هر مجموعه، پوشه آن خودکار اینجا ظاهر می‌شود.</Text>
+        </View>
+      )}
+      renderItem={({ item: group }) => (
+        <View style={{ width: cardWidth, marginBottom: 16 }}>
+          <Pressable onPress={() => setSelectedCollectionId(group.id)} style={[styles.collectionFolderCard, { width: cardWidth }]}>
+            <CatalogArtwork primary={group.cover} fallback={group.members[1]?.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="poster" />
+            <LinearGradient colors={['rgba(5,7,10,0.05)', 'rgba(5,7,10,0.94)']} style={StyleSheet.absoluteFill} />
+            <View style={styles.collectionFolderIcon}><Ionicons name="folder-open-outline" color={COLORS.gold} size={20} /></View>
+            <View style={styles.collectionFolderText}>
+              <Text numberOfLines={2} style={styles.collectionFolderTitle}>{group.title}</Text>
+              <Text style={styles.collectionFolderCount}>{toPersianDigits(group.members.length)} فیلم</Text>
+            </View>
+          </Pressable>
+        </View>
+      )}
+      initialNumToRender={6}
+      maxToRenderPerBatch={4}
+      windowSize={5}
+      removeClippedSubviews
+      showsVerticalScrollIndicator={false}
+    />
+  );
+}
+
 function SearchScreen(props: {
   catalog: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
   initialFilter: SearchFilter;
 }) {
-  return props.initialFilter === 'all'
-    ? <SimpleSearchScreen catalog={props.catalog} onOpen={props.onOpen} />
-    : <CatalogListScreen {...props} />;
+  if (props.initialFilter === 'all') return <SimpleSearchScreen catalog={props.catalog} onOpen={props.onOpen} />;
+  if (props.initialFilter === 'collections') return <CollectionBrowserScreen catalog={props.catalog} onOpen={props.onOpen} />;
+  return <CatalogListScreen {...props} />;
 }
 
 function AdvancedSearchScreen({
@@ -4587,20 +4798,21 @@ function DownloadGroup({
           ) : null}
           {files.map((file) => {
             const label = cleanMediaLabel(file.label);
+            const purchase = downloadModeFor(file) === 'purchase';
             return (
               <View key={file.id} style={styles.qualityRow}>
                 <View style={styles.qualityInfo}>
                   <Text style={styles.qualityName}>{cleanQualityLabel(file.quality)}</Text>
                   <Text style={styles.qualityMeta}>
-                    {[label, file.size].filter(Boolean).join(' • ') || 'فایل آماده دریافت'}
+                    {[label, file.size].filter(Boolean).join(' • ') || (purchase ? 'دریافت از منبع' : 'فایل آماده دریافت')}
                   </Text>
                 </View>
                 <Pressable
                   onPress={() => onOpenFile(file)}
                   style={styles.downloadButton}
                 >
-                  <Ionicons name="download-outline" color="#fff" size={16} />
-                  <Text style={styles.downloadButtonText}>دریافت</Text>
+                  <Ionicons name={purchase ? 'open-outline' : 'download-outline'} color="#fff" size={16} />
+                  <Text style={styles.downloadButtonText}>{purchase ? 'خرید / دریافت' : 'دریافت'}</Text>
                 </Pressable>
               </View>
             );
@@ -4878,21 +5090,33 @@ const episodeShowcaseLabel = (item: CatalogItem, group: DownloadSection, quran: 
   const raw = cleanMediaLabel(group.subtitle || '').trim();
   if (!raw) return `${noun} ${number}`;
 
-  const normalized = normalizeComparableText(raw);
+  const normalized = normalizeComparableText(raw)
+    .replace(/[ـ_:|•\-–—]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   const seriesNames = [item.nameFa, item.name]
-    .map((value) => normalizeComparableText(String(value || '')))
+    .map((value) => normalizeComparableText(String(value || ''))
+      .replace(/[ـ_:|•\-–—]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim())
     .filter(Boolean);
-  const ordinal = '(?:اول|دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم|دهم|یازدهم|دوازدهم|سیزدهم|چهاردهم|پانزدهم|شانزدهم|هفدهم|هجدهم|نوزدهم|بیستم|\\d+)';
-  const purePersianEpisode = new RegExp(`^(?:قسمت|اپیزود)\\s*${ordinal}$`, 'i').test(normalized);
-  const genericEnglishEpisode = /(?:^|\s)(?:episode|ep|part)\s*\d+\s*$/i.test(normalized);
+  const ordinal = '(?:اول|دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم|دهم|یازدهم|دوازدهم|سیزدهم|چهاردهم|پانزدهم|شانزدهم|هفدهم|هجدهم|نوزدهم|بیستم|بیست\\s*و\\s*(?:یکم|دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم)|سی\\s*و\\s*(?:یکم|دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم)|آخر|پایانی|\\d+)';
+  const episodeOnlyPattern = new RegExp(
+    `^(?:(?:قسمت|اپیزود)\\s*${ordinal}|(?:episode|ep|part)\\s*[-:#]*\\s*\\d+)$`,
+    'i',
+  );
+  const pureEpisode = episodeOnlyPattern.test(normalized);
   const seasonEpisodeBoilerplate = /^(?:season|فصل)\s*\d+.*(?:episode|ep|قسمت|اپیزود)\s*\d+\s*$/i.test(normalized);
   const seriesNameBoilerplate = seriesNames.some((name) => {
-    if (!name || !normalized.startsWith(name)) return false;
-    const suffix = normalized.slice(name.length).trim();
-    return new RegExp(`^(?:(?:قسمت|اپیزود)\\s*${ordinal}|(?:episode|ep|part)\\s*\\d+)$`, 'i').test(suffix);
+    if (!name) return false;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefix = new RegExp(`^${escaped}\\s+`, 'i');
+    const suffix = new RegExp(`\\s+${escaped}$`, 'i');
+    const withoutName = normalized.replace(prefix, '').replace(suffix, '').trim();
+    return withoutName !== normalized && episodeOnlyPattern.test(withoutName);
   });
 
-  return purePersianEpisode || genericEnglishEpisode || seasonEpisodeBoilerplate || seriesNameBoilerplate
+  return pureEpisode || seasonEpisodeBoilerplate || seriesNameBoilerplate
     ? `${noun} ${number}`
     : `${noun} ${number} - ${raw}`;
 };
@@ -5178,7 +5402,7 @@ function DetailModal({
     : undefined;
   const primaryOperatorPlayFile = item.type === 'series' ? latestOperatorPlayFile : standaloneOperatorPlayFile;
   const hasDownloads = downloadGroups.some((group) => group.files.some((file) =>
-    downloadModeFor(file) === 'download' || isOperatorFile(file),
+    downloadModeFor(file) === 'download' || downloadModeFor(file) === 'purchase' || isOperatorFile(file),
   ));
   const hasPlayableStream = detailBodyReady ? playableVersionsFor(item).length > 0 : false;
 
@@ -7364,6 +7588,19 @@ function AppContent() {
 
     const fileMode = downloadModeFor(file);
 
+    if (fileMode === 'purchase') {
+      if (!(await internetIsReachable())) {
+        Alert.alert('اتصال اینترنت برقرار نیست', 'برای بازکردن لینک دریافت، اینترنت را روشن کنید.');
+        return;
+      }
+      try {
+        await Linking.openURL(file.url);
+      } catch {
+        Alert.alert('خرید / دریافت', 'بازکردن لینک منبع انجام نشد.');
+      }
+      return;
+    }
+
     if (fileMode === 'play') {
       if (!(await internetIsReachable())) {
         Alert.alert(
@@ -7552,19 +7789,9 @@ function AppContent() {
     );
   };
 
-  if (startupVisible) {
-    return (
-      <View style={styles.initialLoading}>
-        <StatusBar style="light" />
-        <View style={styles.startupLogoMark}>
-          <Ionicons name="film-outline" color={COLORS.gold} size={30} />
-        </View>
-        <Text style={styles.startupBrand}>آپاراتچی</Text>
-        <ActivityIndicator color={COLORS.gold} size="small" style={styles.startupSpinner} />
-        <Text style={styles.initialLoadingTitle}>در حال بارگذاری…</Text>
-      </View>
-    );
-  }
+  // Cold installs render the interactive Home shell immediately. Catalog/cache
+  // restoration continues in the background; there is no second full-screen
+  // blocker after the native splash.
 
   return (
     <View style={styles.app}>
@@ -7775,6 +8002,11 @@ const styles = StyleSheet.create({
   initialLoadingFill: { height: '100%', borderRadius: 4, backgroundColor: COLORS.gold },
   refreshIndicator: { position: 'absolute', top: 14, left: 14, width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(16,19,25,0.94)', borderWidth: 1, borderColor: COLORS.border },
   contentUnavailable: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 25 },
+  homeColdSkeleton: { paddingHorizontal: 16, paddingTop: 28, paddingBottom: 120 },
+  homeColdSkeletonSection: { marginBottom: 30 },
+  homeColdSkeletonHeading: { width: 128, height: 22, borderRadius: 9, backgroundColor: '#151922', alignSelf: 'flex-end', marginBottom: 14 },
+  homeColdSkeletonRail: { flexDirection: 'row-reverse', gap: 12 },
+  homeColdSkeletonCard: { width: 112, height: 168, borderRadius: 16, backgroundColor: '#11151D', borderWidth: 1, borderColor: '#1D2330' },
   retryButton: { marginTop: 18, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12, backgroundColor: COLORS.red },
   retryButtonText: { color: '#fff', fontSize: 11, fontWeight: '900' },
   homeScroll: { flex: 1 },
@@ -7874,11 +8106,11 @@ const styles = StyleSheet.create({
   starPersonAvatar: { width: '100%', height: '100%', borderRadius: 25 },
   starPersonName: { width: '100%', minHeight: 21, color: COLORS.muted, fontSize: 7.1, lineHeight: 10, fontWeight: '800', textAlign: 'center', marginTop: 5, writingDirection: 'ltr' },
   starPersonNameActive: { color: COLORS.text },
-  starWorksRail: { flex: 1, height: 184, minWidth: 0, direction: 'rtl' },
-  starWorksList: { flexDirection: 'row-reverse', gap: 9, paddingHorizontal: 1, paddingTop: 0, paddingBottom: 1 },
+  starWorksRail: { flex: 1, height: 184, minWidth: 0 },
+  starWorksList: { gap: 9, paddingHorizontal: 1, paddingTop: 0, paddingBottom: 1 },
   starWorkCard: { width: 104 },
   starWorkPoster: { width: 104, height: 142, borderRadius: 13, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
-  starWorkTitle: { ...rtlText, width: '100%', minHeight: 29, marginTop: 6, color: COLORS.text, fontSize: 8.2, lineHeight: 13, fontWeight: '800', textAlign: 'right' },
+  starWorkTitle: { ...rtlText, width: '100%', minHeight: 29, marginTop: 6, color: COLORS.text, fontSize: 8.2, lineHeight: 13, fontWeight: '800', textAlign: 'center' },
   tabScreenContent: { paddingHorizontal: 16, paddingBottom: 28, paddingTop: 18 },
   header: {
     height: 66,
@@ -8028,8 +8260,8 @@ const styles = StyleSheet.create({
   posterEpisodeText: { color: COLORS.text, fontSize: 8, fontWeight: '900' },
   posterRating: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.82)' },
   posterRatingText: { color: COLORS.text, fontSize: 9, fontWeight: '800' },
-  posterName: { ...rtlText, color: COLORS.text, fontSize: 11, lineHeight: 18, fontWeight: '700', letterSpacing: -0.15, marginTop: 8, width: '100%' },
-  posterEnglish: { color: '#777D87', fontSize: 8.5, lineHeight: 14, marginTop: 1, width: '100%', textAlign: 'right' },
+  posterName: { ...rtlText, color: COLORS.text, fontSize: 11, lineHeight: 18, fontWeight: '700', letterSpacing: -0.15, marginTop: 8, width: '100%', textAlign: 'center' },
+  posterEnglish: { color: '#777D87', fontSize: 8.5, lineHeight: 14, marginTop: 1, width: '100%', textAlign: 'center' },
   simpleHeader: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 },
   simpleHeaderTitle: { ...rtlText, color: COLORS.text, fontSize: 18, lineHeight: 27, fontWeight: '900', letterSpacing: -0.35 },
   simpleSearchHeader: { minHeight: 82, paddingHorizontal: 20, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between' },
@@ -8397,6 +8629,12 @@ const styles = StyleSheet.create({
 
   headerBrandRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 9 },
   catalogListContent: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 112 },
+  collectionFolderCard: { aspectRatio: 0.72, borderRadius: 18, overflow: 'hidden', justifyContent: 'space-between', padding: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  collectionFolderIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.82)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.34)' },
+  collectionFolderText: { width: '100%', alignItems: 'center' },
+  collectionFolderTitle: { ...rtlText, color: '#fff', textAlign: 'center', fontSize: 13, lineHeight: 20, fontWeight: '900', width: '100%' },
+  collectionFolderCount: { color: COLORS.gold, textAlign: 'center', fontSize: 10, marginTop: 4 },
+  collectionMemberHeaderTitle: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
   categoryGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', marginTop: 16, marginBottom: 24 },
   categoryCard: { minHeight: 176, padding: 13, borderRadius: 18, overflow: 'hidden', alignItems: 'flex-end', justifyContent: 'space-between', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.25)' },
   categoryCardPressed: { opacity: 0.86, transform: [{ scale: 0.985 }] },
