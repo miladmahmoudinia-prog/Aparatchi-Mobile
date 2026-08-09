@@ -86,6 +86,7 @@ type SearchFilter =
   | 'korean-movies'
   | 'korean-series'
   | 'indian-movies'
+  | 'indian-series'
   | 'anime-movies'
   | 'anime-series'
   | 'animation-movies'
@@ -100,6 +101,13 @@ type SearchFilter =
   | CountrySearchFilter
   | GenreSearchFilter
   | YearSearchFilter;
+
+// Lightweight in-memory navigation hooks for screens that keep their own nested state.
+// This avoids pushing extra router state into the large catalog tree and keeps Back instant.
+let collectionBrowserBackHandler: (() => boolean) | null = null;
+let collectionBrowserSelectedId: string | null = null;
+
+const hasPersianScript = (value?: string | null) => /[\u0600-\u06FF]/.test(String(value || ''));
 
 type CatalogDeepLink = {
   id: string;
@@ -872,6 +880,13 @@ const hasSpecificCountry = (item: CatalogItem, code: string, originalLanguage: s
 const isKoreanItem = (item: CatalogItem) =>
   hasSpecificCountry(item, 'KR', 'ko');
 
+const INDIAN_LANGUAGES = new Set(['hi', 'ta', 'te', 'ml', 'kn', 'bn', 'mr', 'pa', 'gu', 'ur']);
+const isIndianItem = (item: CatalogItem) => {
+  const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
+  const language = String(item.originalLanguage || '').toLowerCase();
+  return INDIAN_LANGUAGES.has(language) || countryCodes[0] === 'IN';
+};
+
 const looksLikeAnimeTitle = (item: CatalogItem) => {
   const text = normalizeComparableText([
     item.nameFa,
@@ -1064,91 +1079,79 @@ const isQuranItem = (item: CatalogItem) => {
 };
 
 const isKidsItem = (item: CatalogItem) => {
+  if (isAnimatedItem(item)) return false;
   const title = catalogTitleText(item);
-  const genres = catalogGenreText(item);
   const metadata = catalogMetadataText(item);
-  const adultOrHeavy = hasStandaloneTerm(genres, [
-    'ترسناک', 'وحشت', 'جنگی', 'جنایی', 'هیجان انگیز', 'بزرگسال',
-    'horror', 'war', 'crime', 'thriller', 'adult',
+  const explicitKind = Number(item.tmdbValidationVersion || 0) >= 7 && item.contentKind === 'children-program';
+  const programTitle = hasStandaloneTerm(title, [
+    'برنامه کودک', 'برنامه کودکان', 'برنامه کودکانه', 'ترانه کودک', 'ترانه های کودک',
+    'ترانه کودکانه', 'سرود کودک', 'قصه کودک', 'خاله نسرین', 'aunt nasrin',
+    'songs for kids', 'children s songs', 'childrens songs', 'nursery rhyme', 'nursery rhymes',
+    'kids show', 'children s program', 'childrens program', 'preschool show',
   ]);
-  if (adultOrHeavy) return false;
-
-  const explicitKind = item.contentKind === 'kids' || item.contentKind === 'children-program';
-  const explicitCategory = hasCategory(item, 'kids') || hasCategory(item, 'children');
-  const explicitTitle = hasStandaloneTerm(title, [
-    'کودک', 'کودکان', 'کودکانه', 'بچه ها', 'برنامه کودک', 'ترانه کودک',
-    'خاله نسرین', 'خاله سوسکه', 'با بابام', 'بیا آشتی کنیم', 'بنیامین',
-    'ننه لالا', 'kids', 'children', 'nursery',
-  ]);
-  const explicitGenre = hasStandaloneTerm(genres, [
-    'کودک', 'کودکان', 'کودکانه', 'children', 'kids',
-  ]);
-
-  // «خانوادگی» یا انیمیشن‌بودن به‌تنهایی به معنی کودکانه‌بودن نیست.
-  return Boolean(
-    explicitKind ||
-    explicitTitle ||
-    explicitGenre ||
-    (explicitCategory && (explicitTitle || explicitGenre || hasStandaloneTerm(metadata, ['children-program', 'kids']))),
-  );
+  // A narrative film merely containing "children/kids" in its title or Family
+  // genre is still a film; the Kids shelf is only for actual child programs.
+  return Boolean(explicitKind || programTitle || (hasCategory(item, 'kids') && hasStandaloneTerm(metadata, ['children-program'])));
 };
 
 const isProgramItem = (item: CatalogItem) => {
-  if (item.type !== 'series') return false;
   const title = catalogTitleText(item);
   const genres = catalogGenreText(item);
   const metadata = catalogMetadataText(item);
+  const trustedKind = Number(item.tmdbValidationVersion || 0) >= 7;
   const explicitKind = Boolean(
     item.isTalkShow ||
-    item.contentKind === 'talk-show' ||
-    item.contentKind === 'reality-competition' ||
-    item.contentKind === 'program',
+    (trustedKind && (
+      item.contentKind === 'talk-show' ||
+      item.contentKind === 'reality-competition' ||
+      item.contentKind === 'program' ||
+      item.contentKind === 'children-program'
+    )),
   );
-  const explicitGenre = hasStandaloneTerm(genres, [
-    'تاک شو', 'رئالیتی شو', 'مسابقه تلویزیونی', 'talk show', 'reality', 'game show',
+  const explicitProgram = hasStandaloneTerm(`${title} ${genres}`, [
+    'تاک شو', 'تاک‌شو', 'رئالیتی شو', 'رئالیتی‌شو', 'مسابقه تلویزیونی', 'مسابقه مافیا',
+    'talk show', 'reality show', 'reality tv', 'game show', 'talent show', 'competition show',
   ]);
-  const strongSeriesTitle = item.type === 'series' && Boolean(
-    hasStandaloneTerm(title, [
-      'تاک شو', 'رئالیتی شو', 'مسابقه', 'گیم شو', 'سیزده شمالی',
-      'شب های مافیا', 'جوکر', 'talk show', 'reality', 'game show',
-    ]),
-  );
-  const explicitCategory = item.type === 'series' && Boolean(
+  const explicitCategory = Boolean(
     (hasCategory(item, 'talk-shows') || hasCategory(item, 'programs') || hasCategory(item, 'reality')) &&
-    (explicitGenre || strongSeriesTitle || hasStandaloneTerm(metadata, ['talk-show', 'reality-competition'])),
+    hasStandaloneTerm(metadata, ['talk-show', 'reality-competition', 'programs', 'reality']),
   );
-  return explicitKind || explicitGenre || strongSeriesTitle || explicitCategory;
+  return explicitKind || explicitProgram || explicitCategory;
 };
 
 const isDocumentaryItem = (item: CatalogItem) => {
-  const title = catalogTitleText(item);
   const genres = catalogGenreText(item);
-  const knownNarrativeWhistle = hasStandaloneTerm(title, ['سوت', 'whistle']) &&
-    hasStandaloneTerm(genres, ['ترسناک', 'وحشت', 'هیجان انگیز', 'horror', 'thriller', 'drama']);
-  if (knownNarrativeWhistle) return false;
-  if (Number(item.tmdbValidationVersion || 0) >= 3) return item.isDocumentary === true;
-  const genreConfirmed = item.genres.some((genre) => /مستند|documentary/i.test(genre));
-  if (genreConfirmed) return true;
-
-  // برچسب‌های قدیمیِ اشتباه نباید یک فیلم داستانی را برای همیشه مستند نگه دارند.
-  const hasCurrentExplicitMetadata =
-    item.contentKind === 'documentary' ||
-    item.isDocumentary === true ||
-    hasCategory(item, 'documentaries');
-  return Boolean(hasCurrentExplicitMetadata && item.genres.length === 0);
+  const narrative = hasStandaloneTerm(genres, [
+    'درام', 'ترسناک', 'وحشت', 'هیجان انگیز', 'اکشن', 'کمدی', 'عاشقانه', 'خانوادگی',
+    'جنایی', 'ماجراجویی', 'علمی تخیلی', 'فانتزی',
+    'drama', 'horror', 'thriller', 'action', 'comedy', 'romance', 'family', 'crime',
+    'adventure', 'science fiction', 'sci-fi', 'fantasy',
+  ]);
+  if (Number(item.tmdbValidationVersion || 0) >= 7) return item.isDocumentary === true;
+  if (narrative) return false;
+  return Boolean(
+    item.genres.some((genre) => /مستند|documentary/i.test(genre)) ||
+    (item.contentKind === 'documentary' && item.genres.length === 0),
+  );
 };
 
 const isWildlifeDocumentaryItem = (item: CatalogItem) => {
   if (!isDocumentaryItem(item)) return false;
-  if (hasCategory(item, 'wildlife')) return true;
-  const text = `${catalogTitleText(item)} ${catalogGenreText(item)} ${catalogMetadataText(item)}`;
-  return hasStandaloneTerm(text, [
-    'حیات وحش', 'طبیعت', 'جانوران', 'حیوانات', 'اقیانوس', 'زیست بوم',
-    'پلنگ', 'یوز', 'شیر', 'ببر', 'گرگ', 'خرس', 'پرندگان', 'جنگل', 'ساوانا',
-    'wildlife', 'nature', 'animals', 'animal', 'natural history', 'ocean', 'planet earth',
+  if (item.isWildlife === true && Number(item.tmdbValidationVersion || 0) >= 7) return true;
+  const text = `${catalogTitleText(item)} ${catalogGenreText(item)} ${String(item.overview || '')}`;
+  const strong = hasStandaloneTerm(text, [
+    'حیات وحش', 'جانوران وحشی', 'حیوانات وحشی', 'دنیای حیوانات', 'دنیای جانوران',
+    'حیات جانوری', 'زیستگاه حیوانات', 'wildlife', 'wild animals', 'animal kingdom',
+    'natural history', 'nature documentary', 'marine life', 'ocean life', 'planet earth', 'our planet',
     'leopard', 'leopards', 'cheetah', 'cheetahs', 'lion', 'lions', 'tiger', 'tigers',
-    'wolf', 'wolves', 'bear', 'bears', 'birds', 'forest', 'savanna',
+    'wolf', 'wolves', 'bear', 'bears', 'shark', 'sharks', 'whale', 'whales', 'dolphin', 'dolphins',
+    'elephant', 'elephants', 'gorilla', 'gorillas', 'penguin', 'penguins',
+    'پلنگ', 'یوزپلنگ', 'شیرها', 'ببرها', 'گرگ ها', 'خرس ها', 'کوسه', 'نهنگ', 'دلفین', 'فیل ها', 'گوریل', 'پنگوئن',
   ]);
+  if (strong) return true;
+  const habitat = hasStandaloneTerm(text, ['طبیعت', 'جنگل', 'اقیانوس', 'دریا', 'ساوانا', 'زیست بوم', 'nature', 'forest', 'ocean', 'sea', 'savanna', 'ecosystem', 'habitat']);
+  const animals = hasStandaloneTerm(text, ['حیوان', 'حیوانات', 'جانور', 'جانوران', 'گونه', 'شکارچی', 'animal', 'animals', 'species', 'predator', 'fauna']);
+  return habitat && animals;
 };
 
 const meaningfulUpdateLabel = (item: CatalogItem) => {
@@ -1171,7 +1174,7 @@ const filterTitle = (filter: SearchFilter) => {
     latest: 'جدیدترین‌ها', updated: 'به‌روزشده‌ها',
     'iranian-movies': 'فیلم‌های ایرانی', 'foreign-movies': 'فیلم‌های خارجی',
     'iranian-series': 'سریال‌های ایرانی', 'foreign-series': 'سریال‌های خارجی',
-    'korean-movies': 'فیلم‌های کره‌ای', 'korean-series': 'سریال‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی',
+    'korean-movies': 'فیلم‌های کره‌ای', 'korean-series': 'سریال‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی', 'indian-series': 'سریال‌های هندی',
     'anime-movies': 'انیمه‌های سینمایی', 'anime-series': 'انیمه‌های سریالی',
     'animation-movies': 'انیمیشن‌های سینمایی', 'animation-series': 'انیمیشن‌های سریالی',
     programs: 'برنامه‌ها و مسابقه‌ها', kids: 'کودکان', religious: 'مذهبی و مناسبتی', documentaries: 'مستندها', wildlife: 'حیات وحش', collections: 'کالکشن‌ها',
@@ -1197,12 +1200,13 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
       return !isIranianItem(item) && itemLanguages(item).includes('subtitled');
     case 'updated': return item.type === 'series' && Boolean(meaningfulUpdateLabel(item));
     case 'iranian-movies': return item.type === 'movie' && isIranianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
-    case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
+    case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isKoreanItem(item) && !isIndianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item);
     case 'iranian-series': return item.type === 'series' && isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
-    case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
+    case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isKoreanItem(item) && !isIndianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
     case 'korean-movies': return item.type === 'movie' && isKoreanItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
     case 'korean-series': return item.type === 'series' && isKoreanItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
-    case 'indian-movies': return item.type === 'movie' && hasSpecificCountry(item, 'IN', 'hi') && !isAnimatedItem(item);
+    case 'indian-movies': return item.type === 'movie' && isIndianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item);
+    case 'indian-series': return item.type === 'series' && isIndianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item);
     case 'anime-movies': return item.type === 'movie' && isAnimeItem(item);
     case 'anime-series': return item.type === 'series' && isAnimeItem(item);
     case 'animation-movies': return item.type === 'movie' && isAnimationItem(item);
@@ -1236,13 +1240,13 @@ let categoriesScreenScrollOffset = 0;
 const detailScrollOffsets = new Map<string, number>();
 const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
-  'korean-movies', 'korean-series', 'indian-movies',
+  'korean-movies', 'korean-series', 'indian-movies', 'indian-series',
   'anime-movies', 'anime-series', 'animation-movies', 'animation-series',
   'programs', 'kids', 'religious', 'documentaries', 'wildlife',
 ]);
 const STRICT_DYNAMIC_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
-  'korean-movies', 'korean-series', 'indian-movies',
+  'korean-movies', 'korean-series', 'indian-movies', 'indian-series',
   'anime-movies', 'anime-series', 'animation-movies', 'animation-series',
   'programs', 'kids', 'religious', 'documentaries', 'wildlife', 'collections',
 ]);
@@ -2546,6 +2550,10 @@ function HomeStarsSectionBase({
   const [selectedId, setSelectedId] = useState('');
   const peopleRailRef = useRef<FlatList<FeaturedPerson>>(null);
   const worksRailRef = useRef<FlatList<CatalogItem>>(null);
+  // Keep Android out of RTL/inverted FlatList code paths: both have produced
+  // recycled blank slots on long rails. Reverse the data and stay at the
+  // physical end so the first logical star still appears on the right.
+  const displayedPeople = useMemo(() => [...resolvedPeople].reverse(), [resolvedPeople]);
 
   useEffect(() => {
     if (!resolvedPeople.length) return;
@@ -2576,6 +2584,13 @@ function HomeStarsSectionBase({
   const selectPerson = useCallback((personId: string) => {
     setSelectedId((current) => current === personId ? current : personId);
   }, []);
+
+  useEffect(() => {
+    if (!displayedPeople.length) return;
+    const frame = requestAnimationFrame(() => peopleRailRef.current?.scrollToEnd({ animated: false }));
+    const retry = setTimeout(() => peopleRailRef.current?.scrollToEnd({ animated: false }), 90);
+    return () => { cancelAnimationFrame(frame); clearTimeout(retry); };
+  }, [displayedPeople.length]);
 
   useEffect(() => {
     if (!selectedIdForRender) return;
@@ -2622,16 +2637,15 @@ function HomeStarsSectionBase({
         ref={peopleRailRef}
         horizontal
         style={styles.starPeopleRail}
-        data={resolvedPeople}
+        data={displayedPeople}
         keyExtractor={(person) => person.tmdbId ? `tmdb:${person.tmdbId}` : person.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.starsPeopleList}
-        initialNumToRender={6}
-        maxToRenderPerBatch={4}
-        updateCellsBatchingPeriod={48}
-        windowSize={3}
-        removeClippedSubviews
-        getItemLayout={(_, index) => ({ length: 66, offset: 66 * index, index })}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={32}
+        windowSize={7}
+        removeClippedSubviews={false}
         nestedScrollEnabled
         renderItem={renderStarPerson}
       />
@@ -3028,6 +3042,7 @@ const HOME_CATALOG_ROWS: Array<Omit<HomeCatalogRow, 'items'>> = [
   { filter: 'korean-movies', title: 'فیلم‌های کره‌ای' },
   { filter: 'korean-series', title: 'سریال‌های کره‌ای' },
   { filter: 'indian-movies', title: 'فیلم‌های هندی' },
+  { filter: 'indian-series', title: 'سریال‌های هندی' },
   { filter: 'anime-movies', title: 'انیمه‌های سینمایی' },
   { filter: 'anime-series', title: 'انیمه‌های سریالی' },
   { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی' },
@@ -3257,6 +3272,7 @@ const CATEGORY_CARDS: CategoryCardConfig[] = [
   { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', subtitle: 'سینمای کره جنوبی', icon: 'location-outline' },
   { filter: 'korean-series', title: 'سریال‌های کره‌ای', subtitle: 'مجموعه‌های کره جنوبی', icon: 'tv-outline' },
   { filter: 'indian-movies', title: 'فیلم‌های هندی', subtitle: 'سینمای هند', icon: 'location-outline' },
+  { filter: 'indian-series', title: 'سریال‌های هندی', subtitle: 'مجموعه‌های هند', icon: 'tv-outline' },
   { filter: 'collections', title: 'کالکشن‌ها', subtitle: 'قسمت‌های یک مجموعه', icon: 'layers-outline' },
   { filter: 'kids', title: 'کودکان', subtitle: 'برنامه‌ها و آثار مخصوص کودکان', icon: 'happy-outline' },
   { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها', subtitle: 'مسابقه، رئالیتی و گفت‌وگو', icon: 'mic-outline' },
@@ -3305,7 +3321,8 @@ const relatedCategoryFilters = (filter: SearchFilter): SearchFilter[] => {
     'mobile-operator': ['movie', 'series'],
     'korean-movies': ['korean-series', 'foreign-movies'],
     'korean-series': ['korean-movies', 'foreign-series'],
-    'indian-movies': ['foreign-movies', 'movie'],
+    'indian-movies': ['movie'],
+    'indian-series': ['series'],
     collections: ['movie', 'series'],
     documentaries: ['movie', 'series'],
     wildlife: ['documentaries', 'movie'],
@@ -3780,7 +3797,8 @@ function SimpleSearchScreen({
 
 type CatalogCollectionGroup = {
   id: string;
-  title: string;
+  titleFa: string;
+  titleEn: string;
   members: CatalogItem[];
   cover: string;
 };
@@ -3803,31 +3821,62 @@ const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGr
         return a.id.localeCompare(b.id);
       });
       const first = members[0];
+      const rawFa = String(first?.collectionNameFa || '').trim();
+      const rawEn = String(first?.collectionName || '').trim();
+      const titleEn = rawEn && !hasPersianScript(rawEn)
+        ? rawEn
+        : String(first?.name || '').trim() || rawFa || `Collection ${id}`;
+      // Never show an English-only collection name as the Persian line. If TMDB
+      // does not provide a Persian collection title, use a deterministic local
+      // label based on the first Persian movie title instead of bad machine text.
+      const firstFa = String(first?.nameFa || '').trim();
+      const titleFa = rawFa && hasPersianScript(rawFa)
+        ? rawFa
+        : `مجموعه ${firstFa || 'فیلم‌ها'}`;
       return {
         id,
-        title: first?.collectionNameFa || first?.collectionName || `کالکشن ${members[0]?.nameFa || ''}`,
+        titleFa,
+        titleEn,
         members,
         cover: first?.poster || first?.backdrop || '',
       };
     })
     .filter((group) => group.members.length >= 2)
-    .sort((a, b) => b.members.length - a.members.length || a.title.localeCompare(b.title, 'fa'));
+    .sort((a, b) => b.members.length - a.members.length || a.titleFa.localeCompare(b.titleFa, 'fa'));
 };
 
 function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (item: CatalogItem) => void }) {
   const groups = useMemo(() => collectionGroupsForCatalog(catalog), [catalog]);
-  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
+  const [selectedCollectionId, setSelectedCollectionIdState] = useState<string | null>(() => collectionBrowserSelectedId);
   const { width: screenWidth } = useWindowDimensions();
   const selected = groups.find((group) => group.id === selectedCollectionId) || null;
   const columns = screenWidth >= 720 ? 4 : screenWidth >= 520 ? 3 : 2;
   const gap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - gap * (columns - 1)) / columns);
 
+  const setSelectedCollectionId = useCallback((next: string | null) => {
+    collectionBrowserSelectedId = next;
+    setSelectedCollectionIdState(next);
+  }, []);
+
+  useEffect(() => {
+    const handler = () => {
+      if (!collectionBrowserSelectedId) return false;
+      collectionBrowserSelectedId = null;
+      setSelectedCollectionIdState(null);
+      return true;
+    };
+    collectionBrowserBackHandler = handler;
+    return () => {
+      if (collectionBrowserBackHandler === handler) collectionBrowserBackHandler = null;
+    };
+  }, []);
+
   useEffect(() => {
     if (selectedCollectionId && !groups.some((group) => group.id === selectedCollectionId)) {
       setSelectedCollectionId(null);
     }
-  }, [groups, selectedCollectionId]);
+  }, [groups, selectedCollectionId, setSelectedCollectionId]);
 
   if (selected) {
     return (
@@ -3844,7 +3893,8 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
             <View style={styles.simpleHeader}>
               <Logo />
               <View style={styles.collectionMemberHeaderTitle}>
-                <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{selected.title}</Text>
+                <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{selected.titleFa}</Text>
+                <Text numberOfLines={1} style={styles.collectionFolderEnglish}>{selected.titleEn}</Text>
                 <Text style={styles.collectionFolderCount}>{toPersianDigits(selected.members.length)} فیلم</Text>
               </View>
               <Pressable onPress={() => setSelectedCollectionId(null)} hitSlop={12} style={styles.detailCircleButton}>
@@ -3861,7 +3911,7 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
         initialNumToRender={6}
         maxToRenderPerBatch={4}
         windowSize={5}
-        removeClippedSubviews
+        removeClippedSubviews={false}
         showsVerticalScrollIndicator={false}
       />
     );
@@ -3899,7 +3949,8 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
             <LinearGradient colors={['rgba(5,7,10,0.05)', 'rgba(5,7,10,0.94)']} style={StyleSheet.absoluteFill} />
             <View style={styles.collectionFolderIcon}><Ionicons name="folder-open-outline" color={COLORS.gold} size={20} /></View>
             <View style={styles.collectionFolderText}>
-              <Text numberOfLines={2} style={styles.collectionFolderTitle}>{group.title}</Text>
+              <Text numberOfLines={2} style={styles.collectionFolderTitle}>{group.titleFa}</Text>
+              <Text numberOfLines={2} style={styles.collectionFolderEnglish}>{group.titleEn}</Text>
               <Text style={styles.collectionFolderCount}>{toPersianDigits(group.members.length)} فیلم</Text>
             </View>
           </Pressable>
@@ -3908,7 +3959,7 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
       initialNumToRender={6}
       maxToRenderPerBatch={4}
       windowSize={5}
-      removeClippedSubviews
+      removeClippedSubviews={false}
       showsVerticalScrollIndicator={false}
     />
   );
@@ -5177,14 +5228,14 @@ function SeriesEpisodeShowcase({
         {visibleGroups.map((group) => {
           const canPlay = playableVersionsFor(item, group).length > 0;
           const operatorPlay = operatorFilesFor(group.files).find((file) => downloadModeFor(file) === 'operator-play');
-          const artwork = group.artwork || item.backdrop || item.poster;
+          const artwork = group.artwork || '';
           return (
             <View key={group.id} style={styles.episodeShowcaseCard}>
               <Pressable
                 onPress={() => canPlay ? onPlay(group) : operatorPlay ? onOpenOperator(operatorPlay) : onOpenDownloads(group)}
                 style={styles.episodeShowcaseArtworkWrap}
               >
-                <CatalogArtwork primary={artwork} fallback={item.poster} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />
+                <CatalogArtwork primary={artwork} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />
                 <LinearGradient colors={['transparent', 'rgba(4,6,9,0.92)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.episodeShowcasePlay}>
                   <Ionicons name={canPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
@@ -5660,7 +5711,7 @@ function PlayerEpisodesOverlay({
             return (
               <Pressable key={group.id} disabled={active} onPress={() => onSelect(group)} style={[styles.playerEpisodeCard, landscape && styles.playerEpisodeCardLandscape, active && styles.playerEpisodeCardActive]}>
                 <View style={styles.playerEpisodeArtworkWrap}>
-                  <CatalogArtwork primary={group.artwork || item.backdrop || item.poster} fallback={item.poster} style={styles.playerEpisodeArtwork} contentFit="cover" imageKind="backdrop" />
+                  <CatalogArtwork primary={group.artwork || ''} style={styles.playerEpisodeArtwork} contentFit="cover" imageKind="backdrop" />
                   <LinearGradient colors={['transparent', 'rgba(3,5,8,0.92)']} style={StyleSheet.absoluteFill} />
                   <View style={[styles.playerEpisodePlay, active && styles.playerEpisodePlayActive]}>
                     <Ionicons name={active ? 'pause' : 'play'} color="#fff" size={18} />
@@ -5711,6 +5762,7 @@ function VideoPlayerModal({
   const [orientationTransitioning, setOrientationTransitioning] = useState(false);
   const orientationTransitionOpacity = useRef(new Animated.Value(0)).current;
   const orientationTransitioningRef = useRef(false);
+  const playerClosingRef = useRef(false);
   const requestedLandscapeRef = useRef<boolean | null>(null);
   const orientationFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
@@ -5815,7 +5867,7 @@ function VideoPlayerModal({
     }
     Animated.timing(orientationTransitionOpacity, {
       toValue: 0,
-      duration: 220,
+      duration: 170,
       useNativeDriver: true,
     }).start(() => {
       orientationTransitioningRef.current = false;
@@ -5829,7 +5881,7 @@ function VideoPlayerModal({
     if (requestedLandscapeRef.current !== landscape) return;
     const frame = requestAnimationFrame(() => {
       if (orientationFallbackTimerRef.current) clearTimeout(orientationFallbackTimerRef.current);
-      orientationFallbackTimerRef.current = setTimeout(finishOrientationTransition, 90);
+      orientationFallbackTimerRef.current = setTimeout(finishOrientationTransition, 150);
     });
     return () => cancelAnimationFrame(frame);
   }, [finishOrientationTransition, landscape]);
@@ -5929,13 +5981,26 @@ function VideoPlayerModal({
   }, [clearControlsTimer, finishOrientationTransition, landscape, orientationTransitionOpacity]);
 
   const closePlayer = () => {
+    if (playerClosingRef.current) return;
+    playerClosingRef.current = true;
     const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
     const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
     clearControlsTimer();
     player.pause();
     onProgress(request, position, safeDuration, false);
-    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
-    onClose();
+
+    // Keep an opaque player surface mounted while Android rotates back to
+    // portrait. Closing the Modal first exposed the detail page for one frame.
+    orientationTransitioningRef.current = true;
+    requestedLandscapeRef.current = false;
+    setOrientationTransitioning(true);
+    orientationTransitionOpacity.stopAnimation();
+    orientationTransitionOpacity.setValue(1);
+    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)
+      .catch(() => undefined)
+      .finally(() => {
+        setTimeout(onClose, landscape ? 170 : 40);
+      });
   };
 
   const handleBack = () => {
@@ -6039,7 +6104,8 @@ function VideoPlayerModal({
       onRequestClose={handleBack}
       supportedOrientations={['portrait', 'landscape']}
       statusBarTranslucent
-      navigationBarTranslucent={false}
+      navigationBarTranslucent
+      hardwareAccelerated
     >
       <View style={styles.mediaModal}>
         <StatusBar style="light" hidden={landscape || orientationTransitioning} />
@@ -6523,6 +6589,7 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
         { key: 'iranian-series', title: 'سریال‌های ایرانی', filter: 'iranian-series', icon: 'videocam-outline' },
         { key: 'foreign-series', title: 'سریال‌های خارجی', filter: 'foreign-series', icon: 'globe-outline' },
         { key: 'korean-series', title: 'سریال‌های کره‌ای', filter: 'korean-series', icon: 'location-outline' },
+        { key: 'indian-series', title: 'سریال‌های هندی', filter: 'indian-series', icon: 'location-outline' },
       ],
     },
     {
@@ -6670,6 +6737,8 @@ const BottomNavigation = memo(function BottomNavigation({ active, onChange }: { 
 
 function AppContent() {
   const appInsets = useSafeAreaInsets();
+  const routeTransitionOpacity = useRef(new Animated.Value(0)).current;
+  const routeTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [searchFilter, setSearchFilter] = useState<SearchFilter>('all');
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
@@ -6749,9 +6818,21 @@ function AppContent() {
 
   const navigateToTab = useCallback((tab: MainTab) => {
     if (activeTabRef.current === tab) return;
+    if (routeTransitionTimerRef.current) clearTimeout(routeTransitionTimerRef.current);
+    routeTransitionOpacity.stopAnimation();
+    // A one-frame black handoff masks Android's scene re-layout flash without
+    // keeping two heavy catalog screens alive at the same time.
+    routeTransitionOpacity.setValue(1);
     activeTabRef.current = tab;
     setActiveTab(tab);
-  }, []);
+    routeTransitionTimerRef.current = setTimeout(() => {
+      Animated.timing(routeTransitionOpacity, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }).start();
+    }, 16);
+  }, [routeTransitionOpacity]);
 
   const refreshVpnState = async (showProgress = false) => {
     const sequence = ++vpnCheckSequenceRef.current;
@@ -6948,6 +7029,7 @@ function AppContent() {
       if (state.selectedPerson) { setSelectedPerson(null); return true; }
       if (state.videoRequest) { setVideoRequest(null); return true; }
       if (state.selectedItem) { setSelectedItem(null); return true; }
+      if (state.activeTab === 'search' && collectionBrowserBackHandler?.()) return true;
 
       if (state.activeTab === 'downloads' && state.downloadsReturnItem) {
         navigateToTab(state.downloadsReturnTab || 'home');
@@ -7312,7 +7394,7 @@ function AppContent() {
       initialSourceId: version.defaultSource.id,
       resumeKey: record.id,
       itemId: item.id,
-      artwork: episodeGroup?.artwork || item.backdrop || item.poster,
+      artwork: episodeGroup ? episodeGroup.artwork : (item.backdrop || item.poster),
       episodeId: episodeGroup?.id,
       language: version.language,
       resumeAt: record.position,
@@ -7417,7 +7499,7 @@ function AppContent() {
         initialSourceId: version.defaultSource.id,
         resumeKey,
         itemId: item.id,
-        artwork: episodeGroup?.artwork || item.backdrop || item.poster,
+        artwork: episodeGroup ? episodeGroup.artwork : (item.backdrop || item.poster),
         episodeId: episodeGroup?.id,
         language: version.language,
         resumeAt: 0,
@@ -7620,7 +7702,7 @@ function AppContent() {
         initialSourceId: source.id,
         resumeKey: `${item.id}:main:${file.language || 'direct'}`,
         itemId: item.id,
-        artwork: episodeGroup?.artwork || item.backdrop || item.poster,
+        artwork: episodeGroup ? episodeGroup.artwork : (item.backdrop || item.poster),
         language: file.language,
       });
       return;
@@ -7657,7 +7739,7 @@ function AppContent() {
       subtitle: item.name,
       quality: cleanQualityLabel(file.quality),
       sourceUrl: file.url,
-      artwork: episodeGroup?.artwork || item.backdrop || item.poster,
+      artwork: episodeGroup ? episodeGroup.artwork : (item.backdrop || item.poster),
       mediaType: item.type,
       seasonNumber: episodeGroup?.seasonNumber,
       episodeNumber: episodeGroup?.episodeNumber,
@@ -7877,6 +7959,7 @@ function AppContent() {
           onChange={handleBottomTabChange}
         />
       </View>
+      <Animated.View pointerEvents="none" style={[styles.routeTransitionCover, { opacity: routeTransitionOpacity }]} />
       {videoRequest ? <View pointerEvents="none" style={styles.playerRouteBackdrop} /> : null}
       <VpnBlockModal
         visible={vpnWarningVisible}
@@ -7988,6 +8071,7 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   tabScene: { flex: 1 },
   tabSceneHidden: { display: 'none' },
+  routeTransitionCover: { ...absoluteFillObject, zIndex: 850, elevation: 850, backgroundColor: '#05070A' },
   playerRouteBackdrop: { ...absoluteFillObject, zIndex: 900, elevation: 1000, backgroundColor: '#000' },
   globalMenuButton: { position: 'absolute', top: 10, right: 14, zIndex: 30, width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(17,21,28,0.96)', borderWidth: 1, borderColor: COLORS.border },
   bottomNavigationSafeArea: { backgroundColor: COLORS.background, paddingHorizontal: 10, paddingTop: 6, zIndex: 120, elevation: 30 },
@@ -8098,7 +8182,7 @@ const styles = StyleSheet.create({
   starMiniFacts: { width: '100%', marginTop: 5, gap: 2 },
   starMiniFactText: { width: '100%', color: '#D4D7DD', fontSize: 7.3, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
   starMiniLocation: { width: '100%', color: COLORS.gold, fontSize: 7.1, lineHeight: 11, fontWeight: '800', textAlign: 'right' },
-  starPeopleRail: { height: 82, flexGrow: 0, marginTop: 10, minWidth: 0, direction: 'rtl' },
+  starPeopleRail: { height: 82, flexGrow: 0, marginTop: 10, minWidth: 0 },
   starsPeopleList: { gap: 8, paddingLeft: 14, paddingRight: 14, paddingVertical: 3 },
   starPersonCard: { width: 58, alignItems: 'center' },
   starPersonAvatarWrap: { width: 53, height: 53, borderRadius: 27, padding: 1.5, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1.2, borderColor: 'rgba(255,255,255,0.12)' },
@@ -8633,6 +8717,7 @@ const styles = StyleSheet.create({
   collectionFolderIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.82)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.34)' },
   collectionFolderText: { width: '100%', alignItems: 'center' },
   collectionFolderTitle: { ...rtlText, color: '#fff', textAlign: 'center', fontSize: 13, lineHeight: 20, fontWeight: '900', width: '100%' },
+  collectionFolderEnglish: { color: COLORS.muted, textAlign: 'center', fontSize: 8.5, lineHeight: 13, marginTop: 2, width: '100%', writingDirection: 'ltr' },
   collectionFolderCount: { color: COLORS.gold, textAlign: 'center', fontSize: 10, marginTop: 4 },
   collectionMemberHeaderTitle: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
   categoryGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', marginTop: 16, marginBottom: 24 },

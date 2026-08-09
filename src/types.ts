@@ -158,6 +158,7 @@ export type CatalogItem = {
   isAnime?: boolean;
   isTalkShow?: boolean;
   isDocumentary?: boolean;
+  isWildlife?: boolean;
   createdAt?: string;
   updatedAt?: string;
   sourceCreatedAt?: string;
