@@ -283,6 +283,9 @@ const isCurrentScheduleSeries = (item?: CatalogItem | null) => {
 const isDirectMediaUrl = (url: string) =>
   /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
 
+const isDownloadableMediaUrl = (url: string) =>
+  /\.(?:mp4|m4v|mov|webm|mkv)(?:$|[?#])/i.test(url);
+
 
 
 const normalizeComparableText = (value?: string) =>
@@ -563,7 +566,12 @@ const downloadSortRank = (file: DownloadFile) => {
 
 const sortedDownloadFiles = (files: DownloadFile[]) =>
   [...files]
-    .filter((file) => downloadModeFor(file) === 'download')
+    // Purchase/external acquisition links are real user actions too. The old
+    // filter silently removed them before DownloadGroup could render them.
+    .filter((file) => {
+      const mode = downloadModeFor(file);
+      return mode === 'download' || mode === 'purchase';
+    })
     .sort((a, b) => downloadSortRank(a) - downloadSortRank(b));
 
 
@@ -721,9 +729,9 @@ const playableVersionsFor = (
   });
 
   const unlabeledSources = playbackSourcesForFiles(files.filter((file) => !file.language));
-  if (item.ir && unlabeledSources.length) {
+  if (unlabeledSources.length) {
     versions.push({
-      label: 'پخش آنلاین',
+      label: item.ir ? 'پخش آنلاین' : 'نسخه اصلی',
       sources: unlabeledSources,
       defaultSource: defaultPlaybackSource(unlabeledSources),
     });
@@ -745,10 +753,9 @@ const playableVersionsFor = (
     };
     const languages = itemLanguages(item);
     const language = languages.length === 1 ? languages[0] : undefined;
-    if (!language && !item.ir) return [];
     return [{
       language,
-      label: language ? languageTitle(language) : 'پخش آنلاین',
+      label: language ? languageTitle(language) : (item.ir ? 'پخش آنلاین' : 'نسخه اصلی'),
       sources: [source],
       defaultSource: source,
     }];
@@ -776,11 +783,16 @@ const languageSectionsForFiles = (
   });
 
   const plainFiles = sortedDownloadFiles(files.filter((file) => !file.language));
-  if (iranian && plainFiles.length) {
+  if (plainFiles.length) {
+    const purchaseCount = plainFiles.filter((file) => downloadModeFor(file) === 'purchase').length;
+    const directCount = plainFiles.length - purchaseCount;
     sections.push({
       id: `${idPrefix}-plain`,
-      title: 'لینک‌های دریافت',
-      subtitle: `${plainFiles.length} کیفیت دانلود مستقیم`,
+      title: iranian ? 'لینک‌های دریافت' : 'نسخه اصلی',
+      subtitle: directCount > 0
+        ? `${directCount} کیفیت دانلود مستقیم`
+        : `${purchaseCount} گزینه خرید یا دریافت`,
+      badge: iranian ? 'دریافت' : 'اصلی',
       files: plainFiles,
     });
   }
@@ -982,24 +994,22 @@ const itemHasUsableContent = (item: CatalogItem) => {
   // flattened copy of every episode/file: repeating that work across Home and
   // category filters was enough to block Android's JS thread and swallow taps.
   let hasDirect = false;
-  let hasLocalizedDirect = false;
   for (const section of item.downloads || []) {
     for (const file of section.files || []) {
       if (isOperatorFile(file)) {
         if (isSafeHttpUrl(file.url) && isOperatorPortalUrl(file.url)) return true;
         continue;
       }
-      if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url) || !isDirectMediaUrl(file.url)) continue;
-      hasDirect = true;
-      if (file.language) hasLocalizedDirect = true;
-      if (iranian || hasLocalizedDirect) return true;
+      if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url)) continue;
+      if (downloadModeFor(file) === 'purchase') return true;
+      if (isDirectMediaUrl(file.url) || isDownloadableMediaUrl(file.url)) {
+        hasDirect = true;
+        return true;
+      }
     }
   }
 
-  if (iranian) return hasDirect;
-  if (hasLocalizedDirect) return true;
-  if (!hasStream) return false;
-  return itemLanguages(item).length > 0;
+  return hasDirect || hasStream;
 };
 
 const visibleLoadedContent = (loaded: LoadedContent): LoadedContent => ({
@@ -7708,8 +7718,8 @@ function AppContent() {
       return;
     }
 
-    if (!/\.mp4(?:$|[?#])/i.test(file.url)) {
-      Alert.alert('دریافت فایل', 'دریافت این کیفیت فعلاً در دسترس نیست.');
+    if (!isDownloadableMediaUrl(file.url)) {
+      Alert.alert('دریافت فایل', 'دریافت مستقیم این کیفیت فعلاً در دسترس نیست.');
       return;
     }
 
