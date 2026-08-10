@@ -566,12 +566,9 @@ const downloadSortRank = (file: DownloadFile) => {
 
 const sortedDownloadFiles = (files: DownloadFile[]) =>
   [...files]
-    // Purchase/external acquisition links are real user actions too. The old
-    // filter silently removed them before DownloadGroup could render them.
-    .filter((file) => {
-      const mode = downloadModeFor(file);
-      return mode === 'download' || mode === 'purchase';
-    })
+    // Aparatchi exposes only real downloadable media. Purchase/subscription
+    // portals are intentionally never rendered as download options.
+    .filter((file) => downloadModeFor(file) === 'download')
     .sort((a, b) => downloadSortRank(a) - downloadSortRank(b));
 
 
@@ -784,14 +781,10 @@ const languageSectionsForFiles = (
 
   const plainFiles = sortedDownloadFiles(files.filter((file) => !file.language));
   if (plainFiles.length) {
-    const purchaseCount = plainFiles.filter((file) => downloadModeFor(file) === 'purchase').length;
-    const directCount = plainFiles.length - purchaseCount;
     sections.push({
       id: `${idPrefix}-plain`,
       title: iranian ? 'لینک‌های دریافت' : 'نسخه اصلی',
-      subtitle: directCount > 0
-        ? `${directCount} کیفیت دانلود مستقیم`
-        : `${purchaseCount} گزینه خرید یا دریافت`,
+      subtitle: `${plainFiles.length} کیفیت دانلود مستقیم`,
       badge: iranian ? 'دریافت' : 'اصلی',
       files: plainFiles,
     });
@@ -1001,7 +994,7 @@ const itemHasUsableContent = (item: CatalogItem) => {
         continue;
       }
       if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url)) continue;
-      if (downloadModeFor(file) === 'purchase') return true;
+      if (downloadModeFor(file) === 'purchase') continue;
       if (isDirectMediaUrl(file.url) || isDownloadableMediaUrl(file.url)) {
         hasDirect = true;
         return true;
@@ -5216,7 +5209,7 @@ function SeriesEpisodeShowcase({
       <View style={styles.episodeShowcaseHeader}>
         <View style={styles.episodeShowcaseTitleWrap}>
           <Text style={styles.detailSectionTitle}>{quran ? 'اجزای قرآن' : 'قسمت‌ها'}</Text>
-          <Text style={styles.episodeShowcaseSubtitle}>برای پخش روی تصویر بزنید؛ دانلود هر قسمت جداست.</Text>
+          <Text style={styles.episodeShowcaseSubtitle}>برای پخش روی تصویر بزنید؛ دانلود فقط وقتی لینک دانلود واقعی موجود باشد نمایش داده می‌شود.</Text>
         </View>
         <Ionicons name="albums-outline" color={COLORS.gold} size={25} />
       </View>
@@ -5238,6 +5231,9 @@ function SeriesEpisodeShowcase({
         {visibleGroups.map((group) => {
           const canPlay = playableVersionsFor(item, group).length > 0;
           const operatorPlay = operatorFilesFor(group.files).find((file) => downloadModeFor(file) === 'operator-play');
+          const hasEpisodeDownload = group.files.some((file) =>
+            downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
+          );
           const artwork = group.artwork || '';
           return (
             <View key={group.id} style={styles.episodeShowcaseCard}>
@@ -5254,9 +5250,11 @@ function SeriesEpisodeShowcase({
                   {episodeShowcaseLabel(item, group, quran)}
                 </Text>
               </Pressable>
-              <Pressable onPress={() => onOpenDownloads(group)} style={styles.episodeShowcaseDownloadButton}>
-                <Ionicons name="download-outline" color={COLORS.gold} size={18} />
-              </Pressable>
+              {hasEpisodeDownload ? (
+                <Pressable onPress={() => onOpenDownloads(group)} style={styles.episodeShowcaseDownloadButton}>
+                  <Ionicons name="download-outline" color={COLORS.gold} size={18} />
+                </Pressable>
+              ) : null}
             </View>
           );
         })}
@@ -5463,7 +5461,7 @@ function DetailModal({
     : undefined;
   const primaryOperatorPlayFile = item.type === 'series' ? latestOperatorPlayFile : standaloneOperatorPlayFile;
   const hasDownloads = downloadGroups.some((group) => group.files.some((file) =>
-    downloadModeFor(file) === 'download' || downloadModeFor(file) === 'purchase' || isOperatorFile(file),
+    downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
   ));
   const hasPlayableStream = detailBodyReady ? playableVersionsFor(item).length > 0 : false;
 
@@ -7681,15 +7679,7 @@ function AppContent() {
     const fileMode = downloadModeFor(file);
 
     if (fileMode === 'purchase') {
-      if (!(await internetIsReachable())) {
-        Alert.alert('اتصال اینترنت برقرار نیست', 'برای بازکردن لینک دریافت، اینترنت را روشن کنید.');
-        return;
-      }
-      try {
-        await Linking.openURL(file.url);
-      } catch {
-        Alert.alert('خرید / دریافت', 'بازکردن لینک منبع انجام نشد.');
-      }
+      Alert.alert('دریافت فایل', 'لینک‌های خرید در آپاراتچی نمایش داده نمی‌شوند.');
       return;
     }
 
