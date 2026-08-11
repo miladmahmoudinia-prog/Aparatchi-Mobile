@@ -6793,6 +6793,37 @@ const BottomNavigation = memo(function BottomNavigation({ active, onChange }: { 
   );
 });
 
+function StartupScreen() {
+  const motion = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animation = Animated.loop(Animated.timing(motion, {
+      toValue: 1,
+      duration: 2200,
+      useNativeDriver: true,
+    }));
+    animation.start();
+    return () => animation.stop();
+  }, [motion]);
+  const spin = motion.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const travel = motion.interpolate({ inputRange: [0, 1], outputRange: [-22, 22] });
+  return (
+    <View style={styles.startupOverlay}>
+      <LinearGradient colors={['#05070A', '#11100D', '#05070A']} style={StyleSheet.absoluteFill} />
+      <View style={styles.startupProjectorBeam} />
+      <Animated.View style={[styles.startupLogoMark, { transform: [{ rotate: spin }] }]}>
+        <Ionicons name="film-outline" color={COLORS.gold} size={42} />
+      </Animated.View>
+      <Text style={styles.startupBrand}>آپاراتچی</Text>
+      <Text style={styles.startupTagline}>نور، تصویر، قصه</Text>
+      <Animated.View style={[styles.startupFilmStrip, { transform: [{ translateX: travel }] }]}>
+        {[0,1,2,3,4].map((slot) => <View key={slot} style={styles.startupFilmFrame} />)}
+      </Animated.View>
+      <ActivityIndicator style={styles.startupSpinner} color={COLORS.gold} size="small" />
+      <Text style={styles.startupLoadingText}>در حال آماده‌کردن پرده نمایش…</Text>
+    </View>
+  );
+}
+
 function AppContent() {
   const appInsets = useSafeAreaInsets();
   const routeTransitionOpacity = useRef(new Animated.Value(0)).current;
@@ -8091,22 +8122,7 @@ function AppContent() {
           onClose={() => setOperatorWebRequest(null)}
         />
       ) : null}
-      {startupVisible ? (
-        <View style={styles.startupOverlay}>
-          <LinearGradient colors={['#05070A', '#11100D', '#05070A']} style={StyleSheet.absoluteFill} />
-          <View style={styles.startupProjectorBeam} />
-          <View style={styles.startupLogoMark}>
-            <Ionicons name="film-outline" color={COLORS.gold} size={42} />
-          </View>
-          <Text style={styles.startupBrand}>آپاراتچی</Text>
-          <Text style={styles.startupTagline}>نور، تصویر، قصه</Text>
-          <View style={styles.startupFilmStrip}>
-            {[0,1,2,3,4].map((slot) => <View key={slot} style={styles.startupFilmFrame} />)}
-          </View>
-          <ActivityIndicator style={styles.startupSpinner} color={COLORS.gold} size="small" />
-          <Text style={styles.startupLoadingText}>در حال آماده‌کردن پرده نمایش…</Text>
-        </View>
-      ) : null}
+      {startupVisible ? <StartupScreen /> : null}
     </View>
   );
 }
