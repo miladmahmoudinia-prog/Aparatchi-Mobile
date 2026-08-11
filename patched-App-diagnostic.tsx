@@ -3568,7 +3568,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
               />
             ) : (
               <View style={[StyleSheet.absoluteFill, styles.catalogArtworkFallback]}>
-                <Ionicons name="film-outline" color="rgba(216,180,90,0.55)" size={58} />
+                <Ionicons name={card.icon} color="rgba(216,180,90,0.55)" size={58} />
               </View>
             )}
             <LinearGradient
@@ -3652,10 +3652,14 @@ function CatalogListScreen({
     });
     const retry = setTimeout(() => {
       listRef.current?.scrollToOffset({ offset, animated: false });
-    }, 90);
+    }, 120);
+    const settle = setTimeout(() => {
+      listRef.current?.scrollToOffset({ offset, animated: false });
+    }, 420);
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(retry);
+      clearTimeout(settle);
     };
   }, [columnCount, scrollKey]);
 
@@ -5204,6 +5208,398 @@ const episodeShowcaseLabel = (item: CatalogItem, group: DownloadSection, quran: 
     ? `${noun} ${number}`
     : `${noun} ${number} - ${raw}`;
 };
+
+function SeriesEpisodeShowcase({
+  item,
+  onPlay,
+  onOpenDownloads,
+  onOpenOperator,
+}: {
+  item: CatalogItem;
+  onPlay: (group: DownloadSection) => void;
+  onOpenDownloads: (group: DownloadSection) => void;
+  onOpenOperator: (file: DownloadFile) => void;
+}) {
+  const groups = useMemo(() => [...(item.downloads || [])]
+    .filter((group) => isEpisodeSection(group) && (group.files || []).length > 0)
+    .sort(compareEpisodeGroupsOldestFirst), [item.downloads]);
+  const seasons = useMemo(() => groups.reduce<Record<number, DownloadSection[]>>((result, group) => {
+    const season = Number(group.seasonNumber || 1);
+    result[season] = [...(result[season] || []), group];
+    return result;
+  }, {}), [groups]);
+  const seasonNumbers = useMemo(() => Object.keys(seasons).map(Number).sort((a, b) => b - a), [seasons]);
+  const latestSeason = seasonNumbers[0] || 1;
+  const [selectedSeason, setSelectedSeason] = useState(latestSeason);
+
+  useEffect(() => setSelectedSeason(latestSeason), [item.id, latestSeason]);
+  if (!groups.length) return null;
+  const visibleSeason = seasons[selectedSeason] ? selectedSeason : latestSeason;
+  const visibleGroups = seasons[visibleSeason] || [];
+  const quran = isQuranItem(item);
+
+  return (
+    <View style={styles.episodeShowcase}>
+      <View style={styles.episodeShowcaseHeader}>
+        <View style={styles.episodeShowcaseTitleWrap}>
+          <Text style={styles.detailSectionTitle}>{quran ? 'اجزای قرآن' : 'قسمت‌ها'}</Text>
+          <Text style={styles.episodeShowcaseSubtitle}>برای پخش روی تصویر بزنید؛ دانلود فقط وقتی لینک دانلود واقعی موجود باشد نمایش داده می‌شود.</Text>
+        </View>
+        <Ionicons name="albums-outline" color={COLORS.gold} size={25} />
+      </View>
+      {seasonNumbers.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.episodeShowcaseSeasons}>
+          {seasonNumbers.map((season) => {
+            const active = visibleSeason === season;
+            return (
+              <Pressable key={season} onPress={() => setSelectedSeason(season)} style={[styles.episodeShowcaseSeason, active && styles.episodeShowcaseSeasonActive]}>
+                <Text style={[styles.episodeShowcaseSeasonText, active && styles.episodeShowcaseSeasonTextActive]}>
+                  {quran ? 'بخش' : 'فصل'} {toPersianDigits(season)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+      <View style={styles.episodeShowcaseRail}>
+        {visibleGroups.map((group) => {
+          const canPlay = playableVersionsFor(item, group).length > 0;
+          const operatorPlay = operatorFilesFor(group.files).find((file) => downloadModeFor(file) === 'operator-play');
+          const hasEpisodeDownload = group.files.some((file) =>
+            downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
+          );
+          const artwork = group.artwork || '';
+          return (
+            <View key={group.id} style={styles.episodeShowcaseCard}>
+              <Pressable
+                onPress={() => canPlay ? onPlay(group) : operatorPlay ? onOpenOperator(operatorPlay) : onOpenDownloads(group)}
+                style={styles.episodeShowcaseArtworkWrap}
+              >
+                <CatalogArtwork primary={artwork} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />
+                <LinearGradient colors={['transparent', 'rgba(4,6,9,0.92)']} style={StyleSheet.absoluteFill} />
+                <View style={styles.episodeShowcasePlay}>
+                  <Ionicons name={canPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
+                </View>
+                <Text numberOfLines={2} style={styles.episodeShowcaseNumber}>
+                  {episodeShowcaseLabel(item, group, quran)}
+                </Text>
+              </Pressable>
+              {hasEpisodeDownload ? (
+                <Pressable onPress={() => onOpenDownloads(group)} style={styles.episodeShowcaseDownloadButton}>
+                  <Ionicons name="download-outline" color={COLORS.gold} size={18} />
+                </Pressable>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function DownloadOptionsModal({
+  item,
+  visible,
+  initialGroupId,
+  onClose,
+  onDownload,
+  onStream,
+  onOperatorOpen,
+  vpnActive,
+  onVpnRetry,
+}: {
+  item: CatalogItem;
+  visible: boolean;
+  initialGroupId: string | null;
+  onClose: () => void;
+  onDownload: (item: CatalogItem, file: DownloadFile, episodeGroup?: DownloadSection) => void;
+  onStream: (item: CatalogItem, episodeGroup?: DownloadSection | null, language?: MediaLanguage) => void;
+  onOperatorOpen: (item: CatalogItem, file: DownloadFile) => void;
+  vpnActive: boolean;
+  onVpnRetry: () => void;
+}) {
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [openLanguage, setOpenLanguage] = useState<string | null>(null);
+  const groups = item.downloads || [];
+  const directMovieFiles = groups
+    .filter((group) => !isEpisodeSection(group))
+    .flatMap((group) => group.files || [])
+    .filter((file) => !isOperatorFile(file));
+  const movieGroups = languageSectionsForFiles(directMovieFiles, `movie-${item.id}`, isIranianItem(item));
+  const operatorGroups = groups.filter((group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0);
+  const selectedEpisodeGroup = initialGroupId
+    ? groups.find((group) => group.id === initialGroupId && isEpisodeSection(group)) || null
+    : null;
+  const visibleSeriesItem = selectedEpisodeGroup
+    ? { ...item, downloads: [selectedEpisodeGroup] }
+    : item;
+  const selectedEpisodeLabel = selectedEpisodeGroup
+    ? `${isQuranItem(item) ? 'جزء' : 'قسمت'} ${toPersianDigits(selectedEpisodeGroup.episodeNumber || 0)}`
+    : '';
+
+  useEffect(() => {
+    // Open only the requested episode shell. Language/quality accordions always
+    // start collapsed so the user explicitly chooses dubbed/subtitled/original.
+    setOpenGroup(initialGroupId);
+    setOpenLanguage(null);
+  }, [initialGroupId, item.id, visible]);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" hardwareAccelerated onRequestClose={onClose}>
+      <View style={styles.downloadSheetOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <SafeAreaView style={styles.downloadSheet} edges={['right', 'bottom', 'left']}>
+          <View style={styles.downloadSheetHandle} />
+          <View style={styles.downloadSheetHeader}>
+            <Pressable onPress={onClose} style={styles.downloadSheetClose}>
+              <Ionicons name="close" color={COLORS.text} size={21} />
+            </Pressable>
+            <View style={styles.downloadSheetHeaderText}>
+              <Text style={styles.downloadSheetTitle}>لینک‌های دانلود</Text>
+              <Text numberOfLines={1} style={styles.downloadSheetSubtitle}>
+                {[item.nameFa, selectedEpisodeLabel].filter(Boolean).join(' • ')}
+              </Text>
+            </View>
+            <View style={styles.downloadSheetIcon}><Ionicons name="cloud-download-outline" color={COLORS.gold} size={23} /></View>
+          </View>
+          <ScrollView contentContainerStyle={styles.downloadSheetContent} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+            {vpnActive ? (
+              <View style={styles.vpnLinksHiddenCard}>
+                <View style={styles.vpnLinksHiddenIcon}><Ionicons name="shield-outline" color={COLORS.gold} size={25} /></View>
+                <Text style={styles.vpnLinksHiddenTitle}>لینک‌ها فعلاً مخفی هستند</Text>
+                <Text style={styles.vpnLinksHiddenText}>فیلترشکن را خاموش کنید و دوباره بررسی کنید.</Text>
+                <Pressable onPress={onVpnRetry} style={styles.vpnLinksHiddenButton}>
+                  <Ionicons name="refresh-outline" color="#fff" size={18} />
+                  <Text style={styles.vpnLinksHiddenButtonText}>بررسی مجدد</Text>
+                </Pressable>
+              </View>
+            ) : item.type === 'series' ? (
+              <SeriesEpisodeList
+                item={visibleSeriesItem}
+                openGroup={openGroup}
+                openLanguage={openLanguage}
+                onToggleEpisode={(id, defaultLanguageId) => {
+                  const next = openGroup === id ? null : id;
+                  setOpenGroup(next);
+                  setOpenLanguage(next ? defaultLanguageId : null);
+                }}
+                onToggleLanguage={(id) => setOpenLanguage((current) => current === id ? null : id)}
+                onOpenFile={(file, group) => onDownload(item, file, group)}
+                onPlayLanguage={(group, language) => onStream(item, group, language)}
+                onOpenOperator={(file) => onOperatorOpen(item, file)}
+                showPlayActions={false}
+                quran={isQuranItem(item)}
+              />
+            ) : (
+              <View style={styles.movieDownloads}>
+                {movieGroups.map((group) => (
+                  <DownloadGroup
+                    key={group.id}
+                    group={group}
+                    open={openGroup === group.id}
+                    onToggle={() => setOpenGroup((current) => current === group.id ? null : group.id)}
+                    onOpenFile={(file) => onDownload(item, file)}
+                  />
+                ))}
+                {operatorGroups.map((group) => (
+                  <OperatorAccessGroup
+                    key={`operator-${group.id}`}
+                    group={group}
+                    open={openGroup === `operator-${group.id}`}
+                    onToggle={() => setOpenGroup((current) => current === `operator-${group.id}` ? null : `operator-${group.id}`)}
+                    onOpenFile={(file) => onOperatorOpen(item, file)}
+                  />
+                ))}
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </View>
+    </Modal>
+  );
+}
+
+function DetailModal({
+  item,
+  catalog,
+  visible,
+  onClose,
+  favorite,
+  onFavorite,
+  episodeAlertEnabled,
+  episodeAlertBusy,
+  onEpisodeAlert,
+  onStream,
+  onDownload,
+  onOperatorOpen,
+  onOpenRelated,
+  onOpenPerson,
+  onBrowse,
+  vpnActive,
+  onVpnRetry,
+}: {
+  item: CatalogItem | null;
+  catalog: CatalogItem[];
+  visible: boolean;
+  onClose: () => void;
+  favorite: boolean;
+  onFavorite: () => void;
+  episodeAlertEnabled: boolean;
+  episodeAlertBusy: boolean;
+  onEpisodeAlert: () => void;
+  onStream: (item: CatalogItem, episodeGroup?: DownloadSection | null, language?: MediaLanguage) => void;
+  onDownload: (item: CatalogItem, file: DownloadFile, episodeGroup?: DownloadSection) => void;
+  onOperatorOpen: (item: CatalogItem, file: DownloadFile) => void;
+  onOpenRelated: (item: CatalogItem) => void;
+  onOpenPerson: (person: CatalogPerson) => void;
+  onBrowse: (filter: SearchFilter) => void;
+  vpnActive: boolean;
+  onVpnRetry: () => void;
+}) {
+  const [detailBodyReady, setDetailBodyReady] = useState(false);
+  const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
+  const [downloadInitialGroup, setDownloadInitialGroup] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDetailBodyReady(false);
+    setDownloadSheetOpen(false);
+    setDownloadInitialGroup(null);
+    if (!visible || !item) return undefined;
+    // Summary rows from catalog-index deliberately omit downloads/people. Do
+    // not render an empty detail body while the one small detail shard is still
+    // loading. The parent hydrates only this selected title.
+    if (item.detailPath && item.detailLoaded !== true) return undefined;
+    let cancelled = false;
+    const reveal = () => {
+      if (cancelled) return;
+      cancelled = true;
+      setDetailBodyReady(true);
+    };
+    const interaction = InteractionManager.runAfterInteractions(reveal);
+    const fallback = setTimeout(reveal, 80);
+    return () => {
+      cancelled = true;
+      interaction.cancel();
+      clearTimeout(fallback);
+    };
+  }, [item?.detailLoaded, item?.detailPath, item?.id, visible]);
+  if (!item) return null;
+
+  const downloadGroups = detailBodyReady ? item.downloads || [] : [];
+  const episodeGroups = downloadGroups.filter((group) => isEpisodeSection(group) && (languageSectionsForFiles(group.files, group.id, isIranianItem(item)).length || operatorFilesFor(group.files).length));
+  const standaloneOperatorGroups = downloadGroups.filter((group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0);
+  const standaloneOperatorPlayFile = standaloneOperatorGroups.flatMap((group) => operatorFilesFor(group.files)).find((file) => downloadModeFor(file) === 'operator-play');
+  const latestEpisode = detailBodyReady ? newestEpisodeGroup(item) : null;
+  const latestOperatorPlayFile = latestEpisode
+    ? operatorFilesFor(latestEpisode.files).find((file) => downloadModeFor(file) === 'operator-play')
+    : undefined;
+  const primaryOperatorPlayFile = item.type === 'series' ? latestOperatorPlayFile : standaloneOperatorPlayFile;
+  const hasDownloads = downloadGroups.some((group) => group.files.some((file) =>
+    downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
+  ));
+  const hasPlayableStream = detailBodyReady ? playableVersionsFor(item).length > 0 : false;
+
+  const browseAndClose = (filter: SearchFilter) => { onClose(); requestAnimationFrame(() => onBrowse(filter)); };
+
+  return (
+    <Modal visible={visible} animationType="fade" hardwareAccelerated statusBarTranslucent={false} onRequestClose={() => downloadSheetOpen ? setDownloadSheetOpen(false) : onClose()}>
+      <SafeAreaView style={styles.detailScreen} edges={['top','right','bottom','left']}>
+        <StatusBar style="light" />
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.detailContent}
+          contentOffset={{ x: 0, y: detailScrollOffsets.get(String(item.id)) || 0 }}
+          scrollEventThrottle={48}
+          onScrollEndDrag={(event) => detailScrollOffsets.set(String(item.id), Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
+          onMomentumScrollEnd={(event) => detailScrollOffsets.set(String(item.id), Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
+        >
+          <View style={styles.detailHero}>
+            <CatalogArtwork primary={item.backdrop} fallback={item.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="backdrop" />
+            <LinearGradient colors={['rgba(7,9,12,0.06)', COLORS.background]} style={StyleSheet.absoluteFill} />
+            <View style={styles.detailTopBar}>
+              <Pressable onPress={onClose} unstable_pressDelay={0} hitSlop={14} style={styles.detailCircleButton}><Ionicons name="arrow-forward" color="#fff" size={21} /></Pressable>
+              <View style={styles.detailTopActions}>
+                {item.type === 'series' ? <Pressable disabled={episodeAlertBusy} onPress={onEpisodeAlert} unstable_pressDelay={0} hitSlop={12} style={[styles.detailCircleButton, episodeAlertBusy && styles.detailCircleButtonDisabled]}>{episodeAlertBusy ? <ActivityIndicator color={COLORS.gold} size="small" /> : <Ionicons name={episodeAlertEnabled ? 'notifications' : 'notifications-outline'} color={episodeAlertEnabled ? COLORS.gold : '#fff'} size={21} />}</Pressable> : null}
+                <Pressable onPress={onFavorite} unstable_pressDelay={0} hitSlop={12} style={styles.detailCircleButton}><Ionicons name={favorite ? 'bookmark' : 'bookmark-outline'} color={favorite ? COLORS.gold : '#fff'} size={21} /></Pressable>
+              </View>
+            </View>
+            <View style={styles.detailIdentity}>
+              <CatalogArtwork primary={item.poster} fallback={item.backdrop} style={styles.detailPoster} contentFit="cover" imageKind="poster" />
+              <View style={styles.detailTitleBlock}>
+                <Text style={styles.detailType}>{mediaKindLabel(item)}</Text>
+                {itemHasOperatorAccess(item) ? <View style={styles.detailOperatorBadge}><Ionicons name="phone-portrait-outline" color={COLORS.gold} size={12} /><Text style={styles.detailOperatorBadgeText}>ویژه اینترنت همراه</Text></View> : null}
+                <Text
+                  numberOfLines={adaptiveTitleLines(item.nameFa)}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                  style={[styles.detailTitle, adaptiveTitleStyle(item.nameFa, 'detail')]}
+                >
+                  {item.nameFa}
+                </Text>
+                <Text style={styles.detailEnglish}>{item.name}</Text>
+                <View style={styles.detailMeta}>
+                  <Pressable onPress={() => browseAndClose(yearFilter(item.year))}><Text style={styles.detailMetaText}>{toPersianDigits(item.year)}</Text></Pressable>
+                  {typeof item.rate === 'number' ? <Text style={styles.detailMetaText}>IMDb {toPersianDigits(item.rate)}</Text> : null}
+                  {item.type === 'series' && latestEpisode ? <Text style={styles.detailMetaText}>تا قسمت {toPersianDigits(latestEpisode.episodeNumber || 0)}</Text> : null}
+                </View>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.detailBody}>
+            {!detailBodyReady ? (
+              <View style={styles.detailPreparing}>
+                <ActivityIndicator color={COLORS.gold} size="small" />
+                <Text style={styles.detailPreparingText}>در حال آماده‌کردن جزئیات…</Text>
+              </View>
+            ) : (
+              <>
+            <View style={styles.detailActions}>
+              {item.type === 'movie' && !vpnActive && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
+              {item.type === 'movie' && hasDownloads ? (
+                <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
+                  <Ionicons name="download-outline" color={COLORS.gold} size={19} />
+                  <Text style={styles.detailDownloadActionText}>دانلود</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => void shareCatalogItem(item)} style={styles.detailSecondaryButton}><Ionicons name="share-social-outline" color={COLORS.text} size={20} /></Pressable>
+            </View>
+
+            <View style={styles.genreRow}>
+              {(item.countryCodes || []).map((code, index) => ({ code, index })).filter(({ code }) => String(code).toUpperCase() !== 'JP').map(({ code, index }) => <Pressable key={`country-${code}`} onPress={() => browseAndClose(countryFilter(code))}><Text style={styles.detailGenre}>{item.countryLabels?.[index] || countryLabel(code, catalog)}</Text></Pressable>)}
+              {item.genres.map((genre) => <Pressable key={genre} onPress={() => browseAndClose(genreFilter(genre))}><Text style={styles.detailGenre}>{genre}</Text></Pressable>)}
+            </View>
+
+            <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text><Text style={styles.detailOverview}>{item.overview}</Text>
+            <PeopleSection item={item} onOpen={onOpenPerson} />
+            <MovieCollectionSection item={item} catalog={catalog} onOpen={onOpenRelated} />
+            {item.type === 'series' && episodeGroups.length ? (
+              <SeriesEpisodeShowcase
+                item={item}
+                onPlay={(group) => onStream(item, group)}
+                onOpenDownloads={(group) => { setDownloadInitialGroup(group.id); setDownloadSheetOpen(true); }}
+                onOpenOperator={(file) => onOperatorOpen(item, file)}
+              />
+            ) : null}
+              </>
+            )}
+          </View>
+        </ScrollView>
+        <DownloadOptionsModal
+          item={item}
+          visible={downloadSheetOpen}
+          initialGroupId={downloadInitialGroup}
+          onClose={() => setDownloadSheetOpen(false)}
+          onDownload={onDownload}
+          onStream={onStream}
+          onOperatorOpen={onOperatorOpen}
+          vpnActive={vpnActive}
+          onVpnRetry={onVpnRetry}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
 
 function PersonProfileModal({
   person,
