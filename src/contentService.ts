@@ -1416,6 +1416,7 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
   if (!items.length) return null;
 
   const featuredPeople = normalizeFeaturedPeople(payload.featuredPeople ?? payload.featured_people);
+  const peopleWorks = normalizePeopleWorks(payload.peopleWorks ?? payload.people_works);
   const updatedAt = asString(payload.updatedAt, new Date().toISOString());
 
   return {
@@ -1428,8 +1429,20 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
     iranianSchedule: normalizeSchedule(payload.iranianSchedule),
     weeklySchedule: normalizeSchedule(payload.weeklySchedule),
     featuredPeople,
+    peopleWorks,
     imdbTop100: normalizeImdbTop100(payload.imdbTop100 ?? payload.imdb_top_100, items, updatedAt),
   };
+};
+
+const normalizePeopleWorks = (value: unknown): Record<string, string[]> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const entries: Array<[string, string[]]> = [];
+  for (const [rawKey, rawIds] of Object.entries(value as Record<string, unknown>)) {
+    const key = asString(rawKey);
+    const ids = [...new Set(stringArray(rawIds).map((id) => asString(id)).filter(Boolean))];
+    if (key && ids.length) entries.push([key, ids]);
+  }
+  return Object.fromEntries(entries);
 };
 
 const normalizedLocalPayload = (): CatalogPayload => {
@@ -1437,11 +1450,13 @@ const normalizedLocalPayload = (): CatalogPayload => {
     .map((item) => normalizeCatalogItem(item))
     .filter((item): item is CatalogItem => Boolean(item));
   const featuredPeople = normalizeFeaturedPeople(LOCAL_PAYLOAD.featuredPeople);
+  const peopleWorks = normalizePeopleWorks(LOCAL_PAYLOAD.peopleWorks);
 
   return {
     ...LOCAL_PAYLOAD,
     items,
     featuredPeople,
+    peopleWorks,
     imdbTop100: normalizeImdbTop100(LOCAL_PAYLOAD.imdbTop100, items, LOCAL_PAYLOAD.updatedAt),
   };
 };

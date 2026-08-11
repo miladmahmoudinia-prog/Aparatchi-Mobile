@@ -727,8 +727,13 @@ const playableVersionsFor = (
 
   const unlabeledSources = playbackSourcesForFiles(files.filter((file) => !file.language));
   if (unlabeledSources.length) {
+    const inferredLanguages = itemLanguages(item);
+    const inferredLanguage = inferredLanguages.length === 1 ? inferredLanguages[0] : undefined;
     versions.push({
-      label: item.ir ? 'پخش آنلاین' : 'نسخه اصلی',
+      ...(inferredLanguage ? { language: inferredLanguage } : {}),
+      label: inferredLanguage
+        ? languageTitle(inferredLanguage)
+        : (item.ir ? 'پخش آنلاین' : 'نسخه اصلی'),
       sources: unlabeledSources,
       defaultSource: defaultPlaybackSource(unlabeledSources),
     });
@@ -1160,6 +1165,7 @@ const isWildlifeDocumentaryItem = (item: CatalogItem) => {
 const meaningfulUpdateLabel = (item: CatalogItem) => {
   const label = String(item.updateLabel || '').trim();
   if (!label) return '';
+  if (/^(?:سریال|عنوان)\s+جدید$/i.test(label)) return label;
   return /قسمت|فصل|دوبله|زیر\s*نویس|subtitle|dubbed|کیفیت|quality/i.test(label) ? label : '';
 };
 
@@ -1313,7 +1319,27 @@ const personInitials = (person: CatalogPerson) =>
     .map((part) => part[0])
     .join('');
 
-const personWorksFor = (person: CatalogPerson, catalog: CatalogItem[]) => {
+const personWorkKeysFor = (person: CatalogPerson) => {
+  const keys: string[] = [];
+  if (person.tmdbId) keys.push(`tmdb:${Number(person.tmdbId)}`);
+  for (const value of [person.name, person.nameFa, personName(person)]) {
+    const normalized = normalizeComparableText(String(value || ''));
+    if (normalized) keys.push(`name:${normalized}`);
+  }
+  return [...new Set(keys)];
+};
+
+const personWorksFor = (
+  person: CatalogPerson,
+  catalog: CatalogItem[],
+  peopleWorks: Record<string, string[]> = {},
+) => {
+  const catalogById = new Map(catalog.map((item) => [String(item.id), item] as const));
+  const indexed = [...new Set(personWorkKeysFor(person).flatMap((key) => peopleWorks[key] || []))]
+    .map((id) => catalogById.get(String(id)))
+    .filter((item): item is CatalogItem => Boolean(item));
+  if (indexed.length) return sortForCatalogFilter(indexed, 'latest');
+
   const identityNames = [person.name, person.nameFa, personName(person)]
     .map((value) => normalizeComparableText(String(value || '')))
     .filter(Boolean);
@@ -2258,6 +2284,14 @@ function MovieCollectionSection({
 }) {
   const members = collectionMembersFor(item, catalog);
   if (members.length < 2) return null;
+  const rawCollectionFa = String(item.collectionNameFa || '').trim();
+  const rawCollectionEn = String(item.collectionName || '').trim();
+  const collectionTitleFa = rawCollectionFa && hasPersianScript(rawCollectionFa)
+    ? rawCollectionFa
+    : `مجموعه ${String(members[0]?.nameFa || item.nameFa || 'فیلم‌ها').trim()}`;
+  const collectionTitleEn = rawCollectionEn && !hasPersianScript(rawCollectionEn)
+    ? rawCollectionEn
+    : '';
 
   return (
     <View style={styles.collectionSection}>
@@ -2267,11 +2301,9 @@ function MovieCollectionSection({
         </View>
         <View style={styles.collectionHeaderText}>
           <Text style={styles.collectionEyebrow}>مجموعه فیلم‌ها</Text>
-          <Text style={styles.collectionTitle}>
-            {item.collectionNameFa || item.collectionName || 'این مجموعه'}
-          </Text>
-          {item.collectionName ? (
-            <Text style={styles.collectionEnglish}>{item.collectionName}</Text>
+          <Text style={styles.collectionTitle}>{collectionTitleFa}</Text>
+          {collectionTitleEn ? (
+            <Text style={styles.collectionEnglish}>{collectionTitleEn}</Text>
           ) : null}
         </View>
       </View>
@@ -3399,12 +3431,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
     };
 
     for (const card of CATEGORY_CARDS) {
-      let selected: CatalogItem | undefined;
-      for (const filter of [card.filter, ...relatedCategoryFilters(card.filter)]) {
-        selected = pickBestUnused(filter);
-        if (selected) break;
-      }
-      if (!selected) selected = pickAnyUnused();
+      const selected = pickBestUnused(card.filter);
       if (!selected) continue;
       result.set(card.filter, selected);
       usedItems.add(selected.id);
@@ -3444,8 +3471,11 @@ const CategoriesScreen = memo(function CategoriesScreen({
     });
     const retry = setTimeout(() => {
       categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
-    }, 90);
-    return () => { cancelAnimationFrame(frame); clearTimeout(retry); };
+    }, 120);
+    const settle = setTimeout(() => {
+      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
+    }, 420);
+    return () => { cancelAnimationFrame(frame); clearTimeout(retry); clearTimeout(settle); };
   }, [columnCount, deferredQuery]);
 
   const rememberCategoriesOffset = useCallback((event: any) => {
@@ -3538,7 +3568,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
               />
             ) : (
               <View style={[StyleSheet.absoluteFill, styles.catalogArtworkFallback]}>
-                <Ionicons name="film-outline" color="rgba(216,180,90,0.55)" size={58} />
+                <Ionicons name={card.icon} color="rgba(216,180,90,0.55)" size={58} />
               </View>
             )}
             <LinearGradient
@@ -3622,10 +3652,14 @@ function CatalogListScreen({
     });
     const retry = setTimeout(() => {
       listRef.current?.scrollToOffset({ offset, animated: false });
-    }, 90);
+    }, 120);
+    const settle = setTimeout(() => {
+      listRef.current?.scrollToOffset({ offset, animated: false });
+    }, 420);
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(retry);
+      clearTimeout(settle);
     };
   }, [columnCount, scrollKey]);
 
@@ -5570,20 +5604,22 @@ function DetailModal({
 function PersonProfileModal({
   person,
   catalog,
+  peopleWorks,
   visible,
   onClose,
   onOpenItem,
 }: {
   person: CatalogPerson | null;
   catalog: CatalogItem[];
+  peopleWorks: Record<string, string[]>;
   visible: boolean;
   onClose: () => void;
   onOpenItem: (item: CatalogItem) => void;
 }) {
   const { width: screenWidth } = useWindowDimensions();
   const works = useMemo(
-    () => person ? personWorksFor(person, catalog) : [],
-    [catalog, person],
+    () => person ? personWorksFor(person, catalog, peopleWorks) : [],
+    [catalog, peopleWorks, person],
   );
   if (!person) return null;
 
@@ -8000,6 +8036,7 @@ function AppContent() {
       <PersonProfileModal
         person={selectedPerson}
         catalog={content.items}
+        peopleWorks={content.peopleWorks || {}}
         visible={Boolean(selectedPerson)}
         onClose={() => setSelectedPerson(null)}
         onOpenItem={(nextItem) => {

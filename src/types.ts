@@ -53,7 +53,7 @@ export type DownloadSection = {
   title: string;
   subtitle?: string;
   badge?: string;
-  /** تصویر همان قسمت؛ در نبود آن اپ از پس‌زمینهٔ خود عنوان استفاده می‌کند. */
+  /** تصویر همان قسمت؛ اگر آماده نیست UI فقط placeholder سبک نشان می‌دهد. */
   artwork?: string;
   files: DownloadFile[];
   language?: MediaLanguage;
@@ -213,6 +213,8 @@ export type CatalogPayload = {
   iranianSchedule: ScheduleEntry[];
   weeklySchedule?: ScheduleEntry[];
   featuredPeople?: FeaturedPerson[];
+  /** Compact reverse lookup: person identity key -> catalog item IDs. */
+  peopleWorks?: Record<string, string[]>;
   imdbTop100?: ImdbTop100;
 };
 
