@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/apply-final-mobile-fixes.mjs'
+      - '.github/workflows/apply-final-mobile-fixes.yml'
 
 permissions:
   contents: write
@@ -30,7 +31,22 @@ jobs:
           cache: npm
 
       - name: Apply source fixes
-        run: node scripts/apply-final-mobile-fixes.mjs
+        shell: bash
+        run: |
+          set +e
+          node scripts/apply-final-mobile-fixes.mjs > final-mobile-fix-output.log 2>&1
+          code=$?
+          cat final-mobile-fix-output.log
+          if [ "$code" -ne 0 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add final-mobile-fix-output.log
+            git commit -m "diagnostic: capture Mobile final fixer failure" || true
+            git pull --rebase --autostash origin main
+            git push origin HEAD:main
+            exit "$code"
+          fi
+          rm -f final-mobile-fix-output.log
 
       - name: Install dependencies
         run: npm ci
@@ -50,5 +66,5 @@ jobs:
             exit 0
           fi
           git commit -m "fix: restore media labels people works categories and navigation"
-          git pull --rebase origin main
+          git pull --rebase --autostash origin main
           git push origin HEAD:main
