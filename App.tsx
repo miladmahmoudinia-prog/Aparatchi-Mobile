@@ -414,12 +414,8 @@ const isOperatorPortalUrl = (url?: string) => {
   try {
     const parsed = new URL(url);
     const decodedPath = decodeURIComponent(parsed.pathname || '');
-    if (/(^|\.)redl\.ink$/i.test(parsed.hostname)) return decodedPath.length > 1;
     if (!/(^|\.)upera\.tv$/i.test(parsed.hostname)) return false;
-    const exactStream = /^\/stream\/(?:movie|episode)\/[^/?#]+\/?$/i.test(decodedPath);
-    const explicitPortal = /\/(?:watch|play|download)(?:\/|$)/i.test(decodedPath) &&
-      /\/(?:movie|series|episode)(?:\/|$)/i.test(decodedPath);
-    return exactStream || explicitPortal;
+    return /^\/stream\/(?:movie|episode)\/[^/?#]+\/?$/i.test(decodedPath);
   } catch {
     return false;
   }
@@ -460,7 +456,7 @@ const shareCatalogItem = async (item: CatalogItem) => {
 
 const itemLanguages = (item: CatalogItem): MediaLanguage[] =>
   LANGUAGE_ORDER.filter((language) =>
-    item.availableLanguages?.includes(language) ||
+    (item.detailLoaded !== true && item.availableLanguages?.includes(language)) ||
     (item.downloads || []).some((section) =>
       section.files.some((file) =>
         !isOperatorFile(file) && file.language === language
@@ -1212,7 +1208,8 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
 
   switch (filter) {
     case 'all': case 'latest': return true;
-    case 'movie': case 'series': return item.type === filter;
+    case 'movie': return item.type === 'movie' && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item);
+    case 'series': return item.type === 'series' && !isAnimatedItem(item) && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item);
     case 'dubbed':
       return !isIranianItem(item) && itemLanguages(item).includes('dubbed');
     case 'subtitled':
@@ -1233,7 +1230,7 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'programs': return isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item);
     case 'kids': return isKidsItem(item);
     case 'religious': return isReligiousItem(item);
-    case 'documentaries': return isDocumentaryItem(item);
+    case 'documentaries': return isDocumentaryItem(item) && !isWildlifeDocumentaryItem(item);
     case 'wildlife': return isWildlifeDocumentaryItem(item);
     case 'collections': return item.type === 'movie' && Boolean(item.collectionId);
     case 'mobile-operator': return itemHasOperatorAccess(item);
@@ -1272,7 +1269,7 @@ const STRICT_DYNAMIC_CATEGORY_FILTERS = new Set<SearchFilter>([
 
 const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
   if (filter === 'all' || filter === 'latest') return true;
-  if (filter === 'movie' || filter === 'series') return item.type === filter;
+  if (filter === 'movie' || filter === 'series') return matchesCatalogFilter(item, filter);
   if (filter === 'updated') return isUpdatedEpisodicItem(item);
   if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
   if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length && !STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)) {
@@ -2226,6 +2223,9 @@ const PosterCard = memo(function PosterCard({
   const posterBadges = itemPosterBadges(item);
   const latestEpisode = item.type === 'series' ? newestEpisodeGroup(item) : null;
   const latestEpisodeMeta = latestEpisode || item.latestEpisode || null;
+  const posterNameFa = /[A-Za-z]/.test(item.nameFa || '') && item.collectionNameFa
+    ? `${item.collectionNameFa}${item.collectionOrder ? ` ${toPersianDigits(item.collectionOrder)}` : ''}`
+    : item.nameFa;
 
   return (
     <Pressable onPressIn={() => { if (item.detailPath) void loadCatalogItemDetail(item); }} onPress={onOpen} unstable_pressDelay={0} hitSlop={7} style={({ pressed }) => [styles.posterCard, { width }, pressed && styles.posterCardPressed]}>
@@ -2266,7 +2266,7 @@ const PosterCard = memo(function PosterCard({
             <Text style={styles.posterEpisodeText}>
               {Number(item.seasonCount || 0) > 1 && latestEpisodeMeta
                 ? `فصل ${toPersianDigits(latestEpisodeMeta.seasonNumber || item.seasonCount || 1)} - قسمت ${toPersianDigits(latestEpisodeMeta.episodeNumber || 0)}`
-                : `${toPersianDigits(item.episodeCount || latestEpisodeMeta?.episodeNumber || 0)} قسمت`}
+                : `قسمت ${toPersianDigits(latestEpisodeMeta?.episodeNumber || item.episodeCount || 0)}`}
             </Text>
           </View>
         ) : null}
@@ -2277,7 +2277,7 @@ const PosterCard = memo(function PosterCard({
           </View>
         ) : null}
       </View>
-      <Text numberOfLines={1} style={styles.posterName}>{item.nameFa}</Text>
+      <Text numberOfLines={1} style={styles.posterName}>{posterNameFa}</Text>
       <Text numberOfLines={1} style={styles.posterEnglish}>{item.name || toPersianDigits(item.year)}</Text>
     </Pressable>
   );
@@ -3397,7 +3397,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
   const usableCatalog = catalog;
   const categoryPreviewPool = useMemo(
-    () => sortForCatalogFilter(usableCatalog, 'latest').slice(0, 220),
+    () => sortForCatalogFilter(usableCatalog, 'latest').slice(0, 900),
     [usableCatalog],
   );
 
@@ -5478,7 +5478,10 @@ function DetailModal({
     // Summary rows from catalog-index deliberately omit downloads/people. Do
     // not render an empty detail body while the one small detail shard is still
     // loading. The parent hydrates only this selected title.
-    if (item.detailPath && item.detailLoaded !== true) return undefined;
+    if (item.detailPath && item.detailLoaded !== true) {
+      const summaryFallback = setTimeout(() => setDetailBodyReady(true), 1800);
+      return () => clearTimeout(summaryFallback);
+    }
     let cancelled = false;
     const reveal = () => {
       if (cancelled) return;
@@ -5512,7 +5515,7 @@ function DetailModal({
   const browseAndClose = (filter: SearchFilter) => { onClose(); requestAnimationFrame(() => onBrowse(filter)); };
 
   return (
-    <Modal visible={visible} animationType="fade" hardwareAccelerated statusBarTranslucent={false} onRequestClose={() => downloadSheetOpen ? setDownloadSheetOpen(false) : onClose()}>
+    <Modal visible={visible} animationType="none" hardwareAccelerated statusBarTranslucent={false} onRequestClose={() => downloadSheetOpen ? setDownloadSheetOpen(false) : onClose()}>
       <SafeAreaView style={styles.detailScreen} edges={['top','right','bottom','left']}>
         <StatusBar style="light" />
         <ScrollView
@@ -6526,7 +6529,7 @@ function OperatorWebModal({
               <Ionicons name="alert-circle-outline" color={COLORS.gold} size={35} />
               <Text style={styles.operatorWebErrorTitle}>صفحه باز نشد</Text>
               <Text style={styles.operatorWebErrorText}>
-                وای‌فای و فیلترشکن را خاموش کنید و مطمئن شوید اینترنت سیم‌کارت روشن است.
+                صفحه سرویس‌دهنده پاسخ نداد. اتصال یا محدودیت اپراتور را بررسی کنید و دوباره تلاش کنید.
               </Text>
               <Pressable
                 onPress={() => {
@@ -6546,7 +6549,8 @@ function OperatorWebModal({
               originWhitelist={['https://*']}
               javaScriptEnabled
               domStorageEnabled
-              incognito
+              sharedCookiesEnabled
+              thirdPartyCookiesEnabled
               startInLoadingState
               onShouldStartLoadWithRequest={(navigation) =>
                 isTrustedOperatorHostUrl(navigation.url)
@@ -6812,7 +6816,7 @@ function AppContent() {
   const [contentResolved, setContentResolved] = useState(() => content.items.length > 0);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentOffline, setContentOffline] = useState(false);
-  const [startupVisible, setStartupVisible] = useState(() => content.items.length === 0);
+  const [startupVisible, setStartupVisible] = useState(true);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
@@ -6831,7 +6835,7 @@ function AppContent() {
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
   const startupStartedAtRef = useRef(Date.now());
-  const startupDismissedRef = useRef(content.items.length > 0);
+  const startupDismissedRef = useRef(false);
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vpnCheckSequenceRef = useRef(0);
   const vpnPausingDownloadsRef = useRef(false);
@@ -6908,7 +6912,7 @@ function AppContent() {
   const dismissStartup = useCallback(() => {
     if (startupDismissedRef.current) return;
     startupDismissedRef.current = true;
-    const minimumVisibleMs = 520;
+    const minimumVisibleMs = 5000;
     const elapsed = Date.now() - startupStartedAtRef.current;
     const delay = Math.max(0, minimumVisibleMs - elapsed);
     startupDismissTimerRef.current = setTimeout(() => setStartupVisible(false), delay);
@@ -7022,8 +7026,8 @@ function AppContent() {
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
-      startupFallbackTimer = setTimeout(dismissStartup, 1400);
     }
+    startupFallbackTimer = setTimeout(dismissStartup, 5000);
 
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
@@ -8087,6 +8091,22 @@ function AppContent() {
           onClose={() => setOperatorWebRequest(null)}
         />
       ) : null}
+      {startupVisible ? (
+        <View style={styles.startupOverlay}>
+          <LinearGradient colors={['#05070A', '#11100D', '#05070A']} style={StyleSheet.absoluteFill} />
+          <View style={styles.startupProjectorBeam} />
+          <View style={styles.startupLogoMark}>
+            <Ionicons name="film-outline" color={COLORS.gold} size={42} />
+          </View>
+          <Text style={styles.startupBrand}>آپاراتچی</Text>
+          <Text style={styles.startupTagline}>نور، تصویر، قصه</Text>
+          <View style={styles.startupFilmStrip}>
+            {[0,1,2,3,4].map((slot) => <View key={slot} style={styles.startupFilmFrame} />)}
+          </View>
+          <ActivityIndicator style={styles.startupSpinner} color={COLORS.gold} size="small" />
+          <Text style={styles.startupLoadingText}>در حال آماده‌کردن پرده نمایش…</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -8127,6 +8147,12 @@ const styles = StyleSheet.create({
   startupLogoMark: { width: 72, height: 72, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(212,175,95,0.10)', borderWidth: 1, borderColor: 'rgba(212,175,95,0.32)' },
   startupBrand: { ...rtlText, color: COLORS.text, fontSize: 27, lineHeight: 36, fontWeight: '900', marginTop: 15 },
   startupSpinner: { marginTop: 18 },
+  startupOverlay: { ...absoluteFillObject, zIndex: 5000, elevation: 5000, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: '#05070A' },
+  startupProjectorBeam: { position: 'absolute', width: 420, height: 170, borderRadius: 210, opacity: 0.12, backgroundColor: '#E8C875', transform: [{ rotate: '-18deg' }, { translateX: 90 }] },
+  startupTagline: { color: COLORS.gold, fontSize: 12, fontWeight: '800', letterSpacing: 1, marginTop: 5 },
+  startupFilmStrip: { height: 34, marginTop: 28, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 5, borderTopWidth: 3, borderBottomWidth: 3, borderColor: 'rgba(212,175,95,0.62)' },
+  startupFilmFrame: { width: 38, height: 22, borderRadius: 3, borderWidth: 1, borderColor: 'rgba(212,175,95,0.5)', backgroundColor: 'rgba(212,175,95,0.08)' },
+  startupLoadingText: { ...rtlText, color: COLORS.muted, fontSize: 10, marginTop: 10 },
   initialLoadingTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 16 },
   initialLoadingText: { ...rtlText, color: COLORS.muted, fontSize: 10, lineHeight: 18, textAlign: 'center', marginTop: 7 },
   initialLoadingTrack: { width: 190, height: 5, marginTop: 15, borderRadius: 4, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.10)' },
