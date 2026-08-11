@@ -12,22 +12,11 @@ const replaceOptional = (text, pattern, replacement, label) => {
   return next;
 };
 
-const patchFunction = (source, name, nextName, transform) => {
-  const start = source.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`Function not found: ${name}`);
-  const end = source.indexOf(`\nfunction ${nextName}(`, start + 1);
-  if (end < 0) throw new Error(`Next function not found after ${name}: ${nextName}`);
-  const before = source.slice(start, end);
-  const after = transform(before);
-  if (after === before) throw new Error(`Function patch produced no change: ${name}`);
-  return source.slice(0, start) + after + source.slice(end);
-};
-
 let app = await fs.readFile('App.tsx', 'utf8');
 
 // A dubbed-only stream is dubbed even when its download link has not been
-// discovered yet. Do not label it as the original version just because the
-// source file itself was unlabeled.
+// discovered yet. Do not label it as the original version merely because the
+// source file itself has no explicit language field.
 app = replaceRequired(
   app,
   /  const unlabeledSources = playbackSourcesForFiles\(files\.filter\(\(file\) => !file\.language\)\);\n  if \(unlabeledSources\.length\) \{\n    versions\.push\(\{\n      label: item\.ir \? 'پخش آنلاین' : 'نسخه اصلی',\n      sources: unlabeledSources,\n      defaultSource: defaultPlaybackSource\(unlabeledSources\),\n    \}\);\n  \}/,
@@ -42,8 +31,7 @@ app = replaceRequired(
   'updated-feed new-series label',
 );
 
-// Persian line first, English line second. Never repeat the English collection
-// name in the Persian title slot.
+// Persian collection name on the first line, original/English name below it.
 app = replaceRequired(
   app,
   /  const members = collectionMembersFor\(item, catalog\);\n  if \(members\.length < 2\) return null;/,
@@ -57,11 +45,14 @@ app = replaceRequired(
   'collection bilingual render',
 );
 
-// Replace the old per-card people scan with the compact server reverse index,
-// while keeping the old ID/name matcher as a cache compatibility fallback.
+// Replace ONLY personWorksFor. The previous patch used PersonProfileModal as the
+// end marker and accidentally swallowed unrelated components (including
+// DetailModal). The immediate top-level closing marker keeps every component.
 const personStart = app.indexOf('const personWorksFor = (person: CatalogPerson, catalog: CatalogItem[]) => {');
-const personEnd = app.indexOf('\n\nfunction PersonProfileModal(', personStart);
-if (personStart < 0 || personEnd < 0) throw new Error('Could not locate personWorksFor');
+if (personStart < 0) throw new Error('Could not locate personWorksFor');
+const personClose = app.indexOf('\n};', personStart);
+if (personClose < 0) throw new Error('Could not locate personWorksFor closing marker');
+const personEnd = personClose + '\n};'.length;
 const oldPersonFunction = app.slice(personStart, personEnd);
 const fallbackStart = oldPersonFunction.indexOf('  const identityNames =');
 const fallbackEnd = oldPersonFunction.lastIndexOf('\n};');
@@ -83,7 +74,6 @@ profile = replaceRequired(
   'person indexed works',
 );
 app = app.slice(0, profileStart) + profile + app.slice(profileEnd);
-
 app = replaceRequired(
   app,
   /        person=\{selectedPerson\}\n        catalog=\{content\.items\}\n        visible=/,
@@ -91,18 +81,22 @@ app = replaceRequired(
   'person modal invocation',
 );
 
-// Category tiles can only borrow artwork from the exact category. If that
-// category has no suitable artwork, keep the designed fallback instead of an
-// unrelated movie poster.
+// Category tiles may only borrow art from the exact category. Never show a
+// random unrelated poster. With no valid category art, use that category's icon.
 app = replaceRequired(
   app,
   /      let selected: CatalogItem \| undefined;\n      for \(const filter of \[card\.filter, \.\.\.relatedCategoryFilters\(card\.filter\)\]\) \{\n        selected = pickBestUnused\(filter\);\n        if \(selected\) break;\n      \}\n      if \(!selected\) selected = pickAnyUnused\(\);\n      if \(!selected\) continue;/,
   `      const selected = pickBestUnused(card.filter);\n      if (!selected) continue;`,
   'exact category artwork',
 );
+app = replaceRequired(
+  app,
+  /<Ionicons name="film-outline" color="rgba\(216,180,90,0\.55\)" size=\{58\} \/>/,
+  '<Ionicons name={card.icon} color="rgba(216,180,90,0.55)" size={58} />',
+  'category-specific fallback icon',
+);
 
-// Restore category scroll after layout settles. This prevents Back from jumping
-// to the top/bottom after images finish measuring.
+// Restore category scroll after virtualized layout/images settle.
 app = replaceRequired(
   app,
   /    const retry = setTimeout\(\(\) => \{\n      categoriesListRef\.current\?\.scrollToOffset\(\{ offset: categoriesScreenScrollOffset, animated: false \}\);\n    \}, 90\);\n    return \(\) => \{ cancelAnimationFrame\(frame\); clearTimeout\(retry\); \};/,
@@ -110,15 +104,16 @@ app = replaceRequired(
   'categories scroll restore',
 );
 
-// Do the same for category/genre/updated list screens.
+// Same restoration for category/genre/updated result lists. Match the actual
+// multiline cleanup block used by App.tsx.
 const listStart = app.indexOf('function CatalogListScreen({');
 const listEnd = app.indexOf('\nfunction SimpleSearchScreen(', listStart);
 if (listStart < 0 || listEnd < 0) throw new Error('Could not locate CatalogListScreen block');
 let listBlock = app.slice(listStart, listEnd);
-listBlock = replaceOptional(
+listBlock = replaceRequired(
   listBlock,
-  /    const retry = setTimeout\(\(\) => \{\n      listRef\.current\?\.scrollToOffset\(\{ offset, animated: false \}\);\n    \}, 90\);\n    return \(\) => \{ cancelAnimationFrame\(frame\); clearTimeout\(retry\); \};/,
-  `    const retry = setTimeout(() => {\n      listRef.current?.scrollToOffset({ offset, animated: false });\n    }, 120);\n    const settle = setTimeout(() => {\n      listRef.current?.scrollToOffset({ offset, animated: false });\n    }, 420);\n    return () => { cancelAnimationFrame(frame); clearTimeout(retry); clearTimeout(settle); };`,
+  /    const retry = setTimeout\(\(\) => \{\n      listRef\.current\?\.scrollToOffset\(\{ offset, animated: false \}\);\n    \}, 90\);\n    return \(\) => \{\n      cancelAnimationFrame\(frame\);\n      clearTimeout\(retry\);\n    \};/,
+  `    const retry = setTimeout(() => {\n      listRef.current?.scrollToOffset({ offset, animated: false });\n    }, 120);\n    const settle = setTimeout(() => {\n      listRef.current?.scrollToOffset({ offset, animated: false });\n    }, 420);\n    return () => {\n      cancelAnimationFrame(frame);\n      clearTimeout(retry);\n      clearTimeout(settle);\n    };`,
   'catalog list scroll restore',
 );
 app = app.slice(0, listStart) + listBlock + app.slice(listEnd);
@@ -150,8 +145,6 @@ if (!service.includes('const normalizePeopleWorks =')) {
     'people works normalizer',
   );
 }
-
-// Remote payload: compute the map once beside featuredPeople and expose it.
 service = replaceRequired(
   service,
   /  const featuredPeople = normalizeFeaturedPeople\(payload\.featuredPeople \?\? payload\.featured_people\);\n  const updatedAt =/,
@@ -164,8 +157,6 @@ service = replaceRequired(
   `    featuredPeople,\n    peopleWorks,\n    imdbTop100: normalizeImdbTop100(payload.imdbTop100 ?? payload.imdb_top_100, items, updatedAt),`,
   'remote peopleWorks payload',
 );
-
-// Bundled/local payload remains compatible when the map is absent.
 service = replaceOptional(
   service,
   /  const featuredPeople = normalizeFeaturedPeople\(LOCAL_PAYLOAD\.featuredPeople\);\n\n  return \{/,
