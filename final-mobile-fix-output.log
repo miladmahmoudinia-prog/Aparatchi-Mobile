@@ -1,5 +1,0 @@
-
-> aparatchi-mobile@0.13.0 typecheck
-> tsc --noEmit
-
-patched-App-diagnostic.tsx(7617,8): error TS2304: Cannot find name 'DetailModal'.
