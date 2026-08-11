@@ -1169,6 +1169,16 @@ const meaningfulUpdateLabel = (item: CatalogItem) => {
   return /قسمت|فصل|دوبله|زیر\s*نویس|subtitle|dubbed|کیفیت|quality/i.test(label) ? label : '';
 };
 
+const isUpdatedEpisodicItem = (item: CatalogItem) => Boolean(
+  meaningfulUpdateLabel(item) && (
+    item.type === 'series' ||
+    item.contentKind === 'anime-series' ||
+    item.contentKind === 'animation-series' ||
+    hasCategory(item, 'anime-series') ||
+    hasCategory(item, 'animation-series')
+  )
+);
+
 const filterTitle = (filter: SearchFilter) => {
   const countryCode = countryCodeFromFilter(filter);
   if (countryCode) return `آثار ${countryLabel(countryCode)}`;
@@ -1207,7 +1217,7 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
       return !isIranianItem(item) && itemLanguages(item).includes('dubbed');
     case 'subtitled':
       return !isIranianItem(item) && itemLanguages(item).includes('subtitled');
-    case 'updated': return item.type === 'series' && Boolean(meaningfulUpdateLabel(item));
+    case 'updated': return isUpdatedEpisodicItem(item);
     case 'iranian-movies': return item.type === 'movie' && isIranianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
     case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isKoreanItem(item) && !isIndianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item);
     case 'iranian-series': return item.type === 'series' && isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
@@ -1263,7 +1273,7 @@ const STRICT_DYNAMIC_CATEGORY_FILTERS = new Set<SearchFilter>([
 const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
   if (filter === 'all' || filter === 'latest') return true;
   if (filter === 'movie' || filter === 'series') return item.type === filter;
-  if (filter === 'updated') return item.type === 'series' && Boolean(meaningfulUpdateLabel(item));
+  if (filter === 'updated') return isUpdatedEpisodicItem(item);
   if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
   if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length && !STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)) {
     return (item.categoryKeys || []).includes(filter);
@@ -3091,7 +3101,7 @@ const HOME_CATALOG_ROWS: Array<Omit<HomeCatalogRow, 'items'>> = [
 const summaryMatchesHomeFilter = (item: CatalogItem, filter: SearchFilter) => {
   if (filter === 'latest') return true;
   if (filter === 'updated') {
-    return item.type === 'series' && Boolean(meaningfulUpdateLabel(item));
+    return isUpdatedEpisodicItem(item);
   }
   if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
 
