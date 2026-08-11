@@ -501,11 +501,8 @@ const isOperatorPortalUrl = (url: string) => {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:') return false;
     const path = decodeURIComponent(parsed.pathname || '');
-    const hasAction = /\/(?:stream|watch|play|download)(?:\/|$)/i.test(path);
-    const hasMedia = /\/(?:movie|series|episode)(?:\/|$)/i.test(path);
-    if (/(^|\.)upera\.tv$/i.test(parsed.hostname)) return hasAction && hasMedia;
-    if (/(^|\.)redl\.ink$/i.test(parsed.hostname)) return path.length > 1;
-    return false;
+    return /(^|\.)upera\.tv$/i.test(parsed.hostname) &&
+      /^\/stream\/(?:movie|episode)\/[^/?#]+\/?$/i.test(path);
   } catch {
     return false;
   }
@@ -577,7 +574,8 @@ const normalizeDownloadFile = (
   if (!/^https?:\/\//i.test(url)) return null;
 
   const requestedMode = asString(file.mode).toLowerCase();
-  const explicitOperator = asBoolean(file.operatorOnly) || requestedMode.startsWith('operator-');
+  const explicitOperator = (asBoolean(file.operatorOnly) || requestedMode.startsWith('operator-')) &&
+    isOperatorPortalUrl(url);
   const inferredOperatorMode = /download|دریافت|دانلود/i.test(
     [requestedMode, file.quality, file.label, sectionContext, url].map((entry) => asString(entry)).join(' '),
   )
@@ -689,19 +687,7 @@ const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[]
   if (!rawSections.length) return [];
 
   const inferPairedLanguages = (files: DownloadFile[]) => {
-    const result = uniqueFiles(files).map((file) => ({ ...file }));
-    const groups = new Map<string, DownloadFile[]>();
-    result.filter((file) => !isOperatorMode(file.mode)).forEach((file) => {
-      const qualityKey = `${file.mode || 'download'}:${String(file.quality || '').toLowerCase().replace(/[^0-9a-z]+/g, '')}`;
-      groups.set(qualityKey, [...(groups.get(qualityKey) || []), file]);
-    });
-    groups.forEach((group) => {
-      if (group.length !== 2) return;
-      const known = group.find((file) => file.language);
-      const unknown = group.find((file) => !file.language);
-      if (known?.language && unknown) unknown.language = known.language === 'dubbed' ? 'subtitled' : 'dubbed';
-    });
-    return sortFiles(result);
+    return sortFiles(uniqueFiles(files).map((file) => ({ ...file })));
   };
 
   const normalizedSections = rawSections.map((section) => {
@@ -982,7 +968,6 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
   const declaredLanguages = stringArray(item.availableLanguages)
     .filter((language): language is MediaLanguage => language === 'dubbed' || language === 'subtitled');
   const availableLanguages = LANGUAGE_ORDER.filter((language) =>
-    declaredLanguages.includes(language) ||
     downloads.some((section) =>
       section.files.some((file) => !isOperatorMode(file.mode) && file.language === language),
     ),
@@ -1765,4 +1750,3 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
   detailRequestCache.set(memoryKey, request);
   return request;
 }
-
