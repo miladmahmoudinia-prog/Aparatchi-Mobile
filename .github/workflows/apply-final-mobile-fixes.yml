@@ -61,10 +61,11 @@ jobs:
           code=$?
           cat final-mobile-fix-output.log
           if [ "$code" -ne 0 ]; then
+            cp App.tsx patched-App-diagnostic.tsx
             git restore App.tsx src/types.ts src/contentService.ts 2>/dev/null || true
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add final-mobile-fix-output.log
+            git add final-mobile-fix-output.log patched-App-diagnostic.tsx
             git commit -m "diagnostic: Mobile final fixer typecheck failure" || true
             git pull --rebase --autostash origin main
             git push origin HEAD:main
