@@ -1150,7 +1150,9 @@ const isWildlifeDocumentaryItem = (item: CatalogItem) => {
     'leopard', 'leopards', 'cheetah', 'cheetahs', 'lion', 'lions', 'tiger', 'tigers',
     'wolf', 'wolves', 'bear', 'bears', 'shark', 'sharks', 'whale', 'whales', 'dolphin', 'dolphins',
     'elephant', 'elephants', 'gorilla', 'gorillas', 'penguin', 'penguins',
+    'bumblebee', 'bumblebees', 'squirrel', 'squirrels', 'rodent', 'rodents',
     'پلنگ', 'یوزپلنگ', 'شیرها', 'ببرها', 'گرگ ها', 'خرس ها', 'کوسه', 'نهنگ', 'دلفین', 'فیل ها', 'گوریل', 'پنگوئن',
+    'زنبور', 'زنبورها', 'سنجاب', 'سنجاب ها', 'سنجاب‌ها', 'سمور', 'سمورها', 'موش صحرایی', 'جوندگان',
   ]);
   if (strong) return true;
   const habitat = hasStandaloneTerm(text, ['طبیعت', 'جنگل', 'اقیانوس', 'دریا', 'ساوانا', 'زیست بوم', 'nature', 'forest', 'ocean', 'sea', 'savanna', 'ecosystem', 'habitat']);
@@ -2907,7 +2909,7 @@ function ImdbTop100Section({
   const rankingReady = Boolean(ranking?.movies?.length || ranking?.series?.length);
 
   const topThree = entries.slice(0, 3);
-  const previewRows = entries.slice(3, 7);
+  const previewRows = entries.slice(3, 5);
 
   return (
     <View style={styles.imdbSection}>
@@ -3207,6 +3209,17 @@ const HomeScreen = memo(function HomeScreen({
   const newest = rows[0]?.items || [];
 
   useEffect(() => {
+    // Warm the disk cache for the first visible shelves without waiting for
+    // every <Image> to mount. This keeps initial scroll/taps responsive and
+    // prevents poster placeholders from lingering on ordinary mobile data.
+    const urls = catalog
+      .slice(0, 36)
+      .map((item) => catalogArtworkCandidates(item.poster || item.backdrop || item.posterFallback, 'poster')[0])
+      .filter((url): url is string => Boolean(url));
+    if (urls.length) void Image.prefetch([...new Set(urls)]).catch(() => undefined);
+  }, [catalog]);
+
+  useEffect(() => {
     if (initialScrollOffset > 0) {
       requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: initialScrollOffset, animated: false }));
     }
@@ -3447,6 +3460,34 @@ const CategoriesScreen = memo(function CategoriesScreen({
       usedItems.add(selected.id);
       const artwork = artworkKey(selected);
       if (artwork) usedArtwork.add(artwork);
+    }
+
+    // A small category may have only one usable artwork and that same title may
+    // already illustrate another shelf. Prefer a relevant reused image over an
+    // empty icon card; only then fall back through closely related categories.
+    const pickBestAvailable = (filter: SearchFilter) => {
+      let best: CatalogItem | undefined;
+      let bestScore = Number.NEGATIVE_INFINITY;
+      for (const item of categoryPreviewPool) {
+        if (!matchesCatalogFilter(item, filter) || !hasFastCategoryArtwork(item)) continue;
+        const artwork = artworkKey(item);
+        if (!artwork) continue;
+        const score = categoryPreviewScore(item);
+        if (score > bestScore) { best = item; bestScore = score; }
+      }
+      return best;
+    };
+    for (const card of CATEGORY_CARDS) {
+      if (result.has(card.filter)) continue;
+      let selected = pickBestAvailable(card.filter);
+      if (!selected) {
+        for (const related of relatedCategoryFilters(card.filter)) {
+          selected = pickBestAvailable(related);
+          if (selected) break;
+        }
+      }
+      selected ||= pickAnyUnused();
+      if (selected) result.set(card.filter, selected);
     }
     return result;
   }, [categoryPreviewPool]);
@@ -7093,7 +7134,7 @@ function AppContent() {
     });
     const catalogRefreshTimer = setInterval(() => {
       if (AppState.currentState === 'active') reloadContentWhenIdle();
-    }, 30 * 60 * 1000);
+    }, 10 * 60 * 1000);
 
     return () => {
       pendingIdleRefresh?.cancel();
@@ -7982,8 +8023,11 @@ function AppContent() {
             contentOffline={contentOffline}
           />
         </View>
-        {activeTab === 'categories' ? (
-          <View style={styles.tabScene}>
+        {activeTab === 'categories' || (activeTab === 'search' && searchReturnTab === 'categories') ? (
+          <View
+            pointerEvents={activeTab === 'categories' ? 'auto' : 'none'}
+            style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}
+          >
             <CategoriesScreen catalog={content.items} onBrowse={openCatalogFilter} onOpen={setSelectedItem} />
           </View>
         ) : null}
