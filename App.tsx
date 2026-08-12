@@ -698,6 +698,41 @@ const defaultPlaybackSource = (sources: PlaybackSource[]) => {
   return sources[0];
 };
 
+const reconcileUperaMediaFiles = (files: DownloadFile[]): DownloadFile[] => {
+  const prepared = files.map((file) => ({ ...file }));
+  const explicit = new Set<MediaLanguage>(
+    prepared
+      .map((file) => file.language)
+      .filter((language): language is MediaLanguage => language === 'dubbed' || language === 'subtitled'),
+  );
+  const hasUnknown = prepared.some((file) => !file.language);
+  if (!hasUnknown) return prepared;
+
+  if (explicit.has('dubbed') && explicit.has('subtitled')) {
+    // A third unlabeled quality beside both real Upera variants is a stale or
+    // duplicate row, not an "original" edition.
+    return prepared.filter((file) => file.language === 'dubbed' || file.language === 'subtitled');
+  }
+
+  if (explicit.size === 1) {
+    const known = [...explicit][0];
+    const counterpart: MediaLanguage = known === 'dubbed' ? 'subtitled' : 'dubbed';
+    return prepared.map((file) => file.language ? file : { ...file, language: counterpart });
+  }
+
+  return prepared;
+};
+
+const filesWithSectionLanguage = (sections: DownloadSection[]) =>
+  sections.flatMap((section) => {
+    const hint = section.language === 'dubbed' || section.language === 'subtitled'
+      ? section.language
+      : undefined;
+    return (section.files || []).map((file) =>
+      file.language || !hint ? file : { ...file, language: hint },
+    );
+  });
+
 const playableVersionsFor = (
   item: CatalogItem,
   episodeGroup?: DownloadSection | null,
@@ -709,7 +744,7 @@ const playableVersionsFor = (
       ? (latestGroup ? [latestGroup] : [])
       : (item.downloads || []).filter((group) => !isEpisodeSection(group));
 
-  const files = targetSections.flatMap((section) => section.files || []);
+  const files = reconcileUperaMediaFiles(filesWithSectionLanguage(targetSections));
   const versions: PlayableVersion[] = LANGUAGE_ORDER.flatMap((language) => {
     const sources = playbackSourcesForFiles(files.filter((file) => file.language === language));
     if (!sources.length) return [];
@@ -723,13 +758,8 @@ const playableVersionsFor = (
 
   const unlabeledSources = playbackSourcesForFiles(files.filter((file) => !file.language));
   if (unlabeledSources.length) {
-    const inferredLanguages = itemLanguages(item);
-    const inferredLanguage = inferredLanguages.length === 1 ? inferredLanguages[0] : undefined;
     versions.push({
-      ...(inferredLanguage ? { language: inferredLanguage } : {}),
-      label: inferredLanguage
-        ? languageTitle(inferredLanguage)
-        : (item.ir ? 'پخش آنلاین' : 'نسخه اصلی'),
+      label: 'پخش آنلاین',
       sources: unlabeledSources,
       defaultSource: defaultPlaybackSource(unlabeledSources),
     });
@@ -752,8 +782,8 @@ const playableVersionsFor = (
     const languages = itemLanguages(item);
     const language = languages.length === 1 ? languages[0] : undefined;
     return [{
-      language,
-      label: language ? languageTitle(language) : (item.ir ? 'پخش آنلاین' : 'نسخه اصلی'),
+      ...(language ? { language } : {}),
+      label: language ? languageTitle(language) : 'پخش آنلاین',
       sources: [source],
       defaultSource: source,
     }];
@@ -765,10 +795,11 @@ const playableVersionsFor = (
 const languageSectionsForFiles = (
   files: DownloadFile[],
   idPrefix: string,
-  iranian = false,
+  _iranian = false,
 ): DownloadSection[] => {
+  const reconciled = reconcileUperaMediaFiles(files);
   const sections: DownloadSection[] = LANGUAGE_ORDER.flatMap((language) => {
-    const languageFiles = sortedDownloadFiles(files.filter((file) => file.language === language));
+    const languageFiles = sortedDownloadFiles(reconciled.filter((file) => file.language === language));
     if (!languageFiles.length) return [];
     return [{
       id: `${idPrefix}-${language}`,
@@ -780,13 +811,13 @@ const languageSectionsForFiles = (
     }];
   });
 
-  const plainFiles = sortedDownloadFiles(files.filter((file) => !file.language));
+  const plainFiles = sortedDownloadFiles(reconciled.filter((file) => !file.language));
   if (plainFiles.length) {
     sections.push({
       id: `${idPrefix}-plain`,
-      title: iranian ? 'لینک‌های دریافت' : 'نسخه اصلی',
+      title: 'لینک‌های دریافت',
       subtitle: `${plainFiles.length} کیفیت دانلود مستقیم`,
-      badge: iranian ? 'دریافت' : 'اصلی',
+      badge: 'دریافت',
       files: plainFiles,
     });
   }
@@ -828,9 +859,17 @@ const compareEpisodeGroupsOldestFirst = (a: DownloadSection, b: DownloadSection)
   return String(a.title || '').localeCompare(String(b.title || ''), 'fa', { numeric: true });
 };
 
+const episodeSectionHasUsableMedia = (group: DownloadSection) =>
+  (group.files || []).some((file) => {
+    if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url)) return false;
+    if (isOperatorFile(file)) return isOperatorPortalUrl(file.url);
+    if (downloadModeFor(file) === 'purchase') return false;
+    return isDirectMediaUrl(file.url) || isDownloadableMediaUrl(file.url);
+  });
+
 const newestEpisodeGroup = (item?: CatalogItem | null) =>
   [...(item?.downloads || [])]
-    .filter(isEpisodeSection)
+    .filter((group) => isEpisodeSection(group) && episodeSectionHasUsableMedia(group))
     .sort(compareEpisodeGroupsNewestFirst)[0] || null;
 
 const latestEpisodeTimestamp = (item: CatalogItem) => {
@@ -861,6 +900,8 @@ const hasCategory = (item: CatalogItem, key: string) =>
   Boolean(item.categoryKeys?.includes(key));
 
 const isIranianItem = (item: CatalogItem) => {
+  const titleText = normalizeComparableText(`${item.nameFa || ''} ${item.name || ''}`);
+  if (titleText.includes('the westies') || titleText.includes('وستی ها') || titleText.includes('وستی‌ها')) return false;
   const language = String(item.originalLanguage || '').toLowerCase();
   const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
   const primaryCountry = countryCodes[0] || '';
@@ -1124,19 +1165,24 @@ const isProgramItem = (item: CatalogItem) => {
 };
 
 const isDocumentaryItem = (item: CatalogItem) => {
+  const title = catalogTitleText(item);
   const genres = catalogGenreText(item);
+  const knownDocumentary = hasStandaloneTerm(title, ['از بی', 'از به', 'az be']);
+  const explicitDocumentary = Boolean(
+    item.isDocumentary === true ||
+    item.contentKind === 'documentary' ||
+    hasCategory(item, 'documentaries')
+  );
+  if (knownDocumentary || explicitDocumentary) return true;
+
   const narrative = hasStandaloneTerm(genres, [
     'درام', 'ترسناک', 'وحشت', 'هیجان انگیز', 'اکشن', 'کمدی', 'عاشقانه', 'خانوادگی',
     'جنایی', 'ماجراجویی', 'علمی تخیلی', 'فانتزی',
     'drama', 'horror', 'thriller', 'action', 'comedy', 'romance', 'family', 'crime',
     'adventure', 'science fiction', 'sci-fi', 'fantasy',
   ]);
-  if (Number(item.tmdbValidationVersion || 0) >= 7) return item.isDocumentary === true;
   if (narrative) return false;
-  return Boolean(
-    item.genres.some((genre) => /مستند|documentary/i.test(genre)) ||
-    (item.contentKind === 'documentary' && item.genres.length === 0),
-  );
+  return item.genres.some((genre) => /مستند|documentary/i.test(genre));
 };
 
 const isWildlifeDocumentaryItem = (item: CatalogItem) => {
@@ -2595,8 +2641,6 @@ function HomeStarsSectionBase({
       .slice(0, 60);
   }, [catalog, catalogById, people]);
   const [selectedId, setSelectedId] = useState('');
-  const peopleRailRef = useRef<FlatList<FeaturedPerson>>(null);
-  const worksRailRef = useRef<FlatList<CatalogItem>>(null);
   // Keep Android out of RTL/inverted FlatList code paths: both have produced
   // recycled blank slots on long rails. Reverse the data and stay at the
   // physical end so the first logical star still appears on the right.
@@ -2632,21 +2676,7 @@ function HomeStarsSectionBase({
     setSelectedId((current) => current === personId ? current : personId);
   }, []);
 
-  useEffect(() => {
-    if (!displayedPeople.length) return;
-    const frame = requestAnimationFrame(() => peopleRailRef.current?.scrollToEnd({ animated: false }));
-    const retry = setTimeout(() => peopleRailRef.current?.scrollToEnd({ animated: false }), 90);
-    return () => { cancelAnimationFrame(frame); clearTimeout(retry); };
-  }, [displayedPeople.length]);
 
-  useEffect(() => {
-    if (!selectedIdForRender) return;
-    const frame = requestAnimationFrame(() => {
-      worksRailRef.current?.scrollToEnd({ animated: false });
-    });
-    const retry = setTimeout(() => worksRailRef.current?.scrollToEnd({ animated: false }), 80);
-    return () => { cancelAnimationFrame(frame); clearTimeout(retry); };
-  }, [selectedIdForRender]);
   const renderStarPerson = useCallback(({ item: person }: { item: FeaturedPerson }) => (
     <StarPersonButton
       person={person}
@@ -2681,10 +2711,10 @@ function HomeStarsSectionBase({
       </View>
 
       <FlatList
-        ref={peopleRailRef}
         horizontal
         style={styles.starPeopleRail}
         data={displayedPeople}
+        contentOffset={{ x: displayedPeople.length * 66, y: 0 }}
         keyExtractor={(person) => person.tmdbId ? `tmdb:${person.tmdbId}` : person.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.starsPeopleList}
@@ -2713,10 +2743,10 @@ function HomeStarsSectionBase({
         </View>
 
         <FlatList
-          ref={worksRailRef}
           horizontal
           style={styles.starWorksRail}
           data={displayedWorks}
+          contentOffset={{ x: displayedWorks.length * 113, y: 0 }}
           keyExtractor={(item) => item.id}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.starWorksList}
@@ -3410,7 +3440,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
   const usableCatalog = catalog;
   const categoryPreviewPool = useMemo(
-    () => sortForCatalogFilter(usableCatalog, 'latest').slice(0, 900),
+    () => sortForCatalogFilter(usableCatalog.slice(0, 900), 'latest'),
     [usableCatalog],
   );
 
@@ -6867,8 +6897,6 @@ function StartupScreen() {
 
 function AppContent() {
   const appInsets = useSafeAreaInsets();
-  const routeTransitionOpacity = useRef(new Animated.Value(0)).current;
-  const routeTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [searchFilter, setSearchFilter] = useState<SearchFilter>('all');
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
@@ -6948,21 +6976,9 @@ function AppContent() {
 
   const navigateToTab = useCallback((tab: MainTab) => {
     if (activeTabRef.current === tab) return;
-    if (routeTransitionTimerRef.current) clearTimeout(routeTransitionTimerRef.current);
-    routeTransitionOpacity.stopAnimation();
-    // A one-frame black handoff masks Android's scene re-layout flash without
-    // keeping two heavy catalog screens alive at the same time.
-    routeTransitionOpacity.setValue(1);
     activeTabRef.current = tab;
     setActiveTab(tab);
-    routeTransitionTimerRef.current = setTimeout(() => {
-      Animated.timing(routeTransitionOpacity, {
-        toValue: 0,
-        duration: 150,
-        useNativeDriver: true,
-      }).start();
-    }, 16);
-  }, [routeTransitionOpacity]);
+  }, []);
 
   const refreshVpnState = async (showProgress = false) => {
     const sequence = ++vpnCheckSequenceRef.current;
@@ -8089,7 +8105,6 @@ function AppContent() {
           onChange={handleBottomTabChange}
         />
       </View>
-      <Animated.View pointerEvents="none" style={[styles.routeTransitionCover, { opacity: routeTransitionOpacity }]} />
       {videoRequest ? <View pointerEvents="none" style={styles.playerRouteBackdrop} /> : null}
       <VpnBlockModal
         visible={vpnWarningVisible}
