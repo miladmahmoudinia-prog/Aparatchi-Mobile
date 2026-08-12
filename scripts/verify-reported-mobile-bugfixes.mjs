@@ -44,3 +44,4 @@ assert.equal(app.expo.version, '0.15.0');
 assert.equal(app.expo.android.versionCode, 20);
 
 console.log('Reported mobile bugfix invariants verified.');
+// Triggered after workflow verification was corrected.
