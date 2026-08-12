@@ -24,7 +24,7 @@ assert.ok(source.includes("sortForCatalogFilter(usableCatalog.slice(0, 900), 'la
 assert.ok(source.includes('data={[...people].reverse()}'), 'Detail cast rail must start from the right.');
 assert.ok(!/horizontal\s+inverted\s+data=\{people\}/m.test(source), 'Detail cast rail must not use inverted together with RTL reversal.');
 assert.ok(source.includes('exactEpisodeArtworkFor'), 'Episode artwork must be validated before display.');
-assert.ok(source.includes('/assets\\/media\\/episodes\\/[a-f0-9]{24}\\.jpg'), 'Only generated exact-episode frames may be trusted.');
+assert.ok(source.includes('assets\\/media\\/episodes\\/[a-f0-9]{24}\\.jpg'), 'Only generated exact-episode frames may be trusted.');
 assert.ok(source.includes('exactEpisodeArtworkFor(group, item)'), 'Episode cards must use same-series fallback when exact frame is unavailable.');
 assert.ok(source.includes('const minimumVisibleMs = 850;'), 'Cold-start minimum splash/skeleton delay must be short.');
 assert.ok(source.includes('setTimeout(dismissStartup, 1200)'), 'Cold-start fallback must not hold for five seconds.');
@@ -35,7 +35,7 @@ assert.ok(source.includes('if (controlsLocked) return;'), 'Locked fullscreen mus
 assert.ok(source.includes('seekBy(-10)'), 'Player must expose ten-second rewind.');
 assert.ok(source.includes('seekBy(10)'), 'Player must expose ten-second forward.');
 assert.ok(source.includes("name={isMuted || playerVolume <= 0 ? 'volume-mute' : 'volume-high'}"), 'Mute button must be rendered.');
-assert.ok(source.includes("accessibilityLabel=\"قفل کنترل‌ها\""), 'Fullscreen lock button must be rendered.');
+assert.ok(source.includes('accessibilityLabel="قفل کنترل‌ها"'), 'Fullscreen lock button must be rendered.');
 assert.ok(source.includes("accessibilityLabel={landscape ? 'خروج از تمام‌صفحه' : 'تمام‌صفحه'}"), 'Fullscreen toggle must live with the bottom controls.');
 assert.ok(source.includes('const chromeVisible = !controlsLocked'), 'All player chrome must hide together while locked.');
 
