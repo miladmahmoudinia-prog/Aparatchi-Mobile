@@ -7267,17 +7267,22 @@ function AppContent() {
     if (!summary?.detailPath || summary.detailLoaded === true) return undefined;
 
     let cancelled = false;
-    void loadCatalogItemDetail(summary)
-      .then((fullItem) => {
-        if (cancelled || !fullItem) return;
-        setSelectedItem((current) => {
-          if (!current) return current;
-          if (current.type !== summary.type || String(current.id) !== String(summary.id)) return current;
-          if (current.detailPath !== summary.detailPath) return current;
-          return fullItem;
-        });
-      })
-      .catch(() => undefined);
+    void (async () => {
+      let fullItem = await loadCatalogItemDetail(summary);
+      if (!fullItem && !cancelled) {
+        await new Promise((resolve) => setTimeout(resolve, 650));
+        fullItem = await loadCatalogItemDetail(summary);
+      }
+      if (cancelled) return;
+      setSelectedItem((current) => {
+        if (!current) return current;
+        if (current.type !== summary.type || String(current.id) !== String(summary.id)) return current;
+        if (current.detailPath !== summary.detailPath) return current;
+        // Never leave a title behind an endless spinner. A later reopen retries
+        // the immutable detail shard, while the summary remains usable now.
+        return fullItem || { ...current, detailLoaded: true };
+      });
+    })().catch(() => undefined);
 
     return () => { cancelled = true; };
   }, [selectedItem?.detailLoaded, selectedItem?.detailPath, selectedItem?.id, selectedItem?.type]);
