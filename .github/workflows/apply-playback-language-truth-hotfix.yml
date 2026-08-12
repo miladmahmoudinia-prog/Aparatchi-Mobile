@@ -1,0 +1,90 @@
+name: Apply playback language truth hotfix
+
+on:
+  push:
+    paths:
+      - 'scripts/apply-playback-language-truth-hotfix.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-playback-language-hotfix
+  cancel-in-progress: false
+
+jobs:
+  patch-test-build-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      EXPO_NO_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 30
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Apply strict playback-language fix
+        run: node scripts/apply-playback-language-truth-hotfix.mjs
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Type-check application
+        run: npm run typecheck
+
+      - name: Verify media-language invariants
+        run: node scripts/verify-playback-language-truth-hotfix.mjs
+
+      - name: Commit verified mobile source
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx app.json package.json package-lock.json scripts
+          if git diff --cached --quiet; then
+            echo "No source changes."
+          else
+            git commit -m "fix: show only verified playback language variants"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Create Android project
+        run: npx expo prebuild --platform android --non-interactive
+        env:
+          NODE_ENV: production
+
+      - name: Allow Gradle execution
+        run: chmod +x android/gradlew
+
+      - name: Build release APK
+        run: cd android && ./gradlew app:assembleRelease
+        env:
+          NODE_ENV: production
+
+      - name: Publish latest APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp android/app/build/outputs/apk/release/app-release.apk Aparatchi-Android-Release.apk
+          VERSION="$(node -p "require('./package.json').version")"
+          TARGET="$(git rev-parse HEAD)"
+          TITLE="Aparatchi Android v${VERSION}"
+          NOTES="Playback-language truth hotfix: the app no longer invents a dubbed/subtitled option from unlabeled media, never shows two language buttons backed by the same URL, and falls back to a neutral online-play option when language cannot be proven. Includes the prior v0.14.0 fixes."
+          if gh release view android-latest >/dev/null 2>&1; then
+            gh release edit android-latest --target "$TARGET" --title "$TITLE" --notes "$NOTES" --latest
+            gh release upload android-latest Aparatchi-Android-Release.apk --clobber
+          else
+            gh release create android-latest Aparatchi-Android-Release.apk --target "$TARGET" --title "$TITLE" --notes "$NOTES" --latest
+          fi
