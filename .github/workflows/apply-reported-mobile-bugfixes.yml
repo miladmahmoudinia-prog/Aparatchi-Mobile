@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'scripts/apply-reported-mobile-bugfixes.mjs'
+      - 'scripts/verify-reported-mobile-bugfixes.mjs'
   workflow_dispatch:
 
 permissions:
@@ -37,15 +38,28 @@ jobs:
       - name: Commit verified mobile source
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add App.tsx app.json package.json package-lock.json scripts/apply-reported-mobile-bugfixes.mjs scripts/verify-reported-mobile-bugfixes.mjs
           if git diff --cached --quiet; then
             echo "No source changes."
           else
-            git commit -m "fix: resolve playback, RTL stars and navigation bugs"
-            git pull --rebase origin main
-            git push origin HEAD:main
+            git commit -m "fix: RTL cast, episode artwork and player controls"
+            PUSHED=0
+            for attempt in 1 2 3 4 5; do
+              if git pull --rebase origin main && git push origin HEAD:main; then
+                PUSHED=1
+                break
+              fi
+              git rebase --abort >/dev/null 2>&1 || true
+              echo "Repository changed during push; retry ${attempt}/5"
+              sleep $((attempt * 2))
+            done
+            if [ "$PUSHED" -ne 1 ]; then
+              echo "::error::Could not publish verified mobile source after 5 attempts."
+              exit 1
+            fi
           fi
       - uses: actions/setup-java@v5
         with:
@@ -71,7 +85,7 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           TARGET="$(git rev-parse HEAD)"
           TITLE="Aparatchi Android v${VERSION}"
-          NOTES="Reported bugfix build: corrected dubbed/subtitled playback and downloads, RTL stars start position, category navigation speed, documentary/foreign classification safeguards."
+          NOTES="Latest reported fixes: RTL cast rail, exact episode artwork fallback, faster first launch, and a reorganized online player with lock, 10-second seek, volume/mute, settings and fullscreen controls."
           if gh release view android-latest >/dev/null 2>&1; then
             gh release edit android-latest --target "$TARGET" --title "$TITLE" --notes "$NOTES" --latest
             gh release upload android-latest Aparatchi-Android-Release.apk --clobber
