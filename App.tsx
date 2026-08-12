@@ -5796,7 +5796,7 @@ function PersonProfileModal({
 const exactEpisodeArtworkFor = (group: DownloadSection, item: CatalogItem) => {
   const artwork = String(group.artwork || '').trim();
   const exactGeneratedFrame = /(?:^|\/)assets\/media\/episodes\/[a-f0-9]{24}\.jpg(?:$|[?#])/i.test(artwork);
-  if (exactGeneratedFrame && isSafeHttpUrl(artwork) && !isPlaceholderUrl(artwork)) return artwork;
+  if (exactGeneratedFrame) return artwork;
   return item.backdrop || item.poster || item.backdropFallback || item.posterFallback || '';
 };
 
