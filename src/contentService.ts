@@ -490,7 +490,7 @@ const newestFirst = (items: CatalogItem[]) =>
     })
     .map(({ item }) => item);
 
-const isMp4Url = (url: string) => /\.mp4(?:$|[?#])/i.test(url);
+const isDownloadableUrl = (url: string) => /\.(?:mp4|m4v|mov|webm|mkv)(?:$|[?#])/i.test(url);
 const isPlayableUrl = (url: string) => /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
 
 const isOperatorMode = (mode?: DownloadFile['mode']) =>
@@ -554,13 +554,16 @@ const sortFiles = (files: DownloadFile[]) =>
   });
 
 const uniqueFiles = (files: DownloadFile[]) => {
-  const seen = new Set<string>();
-  return files.filter((file) => {
+  const byMedia = new Map<string, DownloadFile>();
+  for (const file of files) {
     const key = `${file.mode || 'download'}:${file.url}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const current = byMedia.get(key);
+    // Old catalogs can contain the same URL once without a language and once
+    // inside a dubbed/subtitled section. Keep the language-aware copy so its
+    // download group and poster badge are not lost during normalization.
+    if (!current || (!current.language && file.language)) byMedia.set(key, file);
+  }
+  return [...byMedia.values()];
 };
 
 const normalizeDownloadFile = (
@@ -597,7 +600,7 @@ const normalizeDownloadFile = (
     // Paid fallback is a normal HTTPS page/link supplied by the provider; it is
     // opened externally instead of being treated as an MP4 download.
     if (!/^https:\/\//i.test(url)) return null;
-  } else if (mode === 'play' ? !isPlayableUrl(url) : !isMp4Url(url)) {
+  } else if (mode === 'play' ? !isPlayableUrl(url) : !isDownloadableUrl(url)) {
     return null;
   }
 
