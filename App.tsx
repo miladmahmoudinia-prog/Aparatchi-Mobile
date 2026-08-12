@@ -700,27 +700,47 @@ const defaultPlaybackSource = (sources: PlaybackSource[]) => {
 
 const reconcileUperaMediaFiles = (files: DownloadFile[]): DownloadFile[] => {
   const prepared = files.map((file) => ({ ...file }));
+
+  // A single media URL cannot truthfully be both the dubbed and subtitled
+  // edition in this player: selecting either button would play the same stream.
+  // Treat such stale catalog conflicts as ambiguous and remove them from the
+  // language chooser; a neutral item.streamUrl fallback can still play media.
+  const languagesByUrl = new Map<string, Set<MediaLanguage>>();
+  for (const file of prepared) {
+    if (!file.url || (file.language !== 'dubbed' && file.language !== 'subtitled')) continue;
+    const key = String(file.url).trim();
+    if (!key) continue;
+    const languages = languagesByUrl.get(key) || new Set<MediaLanguage>();
+    languages.add(file.language);
+    languagesByUrl.set(key, languages);
+  }
+  const conflictedUrls = new Set(
+    [...languagesByUrl.entries()]
+      .filter(([, languages]) => languages.has('dubbed') && languages.has('subtitled'))
+      .map(([url]) => url),
+  );
+  const safe = conflictedUrls.size
+    ? prepared.filter((file) => !conflictedUrls.has(String(file.url || '').trim()))
+    : prepared;
+
   const explicit = new Set<MediaLanguage>(
-    prepared
+    safe
       .map((file) => file.language)
       .filter((language): language is MediaLanguage => language === 'dubbed' || language === 'subtitled'),
   );
-  const hasUnknown = prepared.some((file) => !file.language);
-  if (!hasUnknown) return prepared;
+  const hasUnknown = safe.some((file) => !file.language);
+  if (!hasUnknown) return safe;
 
-  if (explicit.has('dubbed') && explicit.has('subtitled')) {
-    // A third unlabeled quality beside both real Upera variants is a stale or
-    // duplicate row, not an "original" edition.
-    return prepared.filter((file) => file.language === 'dubbed' || file.language === 'subtitled');
+  if (explicit.size > 0) {
+    // Never manufacture the missing language. An unlabeled Upera row is not
+    // proof of a dubbed/subtitled counterpart, so only positively identified
+    // rows participate in the language-labelled playback/download UI.
+    return safe.filter((file) => file.language === 'dubbed' || file.language === 'subtitled');
   }
 
-  if (explicit.size === 1) {
-    const known = [...explicit][0];
-    const counterpart: MediaLanguage = known === 'dubbed' ? 'subtitled' : 'dubbed';
-    return prepared.map((file) => file.language ? file : { ...file, language: counterpart });
-  }
-
-  return prepared;
+  // With no language evidence at all, keep the media available under a neutral
+  // «پخش آنلاین / لینک‌های دریافت» label instead of guessing.
+  return safe;
 };
 
 const filesWithSectionLanguage = (sections: DownloadSection[]) =>
@@ -779,11 +799,8 @@ const playableVersionsFor = (
       quality: /\.m3u8(?:$|[?#])/i.test(item.streamUrl) ? 'خودکار' : 'پخش آنلاین',
       rank: 0,
     };
-    const languages = itemLanguages(item);
-    const language = languages.length === 1 ? languages[0] : undefined;
     return [{
-      ...(language ? { language } : {}),
-      label: language ? languageTitle(language) : 'پخش آنلاین',
+      label: 'پخش آنلاین',
       sources: [source],
       defaultSource: source,
     }];
