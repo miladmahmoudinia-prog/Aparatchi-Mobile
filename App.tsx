@@ -2499,8 +2499,8 @@ function PeopleSection({
       </View>
       <FlatList
         horizontal
-        inverted
-        data={people}
+        data={[...people].reverse()}
+        contentOffset={{ x: people.length * 100, y: 0 }}
         keyExtractor={(person) => person.tmdbId
           ? `tmdb:${person.tmdbId}:${person.role}`
           : `person:${normalizeComparableText(personName(person))}:${person.role}`}
@@ -5366,7 +5366,7 @@ function SeriesEpisodeShowcase({
           const hasEpisodeDownload = group.files.some((file) =>
             downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
           );
-          const artwork = group.artwork || '';
+          const artwork = exactEpisodeArtworkFor(group, item);
           return (
             <View key={group.id} style={styles.episodeShowcaseCard}>
               <Pressable
@@ -5793,6 +5793,13 @@ function PersonProfileModal({
   );
 }
 
+const exactEpisodeArtworkFor = (group: DownloadSection, item: CatalogItem) => {
+  const artwork = String(group.artwork || '').trim();
+  const exactGeneratedFrame = /(?:^|\/)assets\/media\/episodes\/[a-f0-9]{24}\.jpg(?:$|[?#])/i.test(artwork);
+  if (exactGeneratedFrame && isSafeHttpUrl(artwork) && !isPlaceholderUrl(artwork)) return artwork;
+  return item.backdrop || item.poster || item.backdropFallback || item.posterFallback || '';
+};
+
 function PlayerEpisodesOverlay({
   item,
   groups,
@@ -5856,7 +5863,7 @@ function PlayerEpisodesOverlay({
             return (
               <Pressable key={group.id} disabled={active} onPress={() => onSelect(group)} style={[styles.playerEpisodeCard, landscape && styles.playerEpisodeCardLandscape, active && styles.playerEpisodeCardActive]}>
                 <View style={styles.playerEpisodeArtworkWrap}>
-                  <CatalogArtwork primary={group.artwork || ''} style={styles.playerEpisodeArtwork} contentFit="cover" imageKind="backdrop" />
+                  <CatalogArtwork primary={exactEpisodeArtworkFor(group, item)} style={styles.playerEpisodeArtwork} contentFit="cover" imageKind="backdrop" />
                   <LinearGradient colors={['transparent', 'rgba(3,5,8,0.92)']} style={StyleSheet.absoluteFill} />
                   <View style={[styles.playerEpisodePlay, active && styles.playerEpisodePlayActive]}>
                     <Ionicons name={active ? 'pause' : 'play'} color="#fff" size={18} />
@@ -5901,6 +5908,9 @@ function VideoPlayerModal({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [isPlaying, setIsPlaying] = useState(true);
   const [networkOffline, setNetworkOffline] = useState(false);
+  const [controlsLocked, setControlsLocked] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [playerVolume, setPlayerVolume] = useState(1);
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
   const [timelineWidth, setTimelineWidth] = useState(1);
@@ -5954,6 +5964,12 @@ function VideoPlayerModal({
     instance.timeUpdateEventInterval = 0.5;
     instance.play();
   });
+
+  useEffect(() => {
+    const controlledPlayer = player as typeof player & { muted: boolean; volume: number };
+    controlledPlayer.muted = isMuted || playerVolume <= 0;
+    controlledPlayer.volume = Math.max(0, Math.min(1, playerVolume));
+  }, [isMuted, player, playerVolume]);
 
   const retryNetworkPlayback = useCallback(async () => {
     if (!isSafeHttpUrl(activeSource.url)) {
@@ -6033,9 +6049,9 @@ function VideoPlayerModal({
 
   const scheduleControlsHide = useCallback(() => {
     clearControlsTimer();
-    if (!firstFrameReady || settingsOpen || episodesOpen) return;
+    if (!firstFrameReady || settingsOpen || episodesOpen || controlsLocked) return;
     controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 3200);
-  }, [clearControlsTimer, episodesOpen, firstFrameReady, settingsOpen]);
+  }, [clearControlsTimer, controlsLocked, episodesOpen, firstFrameReady, settingsOpen]);
 
   const revealControls = useCallback(() => {
     setControlsVisible(true);
@@ -6111,6 +6127,7 @@ function VideoPlayerModal({
     setSettingsOpen(false);
     setEpisodesOpen(false);
     setQualityExpanded(false);
+    if (!targetLandscape) setControlsLocked(false);
     setControlsVisible(true);
     clearControlsTimer();
 
@@ -6149,6 +6166,11 @@ function VideoPlayerModal({
   };
 
   const handleBack = () => {
+    if (controlsLocked) {
+      setControlsLocked(false);
+      setControlsVisible(true);
+      return;
+    }
     if (episodesOpen) {
       setEpisodesOpen(false);
       revealControls();
@@ -6189,6 +6211,33 @@ function VideoPlayerModal({
 
   const seekBy = (seconds: number) => seekTo(Number(player.currentTime || latestTimeRef.current || 0) + seconds);
 
+  const toggleMute = () => {
+    setIsMuted((current) => !current);
+    revealControls();
+  };
+
+  const adjustVolume = (delta: number) => {
+    const next = Math.max(0, Math.min(1, playerVolume + delta));
+    setPlayerVolume(next);
+    setIsMuted(next <= 0);
+    revealControls();
+  };
+
+  const lockPlayerControls = () => {
+    if (!landscape) return;
+    clearControlsTimer();
+    setSettingsOpen(false);
+    setEpisodesOpen(false);
+    setQualityExpanded(false);
+    setControlsLocked(true);
+    setControlsVisible(false);
+  };
+
+  const unlockPlayerControls = () => {
+    setControlsLocked(false);
+    setControlsVisible(true);
+  };
+
   const switchQuality = async (nextSource: PlaybackSource) => {
     if (nextSource.id === activeSource.id || nextSource.url === activeSource.url || switchingQuality) return;
     const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
@@ -6224,12 +6273,13 @@ function VideoPlayerModal({
   };
 
   const toggleSurfaceControls = () => {
+    if (controlsLocked) return;
     if (controlsVisible) hideControls();
     else revealControls();
   };
 
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
-  const chromeVisible = !settingsOpen && !episodesOpen && (!firstFrameReady || switchingQuality || controlsVisible);
+  const chromeVisible = !controlsLocked && !settingsOpen && !episodesOpen && (!firstFrameReady || switchingQuality || controlsVisible);
   const topBarStyle = landscape
     ? { top: Math.max(8, insets.top + 4), left: safeLeft, right: safeRight }
     : { top: portraitGroupTop, left: 12, right: 12, height: portraitTopBarHeight };
@@ -6317,28 +6367,30 @@ function VideoPlayerModal({
             ) : null}
 
             <View style={[styles.nativePlayerTopBar, !landscape && styles.playerDetachedBar, topBarStyle]}>
-              <Pressable onPress={closePlayer} unstable_pressDelay={0} hitSlop={10} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
-                <Ionicons name="close" color="#fff" size={22} />
-              </Pressable>
+              {landscape ? (
+                <Pressable onPress={lockPlayerControls} style={styles.nativePlayerTopButton} accessibilityLabel="قفل کنترل‌ها">
+                  <Ionicons name="lock-closed-outline" color="#fff" size={20} />
+                </Pressable>
+              ) : <View style={{ width: 38, height: 38 }} />}
               <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
-              <Pressable onPress={toggleOrientation} style={styles.nativePlayerTopButton} accessibilityLabel={landscape ? 'کوچک‌نمایی و بازگشت به حالت عمودی' : 'بزرگ‌نمایی و ورود به حالت افقی'}>
-                <Ionicons name={landscape ? 'contract-outline' : 'expand-outline'} color="#fff" size={21} />
+              <Pressable onPress={closePlayer} unstable_pressDelay={0} hitSlop={10} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
+                <Ionicons name="arrow-forward" color="#fff" size={23} />
               </Pressable>
             </View>
 
             {firstFrameReady && !switchingQuality ? (
               <View pointerEvents="box-none" style={[styles.playerCenterZone, frameRect]}>
                 <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
-                  <Pressable onPress={() => seekBy(-15)} style={styles.playerRoundButton} accessibilityLabel="پانزده ثانیه عقب">
+                  <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton} accessibilityLabel="ده ثانیه عقب">
                     <Ionicons name="play-back" color="#fff" size={26} />
-                    <Text style={styles.playerSkipText}>۱۵</Text>
+                    <Text style={styles.playerSkipText}>۱۰</Text>
                   </Pressable>
                   <Pressable onPress={togglePlayback} style={styles.playerPrimaryButton} accessibilityLabel={isPlaying ? 'توقف' : 'پخش'}>
                     <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={34} />
                   </Pressable>
-                  <Pressable onPress={() => seekBy(15)} style={styles.playerRoundButton} accessibilityLabel="پانزده ثانیه جلو">
+                  <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton} accessibilityLabel="ده ثانیه جلو">
                     <Ionicons name="play-forward" color="#fff" size={26} />
-                    <Text style={styles.playerSkipText}>۱۵</Text>
+                    <Text style={styles.playerSkipText}>۱۰</Text>
                   </Pressable>
                 </View>
               </View>
@@ -6363,6 +6415,21 @@ function VideoPlayerModal({
                 <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
               </View>
               <View style={styles.playerBottomTools}>
+                <Pressable
+                  onPress={() => {
+                    clearControlsTimer();
+                    setControlsVisible(true);
+                    setQualityExpanded(false);
+                    setSettingsOpen(true);
+                  }}
+                  style={styles.playerControlIcon}
+                  accessibilityLabel="تنظیمات"
+                >
+                  <Ionicons name="settings-outline" color="#fff" size={22} />
+                </Pressable>
+                <Pressable onPress={toggleOrientation} style={styles.playerControlIcon} accessibilityLabel={landscape ? 'خروج از تمام‌صفحه' : 'تمام‌صفحه'}>
+                  <Ionicons name={landscape ? 'contract-outline' : 'expand-outline'} color="#fff" size={22} />
+                </Pressable>
                 {playerEpisodeGroups.length ? (
                   <Pressable
                     onPress={() => {
@@ -6371,27 +6438,36 @@ function VideoPlayerModal({
                       setSettingsOpen(false);
                       setEpisodesOpen(true);
                     }}
-                    style={styles.playerToolButton}
+                    style={styles.playerControlIcon}
+                    accessibilityLabel="قسمت‌ها"
                   >
-                    <Ionicons name="albums-outline" color="#fff" size={18} />
-                    <Text style={styles.playerToolText}>قسمت‌ها</Text>
+                    <Ionicons name="albums-outline" color="#fff" size={21} />
                   </Pressable>
                 ) : null}
-                <Pressable
-                  onPress={() => {
-                    clearControlsTimer();
-                    setControlsVisible(true);
-                    setQualityExpanded(false);
-                    setSettingsOpen(true);
-                  }}
-                  style={styles.playerToolButton}
-                >
-                  <Ionicons name="settings-outline" color="#fff" size={18} />
-                  <Text style={styles.playerToolText}>تنظیمات</Text>
+                <View style={styles.playerControlSpacer} />
+                <Pressable onPress={() => adjustVolume(-0.1)} style={styles.playerControlIcon} accessibilityLabel="کم کردن صدا">
+                  <Ionicons name="remove-circle-outline" color="#fff" size={21} />
+                </Pressable>
+                <Pressable onPress={toggleMute} style={styles.playerControlIcon} accessibilityLabel={isMuted ? 'وصل کردن صدا' : 'قطع کردن صدا'}>
+                  <Ionicons name={isMuted || playerVolume <= 0 ? 'volume-mute' : 'volume-high'} color="#fff" size={22} />
+                </Pressable>
+                <Pressable onPress={() => adjustVolume(0.1)} style={styles.playerControlIcon} accessibilityLabel="زیاد کردن صدا">
+                  <Ionicons name="add-circle-outline" color="#fff" size={21} />
                 </Pressable>
               </View>
             </View>
           </View>
+        ) : null}
+
+        {controlsLocked ? (
+          <Pressable
+            onPress={unlockPlayerControls}
+            style={[styles.playerLockedButton, { left: safeLeft, top: Math.max(12, insets.top + 8) }]}
+            accessibilityLabel="باز کردن قفل کنترل‌ها"
+          >
+            <Ionicons name="lock-closed" color="#fff" size={20} />
+            <Text style={styles.playerLockedText}>باز کردن قفل</Text>
+          </Pressable>
         ) : null}
 
         {episodesOpen && item?.type === 'series' ? (
@@ -7017,7 +7093,7 @@ function AppContent() {
   const dismissStartup = useCallback(() => {
     if (startupDismissedRef.current) return;
     startupDismissedRef.current = true;
-    const minimumVisibleMs = 5000;
+    const minimumVisibleMs = 850;
     const elapsed = Date.now() - startupStartedAtRef.current;
     const delay = Math.max(0, minimumVisibleMs - elapsed);
     startupDismissTimerRef.current = setTimeout(() => setStartupVisible(false), delay);
@@ -7132,7 +7208,7 @@ function AppContent() {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
     }
-    startupFallbackTimer = setTimeout(dismissStartup, 5000);
+    startupFallbackTimer = setTimeout(dismissStartup, 1200);
 
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
@@ -8771,8 +8847,8 @@ const styles = StyleSheet.create({
   peopleSectionHeaderText: { flex: 1, alignItems: 'flex-end' },
   peopleSectionTitle: { ...rtlText, color: COLORS.text, fontSize: 15, fontWeight: '900' },
   peopleSectionSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8.5, marginTop: 4 },
-  peopleRail: { minHeight: 159, direction: 'rtl' },
-  peopleList: { flexDirection: 'row-reverse', gap: 12, paddingHorizontal: 1, paddingBottom: 2 },
+  peopleRail: { minHeight: 159 },
+  peopleList: { flexDirection: 'row', gap: 12, paddingHorizontal: 1, paddingBottom: 2 },
   personCard: { width: 88, height: 157, flexShrink: 0, alignItems: 'center' },
   personAvatarWrap: { width: 70, height: 70, borderRadius: 35, overflow: 'hidden', borderWidth: 1.5, borderColor: 'rgba(216,180,90,0.38)', backgroundColor: COLORS.surface },
   personAvatar: { width: '100%', height: '100%' },
@@ -8941,7 +9017,7 @@ const styles = StyleSheet.create({
   playerTimeText: { color: '#fff', fontSize: 9.5, fontWeight: '800' },
   playerTimeSpacer: { flex: 1 },
   playerVersionText: { ...rtlText, minWidth: 0, flex: 1, color: 'rgba(255,255,255,0.88)', fontSize: 8.5, textAlign: 'center' },
-  playerBottomTools: { marginTop: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
+  playerBottomTools: { marginTop: 6, minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
   playerControlRow: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 5 },
   playerControlIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   playerControlSpacer: { flex: 1 },
@@ -9000,7 +9076,7 @@ const styles = StyleSheet.create({
   playerSettingsEmpty: { ...rtlText, color: COLORS.muted, fontSize: 8.5, lineHeight: 16, textAlign: 'center', marginTop: 9 },
   playerToolButton: { minWidth: 72, minHeight: 42, paddingHorizontal: 10, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: 'rgba(8,10,14,0.92)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   playerToolText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
-  playerLockedButton: { position: 'absolute', left: 24, top: '45%', minHeight: 50, paddingHorizontal: 15, borderRadius: 16, zIndex: 40, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: 'rgba(5,7,10,0.88)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)' },
+  playerLockedButton: { position: 'absolute', minHeight: 42, paddingHorizontal: 12, borderRadius: 13, zIndex: 60, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(5,7,10,0.90)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)' },
   playerLockedText: { ...rtlText, color: '#fff', fontSize: 9.5, fontWeight: '900' },
   playerMenuCardLandscape: { maxWidth: 460, paddingVertical: 12 },
   playerMenuScroll: { width: '100%' },
