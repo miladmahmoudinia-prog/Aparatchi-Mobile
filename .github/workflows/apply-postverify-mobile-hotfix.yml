@@ -1,86 +1,54 @@
-name: Apply exact episode frame hotfix
+name: Apply catalog refresh hotfix
 
 on:
   push:
     branches: [main]
     paths:
-      - 'scripts/apply-postverify-mobile-hotfix.mjs'
+      - 'scripts/apply-catalog-refresh-fix.mjs'
+      - '.github/workflows/apply-postverify-mobile-hotfix.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: aparatchi-reported-mobile-fixes
+  group: aparatchi-mobile-source-fix
   cancel-in-progress: false
 
 jobs:
-  fix-build-release:
+  apply:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
-    env:
-      EXPO_NO_TELEMETRY: "1"
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 30
+          fetch-depth: 20
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
-      - name: Apply exact-frame hotfix
-        run: node scripts/apply-postverify-mobile-hotfix.mjs
+          cache: npm
+      - name: Apply catalog refresh hotfix
+        run: node scripts/apply-catalog-refresh-fix.mjs
       - name: Install dependencies
-        run: npm install --include=dev
+        run: npm ci
       - name: Type-check application
         run: npm run typecheck
-      - name: Verify exact-frame hotfix
-        run: |
-          node -e "const fs=require('fs');const s=fs.readFileSync('App.tsx','utf8');if(!s.includes('if (exactGeneratedFrame) return artwork;')) process.exit(1);if(s.includes('exactGeneratedFrame && isSafeHttpUrl')) process.exit(1);"
       - name: Commit verified source
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add App.tsx app.json package.json package-lock.json
-          if ! git diff --cached --quiet; then
-            git commit -m "fix: display exact local episode frames"
-            PUSHED=0
-            for attempt in 1 2 3 4 5; do
-              if git pull --rebase origin main && git push origin HEAD:main; then PUSHED=1; break; fi
-              git rebase --abort >/dev/null 2>&1 || true
-              sleep $((attempt * 2))
-            done
-            [ "$PUSHED" -eq 1 ] || exit 1
+          git add src/contentService.ts
+          if git diff --cached --quiet; then
+            echo "Catalog refresh source already fixed."
+            exit 0
           fi
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Create Android project
-        run: npx expo prebuild --platform android --non-interactive
-        env:
-          NODE_ENV: production
-      - name: Allow Gradle execution
-        run: chmod +x android/gradlew
-      - name: Build release APK
-        run: cd android && ./gradlew app:assembleRelease
-        env:
-          NODE_ENV: production
-      - name: Publish latest APK
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          cp android/app/build/outputs/apk/release/app-release.apk Aparatchi-Android-Release.apk
-          VERSION="$(node -p "require('./package.json').version")"
-          TARGET="$(git rev-parse HEAD)"
-          TITLE="Aparatchi Android v${VERSION}"
-          NOTES="Latest Aparatchi fixes including RTL cast rail, exact per-episode artwork with same-series fallback, faster first launch, and reorganized online player controls."
-          if gh release view android-latest >/dev/null 2>&1; then
-            gh release edit android-latest --target "$TARGET" --title "$TITLE" --notes "$NOTES" --latest
-            gh release upload android-latest Aparatchi-Android-Release.apk --clobber
-          else
-            gh release create android-latest Aparatchi-Android-Release.apk --target "$TARGET" --title "$TITLE" --notes "$NOTES" --latest
-          fi
+          git commit -m "fix: allow large catalog refresh to complete"
+          PUSHED=0
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin main && git push origin HEAD:main; then PUSHED=1; break; fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((attempt * 2))
+          done
+          [ "$PUSHED" -eq 1 ] || exit 1
