@@ -12,13 +12,22 @@ test('missing episode art is generated from the exact episode playback URL on de
   assert.ok(source.includes("player.release()"));
 });
 
-test('episode card never falls back to series poster or unrelated artwork', () => {
+test('episode artwork helper cannot recursively render itself', () => {
   const start = source.indexOf('function ExactEpisodeArtwork({');
   const end = source.indexOf('function SeriesEpisodeShowcase({', start);
   const block = source.slice(start, end);
+  assert.ok(block.includes('primary={artwork}'));
   assert.ok(block.includes('primary=""'));
+  assert.ok(!block.includes('return <ExactEpisodeArtwork'));
   assert.ok(!block.includes('item.poster'));
   assert.ok(!block.includes('item.backdrop'));
+});
+
+test('series episode cards use the exact episode artwork helper', () => {
+  const start = source.indexOf('function SeriesEpisodeShowcase({');
+  const end = source.indexOf('function DownloadOptionsModal({', start);
+  const block = source.slice(start, end);
+  assert.ok(block.includes('<ExactEpisodeArtwork item={item} group={group} artwork={artwork} />'));
 });
 
 test('episode thumbnail work is serialized and cached for performance', () => {

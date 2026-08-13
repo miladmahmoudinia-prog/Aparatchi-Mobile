@@ -5369,7 +5369,7 @@ function ExactEpisodeArtwork({
   }, [artwork, cacheKey, exactSource, group.episodeNumber]);
 
   if (artwork) {
-    return <ExactEpisodeArtwork item={item} group={group} artwork={artwork} />;
+    return <CatalogArtwork primary={artwork} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />;
   }
   if (generated) {
     return <Image source={generated as any} style={styles.episodeShowcaseArtwork} contentFit="cover" transition={0} />;
@@ -5443,7 +5443,7 @@ function SeriesEpisodeShowcase({
                 onPress={() => canPlay ? onPlay(group) : operatorPlay ? onOpenOperator(operatorPlay) : onOpenDownloads(group)}
                 style={styles.episodeShowcaseArtworkWrap}
               >
-                <CatalogArtwork primary={artwork} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />
+                <ExactEpisodeArtwork item={item} group={group} artwork={artwork} />
                 <LinearGradient colors={['transparent', 'rgba(4,6,9,0.92)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.episodeShowcasePlay}>
                   <Ionicons name={canPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
