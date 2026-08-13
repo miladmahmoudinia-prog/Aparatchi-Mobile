@@ -6800,10 +6800,9 @@ function OperatorWebModal({
                 setLoading(false);
                 setFailed(true);
               }}
-              onHttpError={() => {
-                setLoading(false);
-                setFailed(true);
-              }}
+              // Do not fail the whole operator page for HTTP errors from images,
+              // scripts or other provider subresources. Actual WebView/network load
+              // failures are still handled by onError below.
               renderLoading={() => (
                 <View style={styles.operatorWebLoading}>
                   <ActivityIndicator color={COLORS.gold} size="large" />
