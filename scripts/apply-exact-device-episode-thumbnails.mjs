@@ -3,54 +3,34 @@ import fs from 'node:fs/promises';
 const file = 'App.tsx';
 let source = await fs.readFile(file, 'utf8');
 
-function replaceOnce(before, after, label) {
-  if (source.includes(after)) return;
-  const count = source.split(before).length - 1;
-  if (count !== 1) throw new Error(`${label}: expected exactly one patch target, found ${count}`);
-  source = source.replace(before, after);
+const start = source.indexOf('function OperatorWebModal(');
+const end = source.indexOf('\nfunction VpnBlockModal(', start);
+if (start < 0 || end < 0) throw new Error('OperatorWebModal block not found');
+let block = source.slice(start, end);
+
+const oldHttpError = `              onHttpError={() => {\n                setLoading(false);\n                setFailed(true);\n              }}\n`;
+if (!block.includes(oldHttpError)) {
+  if (block.includes('onHttpError=')) throw new Error('OperatorWebModal onHttpError shape changed; refusing unsafe patch');
+} else {
+  block = block.replace(oldHttpError, `              // Do not fail the whole operator page for HTTP errors from images,\n              // scripts or other provider subresources. Actual WebView/network load\n              // failures are still handled by onError below.\n`);
 }
 
-// Sequential user fix #1: operator-only playback.
-// Keep the provider WebView mounted while loading state changes. Reload it only
-// when the user explicitly presses Retry.
-replaceOnce(
-  "  const [errorText, setErrorText] = useState('');\n",
-  "  const [errorText, setErrorText] = useState('');\n  const [reloadNonce, setReloadNonce] = useState(0);\n",
-  'operator WebView retry nonce',
-);
+if (!block.includes('onError={() => {')) {
+  throw new Error('OperatorWebModal lost the main WebView onError handler');
+}
+if (block.includes('onHttpError=')) {
+  throw new Error('OperatorWebModal still has a fatal onHttpError handler');
+}
 
-replaceOnce(
-  "            <Pressable onPress={() => { setStatus('loading'); setErrorText(''); }} style={styles.operatorWebRetry}>",
-  "            <Pressable onPress={() => { setStatus('loading'); setErrorText(''); setReloadNonce((value) => value + 1); }} style={styles.operatorWebRetry}>",
-  'operator WebView explicit retry',
-);
-
-replaceOnce(
-  '          key={`${request.item.id}-${request.file.url}-${status}`}\n',
-  '          key={`${request.item.id}-${request.file.url}-${reloadNonce}`}\n',
-  'stable operator WebView key',
-);
-
-replaceOnce(
-  "          onLoadEnd={() => setStatus('ready')}\n",
-  "          onLoad={() => setStatus('ready')}\n",
-  'operator WebView success-only ready state',
-);
-
+source = source.slice(0, start) + block + source.slice(end);
 await fs.writeFile(file, source, 'utf8');
 
 const verified = await fs.readFile(file, 'utf8');
-if (verified.includes('key={`${request.item.id}-${request.file.url}-${status}`}')) {
-  throw new Error('operator WebView still remounts when status changes');
-}
-if (!verified.includes('key={`${request.item.id}-${request.file.url}-${reloadNonce}`}')) {
-  throw new Error('stable operator WebView key was not applied');
-}
-if (!verified.includes('setReloadNonce((value) => value + 1)')) {
-  throw new Error('explicit operator WebView retry was not applied');
-}
-if (!verified.includes("onLoad={() => setStatus('ready')}")) {
-  throw new Error('success-only WebView ready state was not applied');
-}
+const verifiedStart = verified.indexOf('function OperatorWebModal(');
+const verifiedEnd = verified.indexOf('\nfunction VpnBlockModal(', verifiedStart);
+const verifiedBlock = verified.slice(verifiedStart, verifiedEnd);
+if (verifiedBlock.includes('onHttpError=')) throw new Error('fatal provider subresource handler remains');
+if (!verifiedBlock.includes('onError={() => {')) throw new Error('main WebView failure handler missing after patch');
+if (!verifiedBlock.includes('source={{ uri: request.url }}')) throw new Error('operator request URL wiring changed unexpectedly');
 
-console.log('Sequential user fix #1 verified: operator playback WebView no longer reloads on status changes.');
+console.log('Sequential user fix #1 verified: provider subresource HTTP errors no longer replace operator playback with a false fatal screen.');
