@@ -1074,7 +1074,7 @@ const visibleLoadedContent = (loaded: LoadedContent): LoadedContent => ({
   items: (loaded.items || []).filter(
     loaded.source === 'remote' || loaded.source === 'cache'
       ? isSeriesPublished
-      : itemHasUsableContent,
+      : () => true,
   ),
 });
 

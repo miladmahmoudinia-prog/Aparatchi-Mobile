@@ -1619,7 +1619,9 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     const controller = new AbortController();
     // The catalog is large enough that a valid refresh can exceed 12 seconds on mobile networks.
     // Startup already paints bundled/cache content first, so let the background refresh finish.
-    const timeout = setTimeout(() => controller.abort(), 45_000);
+    // Home is already rendered from bundled/cache data, so a slow catalog refresh must not
+    // be killed while the full public index is still downloading on a mobile connection.
+    const timeout = setTimeout(() => controller.abort(), 120_000);
     const requestHeaders: Record<string, string> = {
       Accept: 'application/json',
       'Cache-Control': 'no-cache',
