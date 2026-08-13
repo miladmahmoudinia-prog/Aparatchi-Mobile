@@ -1,0 +1,1 @@
+Run final verified 2026-08-14 mobile fixes with boolean-safe operator redirect guard.
