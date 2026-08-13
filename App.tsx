@@ -776,7 +776,9 @@ const playableVersionsFor = (
     }];
   });
 
-  const unlabeledSources = playbackSourcesForFiles(files.filter((file) => !file.language));
+  const unlabeledSources = isIranianItem(item)
+    ? playbackSourcesForFiles(files.filter((file) => !file.language))
+    : [];
   if (unlabeledSources.length) {
     versions.push({
       label: 'پخش آنلاین',
@@ -788,6 +790,7 @@ const playableVersionsFor = (
   if (versions.length) return versions;
 
   if (
+    isIranianItem(item) &&
     item.streamUrl &&
     isSafeHttpUrl(item.streamUrl) &&
     isDirectMediaUrl(item.streamUrl) &&
@@ -812,7 +815,7 @@ const playableVersionsFor = (
 const languageSectionsForFiles = (
   files: DownloadFile[],
   idPrefix: string,
-  _iranian = false,
+  iranian = false,
 ): DownloadSection[] => {
   const reconciled = reconcileUperaMediaFiles(files);
   const sections: DownloadSection[] = LANGUAGE_ORDER.flatMap((language) => {
@@ -828,7 +831,9 @@ const languageSectionsForFiles = (
     }];
   });
 
-  const plainFiles = sortedDownloadFiles(reconciled.filter((file) => !file.language));
+  const plainFiles = iranian
+    ? sortedDownloadFiles(reconciled.filter((file) => !file.language))
+    : [];
   if (plainFiles.length) {
     sections.push({
       id: `${idPrefix}-plain`,
@@ -2484,6 +2489,7 @@ function PeopleSection({
     });
   }, [item.people]);
 
+  const peopleRailRef = useRef<FlatList<CatalogPerson>>(null);
   if (!people.length) return null;
 
   return (
@@ -2498,9 +2504,10 @@ function PeopleSection({
         </View>
       </View>
       <FlatList
+        ref={peopleRailRef}
         horizontal
         data={[...people].reverse()}
-        contentOffset={{ x: people.length * 100, y: 0 }}
+        onContentSizeChange={() => peopleRailRef.current?.scrollToEnd({ animated: false })}
         keyExtractor={(person) => person.tmdbId
           ? `tmdb:${person.tmdbId}:${person.role}`
           : `person:${normalizeComparableText(personName(person))}:${person.role}`}
@@ -2662,6 +2669,8 @@ function HomeStarsSectionBase({
   // recycled blank slots on long rails. Reverse the data and stay at the
   // physical end so the first logical star still appears on the right.
   const displayedPeople = useMemo(() => [...resolvedPeople].reverse(), [resolvedPeople]);
+  const starPeopleRailRef = useRef<FlatList<FeaturedPerson>>(null);
+  const starWorksRailRef = useRef<FlatList<CatalogItem>>(null);
 
   useEffect(() => {
     if (!resolvedPeople.length) return;
@@ -2728,10 +2737,11 @@ function HomeStarsSectionBase({
       </View>
 
       <FlatList
+        ref={starPeopleRailRef}
         horizontal
         style={styles.starPeopleRail}
         data={displayedPeople}
-        contentOffset={{ x: displayedPeople.length * 66, y: 0 }}
+        onContentSizeChange={() => starPeopleRailRef.current?.scrollToEnd({ animated: false })}
         keyExtractor={(person) => person.tmdbId ? `tmdb:${person.tmdbId}` : person.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.starsPeopleList}
@@ -2760,10 +2770,11 @@ function HomeStarsSectionBase({
         </View>
 
         <FlatList
+          ref={starWorksRailRef}
           horizontal
           style={styles.starWorksRail}
           data={displayedWorks}
-          contentOffset={{ x: displayedWorks.length * 113, y: 0 }}
+          onContentSizeChange={() => starWorksRailRef.current?.scrollToEnd({ animated: false })}
           keyExtractor={(item) => item.id}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.starWorksList}
@@ -3345,7 +3356,7 @@ const HomeScreen = memo(function HomeScreen({
         maxToRenderPerBatch={2}
         updateCellsBatchingPeriod={45}
         windowSize={4}
-        removeClippedSubviews={false}
+        removeClippedSubviews
         keyboardShouldPersistTaps="always"
         onScrollEndDrag={rememberVisibleOffset}
         onMomentumScrollEnd={rememberVisibleOffset}
@@ -3446,18 +3457,21 @@ const CategoriesScreen = memo(function CategoriesScreen({
   catalog,
   onBrowse,
   onOpen,
+  isActive,
 }: {
   catalog: CatalogItem[];
   onBrowse: (filter: SearchFilter) => void;
   onOpen: (item: CatalogItem) => void;
+  isActive: boolean;
 }) {
   const [query, setQuery] = useState('');
   const deferredQuery = normalizeComparableText(useDebouncedText(query, 220));
   const { width: screenWidth } = useWindowDimensions();
   const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
+  const liveCategoriesOffsetRef = useRef(categoriesScreenScrollOffset);
   const usableCatalog = catalog;
   const categoryPreviewPool = useMemo(
-    () => sortForCatalogFilter(usableCatalog.slice(0, 900), 'latest'),
+    () => usableCatalog.slice(0, 1200),
     [usableCatalog],
   );
 
@@ -3484,22 +3498,6 @@ const CategoriesScreen = memo(function CategoriesScreen({
       return best;
     };
 
-    const pickAnyUnused = () => {
-      let best: CatalogItem | undefined;
-      let bestScore = Number.NEGATIVE_INFINITY;
-      for (const item of categoryPreviewPool) {
-        if (usedItems.has(item.id) || !hasFastCategoryArtwork(item)) continue;
-        const artwork = artworkKey(item);
-        if (!artwork || usedArtwork.has(artwork)) continue;
-        const score = categoryPreviewScore(item);
-        if (score > bestScore) {
-          best = item;
-          bestScore = score;
-        }
-      }
-      return best;
-    };
-
     for (const card of CATEGORY_CARDS) {
       const selected = pickBestUnused(card.filter);
       if (!selected) continue;
@@ -3509,9 +3507,8 @@ const CategoriesScreen = memo(function CategoriesScreen({
       if (artwork) usedArtwork.add(artwork);
     }
 
-    // A small category may have only one usable artwork and that same title may
-    // already illustrate another shelf. Prefer a relevant reused image over an
-    // empty icon card; only then fall back through closely related categories.
+    // If an exact category has only an artwork already used by another exact
+    // category, reuse that exact-category artwork. Never cross category lines.
     const pickBestAvailable = (filter: SearchFilter) => {
       let best: CatalogItem | undefined;
       let bestScore = Number.NEGATIVE_INFINITY;
@@ -3526,14 +3523,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
     };
     for (const card of CATEGORY_CARDS) {
       if (result.has(card.filter)) continue;
-      let selected = pickBestAvailable(card.filter);
-      if (!selected) {
-        for (const related of relatedCategoryFilters(card.filter)) {
-          selected = pickBestAvailable(related);
-          if (selected) break;
-        }
-      }
-      selected ||= pickAnyUnused();
+      const selected = pickBestAvailable(card.filter);
       if (selected) result.set(card.filter, selected);
     }
     return result;
@@ -3563,7 +3553,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const posterWidth = Math.max(132, Math.floor((screenWidth - 36 - 12) / 2));
 
   useEffect(() => {
-    if (deferredQuery || categoriesScreenScrollOffset <= 0) return undefined;
+    if (!isActive || deferredQuery || categoriesScreenScrollOffset <= 0) return undefined;
     const frame = requestAnimationFrame(() => {
       categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
     });
@@ -3574,11 +3564,13 @@ const CategoriesScreen = memo(function CategoriesScreen({
       categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
     }, 420);
     return () => { cancelAnimationFrame(frame); clearTimeout(retry); clearTimeout(settle); };
-  }, [columnCount, deferredQuery]);
+  }, [columnCount, deferredQuery, isActive]);
 
   const rememberCategoriesOffset = useCallback((event: any) => {
     if (deferredQuery) return;
-    categoriesScreenScrollOffset = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
+    const next = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
+    liveCategoriesOffsetRef.current = next;
+    categoriesScreenScrollOffset = next;
   }, [deferredQuery]);
 
   const searchHeader = (
@@ -3646,7 +3638,10 @@ const CategoriesScreen = memo(function CategoriesScreen({
         const preview = categoryPreviewItems.get(card.filter);
         return (
           <Pressable
-            onPress={() => onBrowse(card.filter)}
+            onPress={() => {
+              categoriesScreenScrollOffset = liveCategoriesOffsetRef.current;
+              onBrowse(card.filter);
+            }}
             unstable_pressDelay={0}
             hitSlop={10}
             android_ripple={{ color: 'rgba(216,180,90,0.16)' }}
@@ -5797,7 +5792,7 @@ const exactEpisodeArtworkFor = (group: DownloadSection, item: CatalogItem) => {
   const artwork = String(group.artwork || '').trim();
   const exactGeneratedFrame = /(?:^|\/)assets\/media\/episodes\/[a-f0-9]{24}\.jpg(?:$|[?#])/i.test(artwork);
   if (exactGeneratedFrame) return artwork;
-  return item.backdrop || item.poster || item.backdropFallback || item.posterFallback || '';
+  return '';
 };
 
 function PlayerEpisodesOverlay({
@@ -6667,6 +6662,7 @@ function OperatorWebModal({
 }) {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const trustedOperatorNavigationRef = useRef(isTrustedOperatorHostUrl(request.url));
 
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
@@ -6716,9 +6712,13 @@ function OperatorWebModal({
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               startInLoadingState
-              onShouldStartLoadWithRequest={(navigation) =>
-                isTrustedOperatorHostUrl(navigation.url)
-              }
+              onShouldStartLoadWithRequest={(navigation) => {
+                if (isTrustedOperatorHostUrl(navigation.url)) {
+                  trustedOperatorNavigationRef.current = true;
+                  return true;
+                }
+                return Boolean(trustedOperatorNavigationRef.current && String(navigation.url || '').toLowerCase().startsWith('https://'));
+              }}
               onLoadStart={() => setLoading(true)}
               onLoadEnd={() => setLoading(false)}
               onError={() => {
@@ -8142,7 +8142,7 @@ function AppContent() {
             pointerEvents={activeTab === 'categories' ? 'auto' : 'none'}
             style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}
           >
-            <CategoriesScreen catalog={content.items} onBrowse={openCatalogFilter} onOpen={setSelectedItem} />
+            <CategoriesScreen catalog={content.items} onBrowse={openCatalogFilter} onOpen={setSelectedItem} isActive={activeTab === 'categories'} />
           </View>
         ) : null}
         {activeTab === 'search' ? (
