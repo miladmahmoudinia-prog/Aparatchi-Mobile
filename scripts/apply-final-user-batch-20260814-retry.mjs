@@ -2,6 +2,13 @@ import fs from 'node:fs/promises';
 
 await import('./apply-final-user-batch-20260814.mjs');
 
+let appSource = await fs.readFile('App.tsx', 'utf8');
+appSource = appSource.replace(
+  "return trustedOperatorNavigationRef.current && /^https:\\/\\//i.test(navigation.url);",
+  "return Boolean(trustedOperatorNavigationRef.current && String(navigation.url || '').toLowerCase().startsWith('https://'));",
+);
+await fs.writeFile('App.tsx', appSource, 'utf8');
+
 const regression = [
   "import test from 'node:test';",
   "import assert from 'node:assert/strict';",
@@ -45,6 +52,7 @@ const regression = [
   "test('home virtualization and operator redirect fixes remain enabled', () => {",
   "  assert.ok(source.includes('removeClippedSubviews'));",
   "  assert.ok(source.includes('trustedOperatorNavigationRef.current'));",
+  "  assert.ok(source.includes(\"startsWith('https://')\"));",
   "});",
   "",
 ].join('\n');
