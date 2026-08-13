@@ -4,7 +4,7 @@ await import('./apply-final-user-batch-20260814.mjs');
 
 let appSource = await fs.readFile('App.tsx', 'utf8');
 appSource = appSource.replace(
-  "return trustedOperatorNavigationRef.current && /^https:\\/\\//i.test(navigation.url);",
+  /return trustedOperatorNavigationRef\.current && [^;]+;/,
   "return Boolean(trustedOperatorNavigationRef.current && String(navigation.url || '').toLowerCase().startsWith('https://'));",
 );
 await fs.writeFile('App.tsx', appSource, 'utf8');
