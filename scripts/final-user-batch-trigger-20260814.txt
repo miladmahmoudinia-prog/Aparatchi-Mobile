@@ -1,1 +1,1 @@
-Run the verified final 2026-08-14 mobile fix batch.
+Run the verified final 2026-08-14 mobile fix batch. Retry 2.
