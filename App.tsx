@@ -5,7 +5,7 @@ import { useEventListener } from 'expo';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { VideoView, useVideoPlayer } from 'expo-video';
+import { VideoView, createVideoPlayer, useVideoPlayer } from 'expo-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { WebView } from 'react-native-webview';
 import {
@@ -5301,6 +5301,81 @@ const episodeShowcaseLabel = (item: CatalogItem, group: DownloadSection, quran: 
     ? `${noun} ${number}`
     : `${noun} ${number} - ${raw}`;
 };
+
+const exactEpisodeThumbnailCache = new Map<string, any>();
+const exactEpisodeThumbnailFailures = new Set<string>();
+let exactEpisodeThumbnailQueue: Promise<void> = Promise.resolve();
+
+function ExactEpisodeArtwork({
+  item,
+  group,
+  artwork,
+}: {
+  item: CatalogItem;
+  group: DownloadSection;
+  artwork: string;
+}) {
+  // The server-generated frame wins when available. If Upera blocks GitHub's
+  // ffmpeg worker, derive the frame on the Android device from this exact
+  // episode's already-valid playback URL. One native job at a time keeps the JS
+  // thread and bottom navigation responsive while the result is cached in RAM.
+  const exactSource = useMemo(() => {
+    const versions = playableVersionsFor(item, group);
+    return versions[0]?.defaultSource?.url || '';
+  }, [group, item]);
+  const cacheKey = exactSource ? `${item.id}:${group.id}:${exactSource}` : '';
+  const [generated, setGenerated] = useState<any>(() =>
+    cacheKey ? exactEpisodeThumbnailCache.get(cacheKey) || null : null,
+  );
+
+  useEffect(() => {
+    if (!cacheKey) {
+      setGenerated(null);
+      return undefined;
+    }
+    const cached = exactEpisodeThumbnailCache.get(cacheKey);
+    setGenerated(cached || null);
+    if (artwork || cached || exactEpisodeThumbnailFailures.has(cacheKey) || !isDirectMediaUrl(exactSource)) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    exactEpisodeThumbnailQueue = exactEpisodeThumbnailQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (cancelled || exactEpisodeThumbnailCache.has(cacheKey) || exactEpisodeThumbnailFailures.has(cacheKey)) return;
+        const player = createVideoPlayer(exactSource);
+        try {
+          const episodeNumber = Math.max(1, Number(group.episodeNumber || 1));
+          const requestedTime = 45 + ((episodeNumber * 37) % 150);
+          const thumbnails = await player.generateThumbnailsAsync([requestedTime], { maxWidth: 640 });
+          const thumbnail = thumbnails[0];
+          if (!thumbnail) {
+            exactEpisodeThumbnailFailures.add(cacheKey);
+            return;
+          }
+          exactEpisodeThumbnailCache.set(cacheKey, thumbnail);
+          if (!cancelled) setGenerated(thumbnail);
+        } catch {
+          exactEpisodeThumbnailFailures.add(cacheKey);
+        } finally {
+          player.release();
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [artwork, cacheKey, exactSource, group.episodeNumber]);
+
+  if (artwork) {
+    return <ExactEpisodeArtwork item={item} group={group} artwork={artwork} />;
+  }
+  if (generated) {
+    return <Image source={generated as any} style={styles.episodeShowcaseArtwork} contentFit="cover" transition={0} />;
+  }
+  return <CatalogArtwork primary="" style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />;
+}
 
 function SeriesEpisodeShowcase({
   item,
