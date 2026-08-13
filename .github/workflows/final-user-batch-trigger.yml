@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'scripts/final-user-batch-trigger-20260814.txt'
+      - 'scripts/apply-exact-device-episode-thumbnails.mjs'
+      - '.github/workflows/final-user-batch-trigger.yml'
   workflow_dispatch:
 
 permissions:
@@ -26,14 +28,16 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Apply final fixes
-        run: node scripts/apply-final-user-batch-20260814-retry.mjs
+      - name: Apply final UI and media fixes
+        run: |
+          node scripts/apply-final-user-batch-20260814-retry.mjs
+          node scripts/apply-exact-device-episode-thumbnails.mjs
       - name: Install dependencies
         run: npm ci
       - name: Type-check
         run: npm run typecheck
-      - name: Run regression lock
-        run: node --test scripts/tests/final-user-batch-20260814.test.mjs
+      - name: Run all regression locks
+        run: node --test scripts/tests/*.test.mjs
       - name: Commit verified source
         shell: bash
         run: |
@@ -42,7 +46,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add App.tsx package.json app.json scripts
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m "fix: final reported UI media and performance regressions"
+          git commit -m "fix: final UI media performance and exact episode covers"
           PUSHED=0
           for attempt in 1 2 3 4 5; do
             if git pull --rebase origin main && git push origin HEAD:main; then PUSHED=1; break; fi
