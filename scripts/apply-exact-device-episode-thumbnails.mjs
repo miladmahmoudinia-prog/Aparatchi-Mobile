@@ -3,17 +3,14 @@ import fs from 'node:fs/promises';
 const path = 'App.tsx';
 let source = await fs.readFile(path, 'utf8');
 
-const replaceOnce = (before, after, label) => {
-  if (source.includes(after)) return;
-  if (!source.includes(before)) throw new Error(`Missing patch target: ${label}`);
-  source = source.replace(before, after);
+const ensureImport = () => {
+  if (source.includes("import { VideoView, createVideoPlayer, useVideoPlayer } from 'expo-video';")) return;
+  const before = "import { VideoView, useVideoPlayer } from 'expo-video';";
+  if (!source.includes(before)) throw new Error('Missing expo-video import');
+  source = source.replace(before, "import { VideoView, createVideoPlayer, useVideoPlayer } from 'expo-video';");
 };
 
-replaceOnce(
-  "import { VideoView, useVideoPlayer } from 'expo-video';",
-  "import { VideoView, createVideoPlayer, useVideoPlayer } from 'expo-video';",
-  'expo-video import',
-);
+ensureImport();
 
 const helperMarker = `function SeriesEpisodeShowcase({
   item,
@@ -34,10 +31,6 @@ function ExactEpisodeArtwork({
   group: DownloadSection;
   artwork: string;
 }) {
-  // The server-generated frame wins when available. If Upera blocks GitHub's
-  // ffmpeg worker, derive the frame on the Android device from this exact
-  // episode's already-valid playback URL. One native job at a time keeps the JS
-  // thread and bottom navigation responsive while the result is cached in RAM.
   const exactSource = useMemo(() => {
     const versions = playableVersionsFor(item, group);
     return versions[0]?.defaultSource?.url || '';
@@ -103,18 +96,33 @@ if (!source.includes('function ExactEpisodeArtwork({')) {
   source = source.replace(helperMarker, helper + helperMarker);
 }
 
-replaceOnce(
-  '<CatalogArtwork primary={artwork} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />',
-  '<ExactEpisodeArtwork item={item} group={group} artwork={artwork} />',
-  'episode artwork renderer',
+// Repair the accidental self-recursion produced by the previous patch.
+source = source.replace(
+  'return <ExactEpisodeArtwork item={item} group={group} artwork={artwork} />;',
+  'return <CatalogArtwork primary={artwork} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />;',
 );
+
+// Replace only the renderer inside SeriesEpisodeShowcase, never the helper body.
+const seriesStart = source.indexOf('function SeriesEpisodeShowcase({');
+const downloadModalStart = source.indexOf('function DownloadOptionsModal({', seriesStart);
+if (seriesStart < 0 || downloadModalStart < 0) throw new Error('SeriesEpisodeShowcase bounds missing');
+const beforeSeries = source.slice(0, seriesStart);
+let seriesBlock = source.slice(seriesStart, downloadModalStart);
+const afterSeries = source.slice(downloadModalStart);
+const oldRenderer = '<CatalogArtwork primary={artwork} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />';
+const newRenderer = '<ExactEpisodeArtwork item={item} group={group} artwork={artwork} />';
+if (!seriesBlock.includes(newRenderer)) {
+  if (!seriesBlock.includes(oldRenderer)) throw new Error('Episode artwork renderer target missing');
+  seriesBlock = seriesBlock.replace(oldRenderer, newRenderer);
+}
+source = beforeSeries + seriesBlock + afterSeries;
 
 await fs.writeFile(path, source, 'utf8');
 
 for (const file of ['package.json', 'app.json']) {
   let text = await fs.readFile(file, 'utf8');
-  text = text.replace(/"version": "0\.15\.4"/, '"version": "0.15.5"');
-  if (file === 'app.json') text = text.replace(/"versionCode": 24/, '"versionCode": 25');
+  text = text.replace(/"version": "0\.15\.5"/, '"version": "0.15.6"');
+  if (file === 'app.json') text = text.replace(/"versionCode": 25/, '"versionCode": 26');
   await fs.writeFile(file, text, 'utf8');
 }
 
@@ -132,13 +140,22 @@ test('missing episode art is generated from the exact episode playback URL on de
   assert.ok(source.includes("player.release()"));
 });
 
-test('episode card never falls back to series poster or unrelated artwork', () => {
+test('episode artwork helper cannot recursively render itself', () => {
   const start = source.indexOf('function ExactEpisodeArtwork({');
   const end = source.indexOf('function SeriesEpisodeShowcase({', start);
   const block = source.slice(start, end);
+  assert.ok(block.includes('primary={artwork}'));
   assert.ok(block.includes('primary=""'));
+  assert.ok(!block.includes('return <ExactEpisodeArtwork'));
   assert.ok(!block.includes('item.poster'));
   assert.ok(!block.includes('item.backdrop'));
+});
+
+test('series episode cards use the exact episode artwork helper', () => {
+  const start = source.indexOf('function SeriesEpisodeShowcase({');
+  const end = source.indexOf('function DownloadOptionsModal({', start);
+  const block = source.slice(start, end);
+  assert.ok(block.includes('<ExactEpisodeArtwork item={item} group={group} artwork={artwork} />'));
 });
 
 test('episode thumbnail work is serialized and cached for performance', () => {
@@ -150,4 +167,4 @@ test('episode thumbnail work is serialized and cached for performance', () => {
 await fs.mkdir('scripts/tests', { recursive: true });
 await fs.writeFile('scripts/tests/exact-device-episode-thumbnails.test.mjs', test, 'utf8');
 
-console.log('Applied exact on-device episode thumbnail fallback and bumped app to 0.15.5.');
+console.log('Repaired exact episode artwork rendering and bumped app to 0.15.6.');
