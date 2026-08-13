@@ -28,10 +28,8 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Apply final UI and media fixes
-        run: |
-          node scripts/apply-final-user-batch-20260814-retry.mjs
-          node scripts/apply-exact-device-episode-thumbnails.mjs
+      - name: Apply remaining exact episode-cover fix
+        run: node scripts/apply-exact-device-episode-thumbnails.mjs
       - name: Install dependencies
         run: npm ci
       - name: Type-check
@@ -46,7 +44,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add App.tsx package.json app.json scripts
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m "fix: final UI media performance and exact episode covers"
+          git commit -m "fix: generate exact episode covers on device"
           PUSHED=0
           for attempt in 1 2 3 4 5; do
             if git pull --rebase origin main && git push origin HEAD:main; then PUSHED=1; break; fi
