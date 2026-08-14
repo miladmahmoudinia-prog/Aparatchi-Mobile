@@ -206,6 +206,8 @@ export type ImdbTop100 = {
   series: ImdbTopEntry[];
 };
 
+export type PersonWorkRef = string | number;
+
 export type CatalogPayload = {
   version: string;
   updatedAt: string;
@@ -213,8 +215,8 @@ export type CatalogPayload = {
   iranianSchedule: ScheduleEntry[];
   weeklySchedule?: ScheduleEntry[];
   featuredPeople?: FeaturedPerson[];
-  /** Compact reverse lookup: person identity key -> catalog item IDs. */
-  peopleWorks?: Record<string, string[]>;
+  /** Compact reverse lookup: person identity key -> item index (remote) or legacy item ID. */
+  peopleWorks?: Record<string, PersonWorkRef[]>;
   imdbTop100?: ImdbTop100;
 };
 

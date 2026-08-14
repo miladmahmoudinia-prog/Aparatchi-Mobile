@@ -44,7 +44,7 @@ import {
   checkMobileOperatorAccess,
   MobileOperatorAccessStatus,
 } from './src/operatorAccess';
-import { CatalogItem, CatalogPerson, DayId, DownloadFile, DownloadSection, FeaturedPerson, ImdbTop100, ImdbTopEntry, MediaLanguage, ScheduleEntry } from './src/types';
+import { CatalogItem, CatalogPerson, DayId, DownloadFile, DownloadSection, FeaturedPerson, ImdbTop100, ImdbTopEntry, MediaLanguage, PersonWorkRef, ScheduleEntry } from './src/types';
 import {
   DownloadRecord,
   cancelDownload,
@@ -1462,11 +1462,15 @@ const personWorkKeysFor = (person: CatalogPerson) => {
 const personWorksFor = (
   person: CatalogPerson,
   catalog: CatalogItem[],
-  peopleWorks: Record<string, string[]> = {},
+  peopleWorks: Record<string, PersonWorkRef[]> = {},
 ) => {
-  const catalogById = new Map(catalog.map((item) => [String(item.id), item] as const));
-  const indexed = [...new Set(personWorkKeysFor(person).flatMap((key) => peopleWorks[key] || []))]
-    .map((id) => catalogById.get(String(id)))
+  const refs = [...new Set(personWorkKeysFor(person).flatMap((key) => peopleWorks[key] || []))];
+  const needsIdLookup = refs.some((ref) => typeof ref === 'string');
+  const catalogById = needsIdLookup
+    ? new Map(catalog.map((item) => [String(item.id), item] as const))
+    : null;
+  const indexed = refs
+    .map((ref) => typeof ref === 'number' ? catalog[ref] : catalogById?.get(String(ref)))
     .filter((item): item is CatalogItem => Boolean(item));
   if (indexed.length) return sortForCatalogFilter(indexed, 'latest');
 
@@ -1486,6 +1490,24 @@ const personWorksFor = (
     })),
     'latest',
   );
+};
+
+const peopleWorkItemIdsMatchingQuery = (
+  peopleWorks: Record<string, PersonWorkRef[]> | undefined,
+  catalog: CatalogItem[],
+  normalizedQuery: string,
+) => {
+  const matched = new Set<string>();
+  if (!normalizedQuery || !peopleWorks) return matched;
+  for (const [key, refs] of Object.entries(peopleWorks)) {
+    if (!key.startsWith('name:')) continue;
+    if (!normalizeComparableText(key.slice(5)).includes(normalizedQuery)) continue;
+    for (const ref of refs) {
+      const id = typeof ref === 'number' ? catalog[ref]?.id : String(ref || '');
+      if (id) matched.add(String(id));
+    }
+  }
+  return matched;
 };
 
 const personAge = (person: CatalogPerson) => {
@@ -3482,11 +3504,13 @@ const hasFastCategoryArtwork = (item: CatalogItem) =>
 
 const CategoriesScreen = memo(function CategoriesScreen({
   catalog,
+  peopleWorks,
   onBrowse,
   onOpen,
   isActive,
 }: {
   catalog: CatalogItem[];
+  peopleWorks?: Record<string, PersonWorkRef[]>;
   onBrowse: (filter: SearchFilter) => void;
   onOpen: (item: CatalogItem) => void;
   isActive: boolean;
@@ -3524,20 +3548,26 @@ const CategoriesScreen = memo(function CategoriesScreen({
     return result;
   }, [categoryPreviewPool]);
 
+  const categoryActorMatches = useMemo(
+    () => peopleWorkItemIdsMatchingQuery(peopleWorks, usableCatalog, deferredQuery),
+    [deferredQuery, peopleWorks, usableCatalog],
+  );
   const searchResults = useMemo(() => {
     if (!deferredQuery) return [];
     return sortForCatalogFilter(
-      usableCatalog.filter((item) => normalizeComparableText([
-        item.nameFa,
-        item.name,
-        ...(item.genres || []),
-        ...(item.countryLabels || []),
-        ...(item.countryNames || []),
-        ...(item.people || []).flatMap((person) => [person.nameFa, person.name || '']),
-      ].join(' ')).includes(deferredQuery)),
+      usableCatalog.filter((item) =>
+        categoryActorMatches.has(String(item.id)) ||
+        normalizeComparableText([
+          item.nameFa,
+          item.name,
+          ...(item.genres || []),
+          ...(item.countryLabels || []),
+          ...(item.countryNames || []),
+        ].join(' ')).includes(deferredQuery),
+      ),
       'latest',
     ).slice(0, 50);
-  }, [deferredQuery, usableCatalog]);
+  }, [categoryActorMatches, deferredQuery, usableCatalog]);
 
   const topGenres = useMemo(() => [...new Set(usableCatalog.flatMap((item) => item.genres || []))].filter(Boolean).slice(0, 14), [usableCatalog]);
   const topCountries = useMemo(() => [...new Set(usableCatalog.flatMap((item) => item.countryCodes || []))].filter((code) => String(code).toUpperCase() !== 'JP').slice(0, 12), [usableCatalog]);
@@ -3818,9 +3848,11 @@ function CatalogListScreen({
 
 function SimpleSearchScreen({
   catalog,
+  peopleWorks,
   onOpen,
 }: {
   catalog: CatalogItem[];
+  peopleWorks?: Record<string, PersonWorkRef[]>;
   onOpen: (item: CatalogItem) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -3839,21 +3871,24 @@ function SimpleSearchScreen({
           ...(item.genres || []),
           ...(item.countryLabels || []),
           ...(item.countryNames || []),
-          ...(item.people || []).flatMap((person) => [person.nameFa, person.name || '']),
         ].join(' ')),
       })),
     [catalog],
+  );
+  const actorMatchedIds = useMemo(
+    () => peopleWorkItemIdsMatchingQuery(peopleWorks, catalog, deferredQuery),
+    [catalog, deferredQuery, peopleWorks],
   );
   const results = useMemo(() => {
     if (!deferredQuery) return [];
     const matched: CatalogItem[] = [];
     for (const entry of searchIndex) {
-      if (!entry.text.includes(deferredQuery)) continue;
+      if (!entry.text.includes(deferredQuery) && !actorMatchedIds.has(String(entry.item.id))) continue;
       matched.push(entry.item);
       if (matched.length >= 48) break;
     }
     return sortForCatalogFilter(matched, 'latest');
-  }, [deferredQuery, searchIndex]);
+  }, [actorMatchedIds, deferredQuery, searchIndex]);
 
   return (
     <View style={styles.screen}>
@@ -4092,10 +4127,11 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
 
 function SearchScreen(props: {
   catalog: CatalogItem[];
+  peopleWorks?: Record<string, PersonWorkRef[]>;
   onOpen: (item: CatalogItem) => void;
   initialFilter: SearchFilter;
 }) {
-  if (props.initialFilter === 'all') return <SimpleSearchScreen catalog={props.catalog} onOpen={props.onOpen} />;
+  if (props.initialFilter === 'all') return <SimpleSearchScreen catalog={props.catalog} peopleWorks={props.peopleWorks} onOpen={props.onOpen} />;
   if (props.initialFilter === 'collections') return <CollectionBrowserScreen catalog={props.catalog} onOpen={props.onOpen} />;
   return <CatalogListScreen {...props} />;
 }
@@ -5829,7 +5865,7 @@ function PersonProfileModal({
 }: {
   person: CatalogPerson | null;
   catalog: CatalogItem[];
-  peopleWorks: Record<string, string[]>;
+  peopleWorks: Record<string, PersonWorkRef[]>;
   visible: boolean;
   onClose: () => void;
   onOpenItem: (item: CatalogItem) => void;
@@ -8498,13 +8534,14 @@ function AppContent() {
             pointerEvents={activeTab === 'categories' ? 'auto' : 'none'}
             style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}
           >
-            <CategoriesScreen catalog={content.items} onBrowse={openCatalogFilter} onOpen={setSelectedItem} isActive={activeTab === 'categories'} />
+            <CategoriesScreen catalog={content.items} peopleWorks={content.peopleWorks} onBrowse={openCatalogFilter} onOpen={setSelectedItem} isActive={activeTab === 'categories'} />
           </View>
         ) : null}
         {activeTab === 'search' ? (
           <View style={styles.tabScene}>
             <SearchScreen
               catalog={content.items}
+              peopleWorks={content.peopleWorks}
               onOpen={setSelectedItem}
               initialFilter={searchFilter}
             />

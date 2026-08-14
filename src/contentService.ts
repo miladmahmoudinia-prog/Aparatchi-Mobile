@@ -20,6 +20,7 @@ import {
   LatestEpisode,
   MediaLanguage,
   OperatorAccessKind,
+  PersonWorkRef,
   ScheduleEntry,
 } from './types';
 
@@ -1445,13 +1446,25 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
   };
 };
 
-const normalizePeopleWorks = (value: unknown): Record<string, string[]> => {
+const normalizePeopleWorks = (value: unknown): Record<string, PersonWorkRef[]> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const entries: Array<[string, string[]]> = [];
-  for (const [rawKey, rawIds] of Object.entries(value as Record<string, unknown>)) {
+  const entries: Array<[string, PersonWorkRef[]]> = [];
+  for (const [rawKey, rawRefs] of Object.entries(value as Record<string, unknown>)) {
     const key = asString(rawKey);
-    const ids = [...new Set(stringArray(rawIds).map((id) => asString(id)).filter(Boolean))];
-    if (key && ids.length) entries.push([key, ids]);
+    if (!key || !Array.isArray(rawRefs) || !rawRefs.length) continue;
+    const refs: PersonWorkRef[] = [];
+    const seen = new Set<string>();
+    for (const rawRef of rawRefs) {
+      const ref: PersonWorkRef | null = typeof rawRef === 'number' && Number.isInteger(rawRef) && rawRef >= 0
+        ? rawRef
+        : asString(rawRef) || null;
+      if (ref === null) continue;
+      const identity = typeof ref === 'number' ? `i:${ref}` : `s:${ref}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      refs.push(ref);
+    }
+    if (refs.length) entries.push([key, refs]);
   }
   return Object.fromEntries(entries);
 };
