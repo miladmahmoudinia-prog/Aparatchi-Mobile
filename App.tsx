@@ -2442,6 +2442,7 @@ function MovieCollectionSection({
 
       <ScrollView
         horizontal
+        style={styles.mediaRailRtl}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.collectionList}
       >
@@ -2543,7 +2544,6 @@ function PeopleSection({
     });
   }, [item.people]);
 
-  const peopleRailRef = useRef<FlatList<CatalogPerson>>(null);
   if (!people.length) return null;
 
   return (
@@ -2558,17 +2558,15 @@ function PeopleSection({
         </View>
       </View>
       <FlatList
-        ref={peopleRailRef}
         horizontal
-        data={[...people].reverse()}
-        onContentSizeChange={() => peopleRailRef.current?.scrollToEnd({ animated: false })}
+        data={people}
         keyExtractor={(person) => person.tmdbId
           ? `tmdb:${person.tmdbId}:${person.role}`
           : `person:${normalizeComparableText(personName(person))}:${person.role}`}
         renderItem={({ item: person }) => <CastPersonCard person={person} onOpen={onOpen} />}
         showsHorizontalScrollIndicator={false}
         nestedScrollEnabled
-        style={styles.peopleRail}
+        style={[styles.peopleRail, styles.mediaRailRtl]}
         contentContainerStyle={styles.peopleList}
         initialNumToRender={4}
         maxToRenderPerBatch={3}
@@ -2719,12 +2717,6 @@ function HomeStarsSectionBase({
       .slice(0, 60);
   }, [catalog, catalogById, people]);
   const [selectedId, setSelectedId] = useState('');
-  // Keep Android out of RTL/inverted FlatList code paths: both have produced
-  // recycled blank slots on long rails. Reverse the data and stay at the
-  // physical end so the first logical star still appears on the right.
-  const displayedPeople = useMemo(() => [...resolvedPeople].reverse(), [resolvedPeople]);
-  const starPeopleRailRef = useRef<FlatList<FeaturedPerson>>(null);
-  const starWorksRailRef = useRef<FlatList<CatalogItem>>(null);
 
   useEffect(() => {
     if (!resolvedPeople.length) return;
@@ -2746,10 +2738,6 @@ function HomeStarsSectionBase({
 
   const selected = resolvedPeople.find((person) => person.id === selectedId) || resolvedPeople[0];
   const works = selected ? (worksByPersonId.get(selected.id) || []) : [];
-  // Render a reversed data array and stay at the physical end. This keeps the
-  // first logical work on the right without FlatList `inverted`, which had
-  // caused clipped/black horizontal rails on Android.
-  const displayedWorks = useMemo(() => [...works].reverse(), [works]);
 
   const selectedIdForRender = selected?.id || '';
   const selectPerson = useCallback((personId: string) => {
@@ -2791,11 +2779,9 @@ function HomeStarsSectionBase({
       </View>
 
       <FlatList
-        ref={starPeopleRailRef}
         horizontal
-        style={styles.starPeopleRail}
-        data={displayedPeople}
-        onContentSizeChange={() => starPeopleRailRef.current?.scrollToEnd({ animated: false })}
+        style={[styles.starPeopleRail, styles.mediaRailRtl]}
+        data={resolvedPeople}
         keyExtractor={(person) => person.tmdbId ? `tmdb:${person.tmdbId}` : person.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.starsPeopleList}
@@ -2824,11 +2810,9 @@ function HomeStarsSectionBase({
         </View>
 
         <FlatList
-          ref={starWorksRailRef}
           horizontal
-          style={styles.starWorksRail}
-          data={displayedWorks}
-          onContentSizeChange={() => starWorksRailRef.current?.scrollToEnd({ animated: false })}
+          style={[styles.starWorksRail, styles.mediaRailRtl]}
+          data={works}
           keyExtractor={(item) => item.id}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.starWorksList}
@@ -5651,7 +5635,6 @@ function RelatedTitlesSection({
   onOpen: (item: CatalogItem) => void;
 }) {
   const related = useMemo(() => relatedCatalogItems(item, catalog, 5), [item, catalog]);
-  const railRef = useRef<FlatList<CatalogItem>>(null);
   if (!related.length) return null;
 
   return (
@@ -5661,10 +5644,9 @@ function RelatedTitlesSection({
         <Text style={styles.relatedTitlesTitle}>مرتبط‌ها</Text>
       </View>
       <FlatList
-        ref={railRef}
         horizontal
-        data={[...related].reverse()}
-        onContentSizeChange={() => railRef.current?.scrollToEnd({ animated: false })}
+        style={styles.mediaRailRtl}
+        data={related}
         keyExtractor={(relatedItem) => relatedItem.id}
         renderItem={({ item: relatedItem }) => (
           <Pressable style={styles.relatedTitleCard} onPress={() => onOpen(relatedItem)}>
@@ -6035,7 +6017,7 @@ function PlayerEpisodesOverlay({
             })}
           </ScrollView>
         ) : null}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.playerEpisodesRail}>
+        <ScrollView horizontal style={styles.mediaRailRtl} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.playerEpisodesRail}>
           {visibleGroups.map((group) => {
             const active = group.id === activeEpisodeId;
             return (
@@ -6666,6 +6648,7 @@ function VideoPlayerModal({
               </View>
               <ScrollView
                 horizontal
+                style={styles.mediaRailRtl}
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.movieEndRecommendationsRail}
               >
@@ -9036,6 +9019,7 @@ const styles = StyleSheet.create({
   collectionCurrentText: { ...rtlText, color: '#fff', fontSize: 7.5, fontWeight: '900', textAlign: 'center' },
   collectionYear: { position: 'absolute', right: 8, bottom: 7, color: '#fff', fontSize: 8.5, fontWeight: '900' },
   collectionMovieName: { ...rtlText, color: COLORS.text, fontSize: 10, lineHeight: 16, fontWeight: '800', marginTop: 7, minHeight: 31 },
+  mediaRailRtl: { direction: 'rtl' },
   horizontalCatalogList: { flexGrow: 0, direction: 'rtl' },
   horizontalCatalog: { gap: 11, paddingHorizontal: 18, paddingTop: 14 },
   posterCard: { width: 137, alignItems: 'flex-end' },
@@ -9363,9 +9347,9 @@ const styles = StyleSheet.create({
   relatedTitlesAccent: { width: 34, height: 2, borderRadius: 2, backgroundColor: COLORS.red },
   relatedTitlesTitle: { ...rtlText, color: COLORS.text, fontSize: 18, fontWeight: '900' },
   relatedTitlesRail: { flexDirection: 'row', gap: 12, paddingHorizontal: 2, paddingBottom: 5 },
-  relatedTitleCard: { width: 126, alignItems: 'flex-end' },
+  relatedTitleCard: { width: 126, alignItems: 'center' },
   relatedTitlePoster: { width: 126, height: 178, borderRadius: 14, backgroundColor: COLORS.surfaceStrong },
-  relatedTitleName: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 10.5, fontWeight: '800', textAlign: 'right', marginTop: 7 },
+  relatedTitleName: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 10.5, fontWeight: '800', textAlign: 'center', marginTop: 7 },
   relatedTitleRate: { position: 'absolute', left: 7, top: 148, height: 24, paddingHorizontal: 7, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(5,7,10,0.86)' },
   relatedTitleRateText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
   playerOfflineOverlay: { position: 'absolute', zIndex: 95, elevation: 95, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, backgroundColor: 'rgba(0,0,0,0.78)' },
