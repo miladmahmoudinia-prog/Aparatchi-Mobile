@@ -1,0 +1,59 @@
+name: Add series next episode overlay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/add-series-next-episode-overlay.mjs'
+      - 'scripts/test-series-next-episode-overlay.mjs'
+      - '.github/workflows/add-series-next-episode-overlay.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-source-fix
+  cancel-in-progress: false
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 20
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply next episode overlay
+        run: node scripts/add-series-next-episode-overlay.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check application
+        run: npm run typecheck
+      - name: Run next episode regression
+        run: node scripts/test-series-next-episode-overlay.mjs
+      - name: Commit verified next episode overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "aparatchi-mobile-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add App.tsx
+          if git diff --cached --quiet; then
+            echo "Series next episode overlay already applied."
+            exit 0
+          fi
+          git commit -m "feat: suggest next episode near playback end"
+          PUSHED=0
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin main && git push origin HEAD:main; then PUSHED=1; break; fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((attempt * 2))
+          done
+          [ "$PUSHED" -eq 1 ] || exit 1
