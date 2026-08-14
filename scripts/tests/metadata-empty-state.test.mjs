@@ -4,25 +4,17 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
 
-test('placeholder and blank overviews get an honest visible fallback', () => {
-  assert.ok(source.includes('const isMissingCatalogOverview'));
-  assert.ok(source.includes('const catalogOverviewFor'));
-  assert.ok(source.includes('خلاصهٔ معتبر این عنوان هنوز در منابع موجود ثبت نشده است'));
-  assert.ok(source.includes('{catalogOverviewFor(item)}'));
-  assert.ok(!source.includes('style={styles.detailOverview}>{item.overview}</Text>'));
-});
-
-test('people section never disappears just because metadata is unavailable', () => {
+test('people section is hidden when no real cast or crew exists', () => {
   const start = source.indexOf('function PeopleSection');
   const end = source.indexOf('const HorizontalCatalog', start);
   const block = source.slice(start, end);
-  assert.ok(!block.includes('if (!people.length) return null'));
-  assert.ok(block.includes('if (!people.length) {'));
-  assert.ok(block.includes('اطلاعات معتبر عوامل و بازیگران این عنوان هنوز در منابع موجود پیدا نشده است'));
-  assert.ok(block.includes('styles.peopleEmptyState'));
+  assert.ok(block.includes('if (!people.length) return null'));
+  assert.ok(!block.includes('اطلاعات معتبر عوامل و بازیگران'));
+  assert.ok(!block.includes('این بخش با اطلاعات معتبر کاتالوگ تکمیل می‌شود'));
+  assert.ok(!block.includes('styles.peopleEmptyState'));
 });
 
-test('real cast rail keeps the verified right-edge start behavior', () => {
+test('real cast rail remains available and starts from the right edge', () => {
   const start = source.indexOf('function PeopleSection');
   const end = source.indexOf('const HorizontalCatalog', start);
   const block = source.slice(start, end);
@@ -30,10 +22,11 @@ test('real cast rail keeps the verified right-edge start behavior', () => {
   assert.ok(block.includes('peopleRailRef.current?.scrollToEnd({ animated: false })'));
 });
 
-test('empty state does not invent cast names or plot text', () => {
+test('people list is built only from real actor/director catalog records', () => {
   const start = source.indexOf('function PeopleSection');
   const end = source.indexOf('const HorizontalCatalog', start);
   const block = source.slice(start, end);
-  assert.ok(block.includes('این بخش خودکار به‌روزرسانی می‌شود'));
-  assert.ok(!block.includes('نامشخص'));
+  assert.ok(block.includes('item.people || []'));
+  assert.ok(block.includes("person.role !== 'director' && person.role !== 'actor'"));
+  assert.ok(block.includes('optimizedImageUrl(person.image'));
 });

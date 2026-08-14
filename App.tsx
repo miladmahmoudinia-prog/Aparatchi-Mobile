@@ -2545,27 +2545,7 @@ function PeopleSection({
   }, [item.people]);
 
   const peopleRailRef = useRef<FlatList<CatalogPerson>>(null);
-  if (!people.length) {
-    return (
-      <View style={styles.peopleSection}>
-        <View style={styles.peopleSectionHeader}>
-          <View style={styles.peopleSectionIcon}>
-            <Ionicons name="people-outline" color={COLORS.gold} size={19} />
-          </View>
-          <View style={styles.peopleSectionHeaderText}>
-            <Text style={styles.peopleSectionTitle}>عوامل و بازیگران</Text>
-            <Text style={styles.peopleSectionSubtitle}>این بخش با اطلاعات معتبر کاتالوگ تکمیل می‌شود.</Text>
-          </View>
-        </View>
-        <View style={styles.peopleEmptyState}>
-          <Ionicons name="information-circle-outline" color={COLORS.gold} size={20} />
-          <Text style={styles.peopleEmptyText}>
-            اطلاعات معتبر عوامل و بازیگران این عنوان هنوز در منابع موجود پیدا نشده است؛ بعد از تکمیل منبع، این بخش خودکار به‌روزرسانی می‌شود.
-          </Text>
-        </View>
-      </View>
-    );
-  }
+  if (!people.length) return null;
 
   return (
     <View style={styles.peopleSection}>
@@ -9339,8 +9319,6 @@ const styles = StyleSheet.create({
   peopleSectionHeaderText: { flex: 1, alignItems: 'flex-end' },
   peopleSectionTitle: { ...rtlText, color: COLORS.text, fontSize: 15, fontWeight: '900' },
   peopleSectionSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 8.5, marginTop: 4 },
-  peopleEmptyState: { flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 10, paddingHorizontal: 13, paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(216,180,90,0.22)', backgroundColor: 'rgba(216,180,90,0.055)' },
-  peopleEmptyText: { ...rtlText, flex: 1, color: COLORS.muted, fontSize: 10, lineHeight: 20, textAlign: 'right' },
   peopleRail: { minHeight: 159 },
   peopleList: { flexDirection: 'row', gap: 12, paddingHorizontal: 1, paddingBottom: 2 },
   personCard: { width: 88, height: 157, flexShrink: 0, alignItems: 'center' },
