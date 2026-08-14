@@ -58,4 +58,4 @@ jobs:
       - name: Verify exact episode thumbnails
         run: node --test scripts/tests/exact-device-episode-thumbnails.test.mjs
 
-# rerun marker: aligned metadata regression with RTL rail
+# rerun marker: related titles regression aligned with logical RTL rail
