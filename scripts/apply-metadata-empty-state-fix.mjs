@@ -5,7 +5,7 @@ let source = await fs.readFile(appPath, 'utf8');
 
 const emptyBlock = `  const peopleRailRef = useRef<FlatList<CatalogPerson>>(null);\n  if (!people.length) {\n    return (\n      <View style={styles.peopleSection}>\n        <View style={styles.peopleSectionHeader}>\n          <View style={styles.peopleSectionIcon}>\n            <Ionicons name="people-outline" color={COLORS.gold} size={19} />\n          </View>\n          <View style={styles.peopleSectionHeaderText}>\n            <Text style={styles.peopleSectionTitle}>عوامل و بازیگران</Text>\n            <Text style={styles.peopleSectionSubtitle}>این بخش با اطلاعات معتبر کاتالوگ تکمیل می‌شود.</Text>\n          </View>\n        </View>\n        <View style={styles.peopleEmptyState}>\n          <Ionicons name="information-circle-outline" color={COLORS.gold} size={20} />\n          <Text style={styles.peopleEmptyText}>\n            اطلاعات معتبر عوامل و بازیگران این عنوان هنوز در منابع موجود پیدا نشده است؛ بعد از تکمیل منبع، این بخش خودکار به‌روزرسانی می‌شود.\n          </Text>\n        </View>\n      </View>\n    );\n  }`;
 
-const compactBlock = `  const peopleRailRef = useRef<FlatList<CatalogPerson>>(null);\n  if (!people.length) return null;`;
+const compactBlock = `  if (!people.length) return null;`;
 
 if (source.includes(emptyBlock)) {
   source = source.replace(emptyBlock, compactBlock);
@@ -37,12 +37,14 @@ test('people section is hidden when no real cast or crew exists', () => {
   assert.ok(!block.includes('styles.peopleEmptyState'));
 });
 
-test('real cast rail remains available and starts from the right edge', () => {
+test('real cast rail remains available and starts from the right edge with deterministic RTL', () => {
   const start = source.indexOf('function PeopleSection');
   const end = source.indexOf('const HorizontalCatalog', start);
   const block = source.slice(start, end);
-  assert.ok(block.includes('data={[...people].reverse()}'));
-  assert.ok(block.includes('peopleRailRef.current?.scrollToEnd({ animated: false })'));
+  assert.ok(block.includes('data={people}'));
+  assert.ok(block.includes('styles.mediaRailRtl'));
+  assert.ok(!block.includes('scrollToEnd'));
+  assert.ok(!block.includes('.reverse()'));
 });
 
 test('people list is built only from real actor/director catalog records', () => {
@@ -57,4 +59,4 @@ test('people list is built only from real actor/director catalog records', () =>
 await fs.mkdir('scripts/tests', { recursive: true });
 await fs.writeFile(testPath, testSource, 'utf8');
 
-console.log('Empty cast/crew placeholders removed; PeopleSection now renders only real metadata.');
+console.log('Empty cast/crew placeholders removed; real people rail follows the current deterministic RTL behavior.');
