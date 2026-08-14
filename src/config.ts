@@ -1,22 +1,32 @@
 /**
+ * منبع‌های عمومی کاتالوگ آپاراتچی.
+ * CDN اولویت دارد تا روی شبکه‌هایی که raw.githubusercontent.com کند یا مسدود است
+ * اپ به کاتالوگ ۱۰تایی اضطراری سقوط نکند. GitHub Raw به‌عنوان مسیر دوم می‌ماند.
+ */
+export const CONTENT_REPOSITORY_BASES = [
+  'https://cdn.jsdelivr.net/gh/miladmahmoudinia-prog/Aparatchi-Content@main/',
+  'https://raw.githubusercontent.com/miladmahmoudinia-prog/Aparatchi-Content/main/',
+] as const;
+
+/**
  * فهرست سبک آپاراتچی برای صفحهٔ اصلی، جستجو و دسته‌بندی‌ها.
- * این فایل عمداً بدون لینک‌های دانلود و فهرست کامل بازیگران ساخته می‌شود تا
+ * این فایل عمداً بدون لینک‌های دانلود کامل ساخته می‌شود تا
  * افزایش آرشیو باعث هنگ‌کردن رابط کاربری نشود.
  */
 export const REMOTE_CONTENT_INDEX_URL =
-  'https://raw.githubusercontent.com/miladmahmoudinia-prog/Aparatchi-Content/main/catalog-index.json';
+  `${CONTENT_REPOSITORY_BASES[0]}catalog-index.json`;
 
 /**
  * نسخهٔ کامل قدیمی فقط برای سازگاری با اولین اجرای مهاجرت نگه داشته شده است.
  * برنامه در حالت عادی آن را دانلود نمی‌کند.
  */
 export const REMOTE_CONTENT_URL =
-  'https://raw.githubusercontent.com/miladmahmoudinia-prog/Aparatchi-Content/main/catalog.json';
+  `${CONTENT_REPOSITORY_BASES[0]}catalog.json`;
 
 /** پایهٔ فایل‌های جزئیات هر فیلم/سریال؛ فقط هنگام بازکردن همان عنوان خوانده می‌شود. */
 export const REMOTE_CONTENT_DETAIL_BASE_URL =
-  'https://raw.githubusercontent.com/miladmahmoudinia-prog/Aparatchi-Content/main/';
+  CONTENT_REPOSITORY_BASES[0];
 
 /** فایل بسیار کوچک اعلام نسخهٔ فهرست. */
 export const REMOTE_CONTENT_MANIFEST_URL =
-  'https://raw.githubusercontent.com/miladmahmoudinia-prog/Aparatchi-Content/main/catalog-manifest.json';
+  `${CONTENT_REPOSITORY_BASES[0]}catalog-manifest.json`;
