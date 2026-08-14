@@ -11,7 +11,7 @@ function replaceOnce(before, after, label) {
 
 replaceOnce(
 `        <Image\n          key={remoteUrl}\n          source={{ uri: remoteUrl }}\n          style={StyleSheet.absoluteFill}\n          contentFit={contentFit}\n          cachePolicy="memory-disk"\n          transition={transition}\n          recyclingKey={remoteUrl}\n          onError={handleRemoteError}\n        />`,
-`        <Image\n          source={{ uri: remoteUrl }}\n          style={StyleSheet.absoluteFill}\n          contentFit={contentFit}\n          cachePolicy="memory-disk"\n          transition={transition}\n          recyclingKey={\`${imageKind}:\${String(primary || fallback || remoteUrl)}\`}\n          onError={handleRemoteError}\n        />`,
+`        <Image\n          source={{ uri: remoteUrl }}\n          style={StyleSheet.absoluteFill}\n          contentFit={contentFit}\n          cachePolicy="memory-disk"\n          transition={transition}\n          recyclingKey={String(primary || fallback || remoteUrl)}\n          onError={handleRemoteError}\n        />`,
   'stable CatalogArtwork image instance',
 );
 
@@ -45,8 +45,7 @@ test('catalog artwork keeps a stable image instance across fallback urls', () =>
   const block = source.slice(start, end);
   assert.ok(block.includes('cachePolicy="memory-disk"'));
   assert.ok(block.includes('transition={transition}'));
-  assert.ok(block.includes('recyclingKey={'));
-  assert.ok(block.includes('String(primary || fallback || remoteUrl)'));
+  assert.ok(block.includes('recyclingKey={String(primary || fallback || remoteUrl)}'));
   assert.ok(!block.includes('key={remoteUrl}'));
 });
 
