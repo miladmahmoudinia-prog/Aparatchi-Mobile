@@ -829,9 +829,10 @@ const playableVersionsFor = (
     }];
   });
 
-  const unlabeledSources = isIranianItem(item)
-    ? playbackSourcesForFiles(files.filter((file) => !file.language))
-    : [];
+  // Unlabelled source media remains playable for every country. The lack of a
+  // language marker is deliberately neutral and must never create a fake
+  // dubbed/subtitled option.
+  const unlabeledSources = playbackSourcesForFiles(files.filter((file) => !file.language));
   if (unlabeledSources.length) {
     versions.push({
       label: 'پخش آنلاین',
@@ -884,15 +885,14 @@ const languageSectionsForFiles = (
     }];
   });
 
-  const plainFiles = iranian
-    ? sortedDownloadFiles(reconciled.filter((file) => !file.language))
-    : [];
+  // Preserve real downloads whose source did not identify an audio/subtitle
+  // edition. They are shown under a neutral heading instead of being hidden.
+  const plainFiles = sortedDownloadFiles(reconciled.filter((file) => !file.language));
   if (plainFiles.length) {
     sections.push({
       id: `${idPrefix}-plain`,
       title: 'لینک‌های دریافت',
       subtitle: `${plainFiles.length} کیفیت دانلود مستقیم`,
-      badge: 'دریافت',
       files: plainFiles,
     });
   }
