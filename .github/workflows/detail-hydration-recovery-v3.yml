@@ -1,0 +1,60 @@
+name: Detail hydration recovery v3
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/patch-detail-hydration-recovery-v3.mjs'
+      - 'scripts/test-detail-hydration-recovery-v3.mjs'
+      - 'scripts/test-real-content-detail-smoke-v3.mjs'
+      - '.github/workflows/detail-hydration-recovery-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-detail-hydration-v3
+  cancel-in-progress: true
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 20
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Patch detail hydration recovery
+        run: node scripts/patch-detail-hydration-recovery-v3.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check application
+        run: npm run typecheck
+      - name: Verify hydration recovery contract
+        run: node scripts/test-detail-hydration-recovery-v3.mjs
+      - name: Verify real current content samples
+        run: node scripts/test-real-content-detail-smoke-v3.mjs
+      - name: Verify performance regression
+        run: node scripts/test-home-performance-pass.mjs
+      - name: Commit verified hydration recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- App.tsx src/contentService.ts; then
+            echo "No hydration changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx src/contentService.ts
+          git commit -m "fix: recover stale detail shards and media links"
+          git pull --rebase origin main
+          git push origin HEAD:main
