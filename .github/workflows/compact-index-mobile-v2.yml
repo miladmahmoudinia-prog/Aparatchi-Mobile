@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/patch-compact-index-mobile-v2.mjs'
+      - 'scripts/patch-compact-index-mobile-v2-typefix.mjs'
       - 'scripts/test-compact-index-mobile-v2.mjs'
       - '.github/workflows/compact-index-mobile-v2.yml'
   workflow_dispatch:
@@ -35,6 +36,9 @@ jobs:
 
       - name: Patch compact index compatibility
         run: node scripts/patch-compact-index-mobile-v2.mjs
+
+      - name: Align remaining peopleWorks prop types
+        run: node scripts/patch-compact-index-mobile-v2-typefix.mjs
 
       - name: Install dependencies
         run: npm ci
