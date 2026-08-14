@@ -66,8 +66,10 @@ test('video taps reveal and hide the unlock affordance while locked', () => {
 });
 
 test('unlock button renders only while locked controls are visible', () => {
-  assert.ok(source.includes('{controlsLocked && controlsVisible ? ('));
-  assert.ok(!source.includes('{controlsLocked ? (\n          <Pressable\n            onPress={unlockPlayerControls}'));
+  const labelIndex = source.indexOf('accessibilityLabel="باز کردن قفل کنترل‌ها"');
+  assert.ok(labelIndex > 0);
+  const block = source.slice(Math.max(0, labelIndex - 300), labelIndex + 120);
+  assert.ok(block.includes('{controlsLocked && controlsVisible ? ('));
 });
 
 test('unlocking resumes normal control auto-hide', () => {
