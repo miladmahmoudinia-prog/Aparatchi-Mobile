@@ -1,0 +1,59 @@
+name: Fix remote catalog recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/fix-remote-catalog-recovery.mjs'
+      - 'scripts/test-remote-catalog-recovery.mjs'
+      - '.github/workflows/fix-remote-catalog-recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-source-fix
+  cancel-in-progress: false
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 20
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply resilient remote catalog patch
+        run: node scripts/fix-remote-catalog-recovery.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check application
+        run: npm run typecheck
+      - name: Verify remote catalog and detail mirrors
+        run: node scripts/test-remote-catalog-recovery.mjs
+      - name: Commit verified recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "aparatchi-mobile-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/contentService.ts
+          if git diff --cached --quiet; then
+            echo "Remote catalog recovery already applied."
+            exit 0
+          fi
+          git commit -m "fix: recover full catalog through public mirrors"
+          PUSHED=0
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin main && git push origin HEAD:main; then PUSHED=1; break; fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((attempt * 2))
+          done
+          [ "$PUSHED" -eq 1 ] || exit 1
