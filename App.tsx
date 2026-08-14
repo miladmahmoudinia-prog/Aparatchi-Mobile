@@ -1654,13 +1654,12 @@ const CatalogArtwork = memo(function CatalogArtwork({
 
       {remoteUrl ? (
         <Image
-          key={remoteUrl}
           source={{ uri: remoteUrl }}
           style={StyleSheet.absoluteFill}
           contentFit={contentFit}
           cachePolicy="memory-disk"
           transition={transition}
-          recyclingKey={remoteUrl}
+          recyclingKey={String(primary || fallback || remoteUrl)}
           onError={handleRemoteError}
         />
       ) : null}
