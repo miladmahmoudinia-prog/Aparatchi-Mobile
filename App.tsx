@@ -1395,7 +1395,7 @@ const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
   if (filter === 'movie' || filter === 'series') return matchesCatalogFilter(item, filter);
   if (filter === 'updated') return isUpdatedEpisodicItem(item);
   if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
-  if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length && !STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)) {
+  if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length) {
     return (item.categoryKeys || []).includes(filter);
   }
   return matchesCatalogFilter(item, filter);
@@ -1813,7 +1813,7 @@ function HeroSlide({
             </Text>
           </View>
         </View>
-        <Pressable onPressIn={() => { if (item.detailPath) void loadCatalogItemDetail(item); }} onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
+        <Pressable onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
           <Ionicons name="play" color="#fff" size={18} />
           <Text style={styles.primaryButtonText}>مشاهده و دریافت</Text>
         </Pressable>
@@ -2350,7 +2350,7 @@ const PosterCard = memo(function PosterCard({
     : item.nameFa;
 
   return (
-    <Pressable onPressIn={() => { if (item.detailPath) void loadCatalogItemDetail(item); }} onPress={onOpen} unstable_pressDelay={0} hitSlop={7} style={({ pressed }) => [styles.posterCard, { width }, pressed && styles.posterCardPressed]}>
+    <Pressable onPress={onOpen} unstable_pressDelay={0} hitSlop={7} style={({ pressed }) => [styles.posterCard, { width }, pressed && styles.posterCardPressed]}>
       <View style={[styles.posterImageWrap, { width, height: Math.round(width * 1.42) }]}>
         <CatalogArtwork
           primary={item.poster}
@@ -2680,7 +2680,8 @@ function HomeStarsSectionBase({
       if (key && !explicitPriority.has(key)) explicitPriority.set(key, index);
     });
 
-    for (const person of [...people, ...deriveFeaturedPeople(catalog)]) {
+    const starCandidates = people.length ? people : deriveFeaturedPeople(catalog);
+    for (const person of starCandidates) {
       if (person.role !== 'actor' || !personName(person)) continue;
       const key = person.tmdbId
         ? `tmdb:${person.tmdbId}`
@@ -2724,21 +2725,16 @@ function HomeStarsSectionBase({
     if (!resolvedPeople.some((person) => person.id === selectedId)) setSelectedId(resolvedPeople[0].id);
   }, [resolvedPeople, selectedId]);
 
-  const worksByPersonId = useMemo(() => {
-    const map = new Map<string, CatalogItem[]>();
-    for (const person of resolvedPeople) {
-      const explicitIds = new Set(person.itemIds || []);
-      const explicitMatched = [...explicitIds]
-        .map((itemId) => catalogById.get(String(itemId)))
-        .filter((item): item is CatalogItem => Boolean(item));
-      const matched = explicitMatched.length ? explicitMatched : personWorksFor(person, catalog);
-      map.set(person.id, sortForCatalogFilter(matched, 'latest').slice(0, 18));
-    }
-    return map;
-  }, [catalog, catalogById, resolvedPeople]);
-
   const selected = resolvedPeople.find((person) => person.id === selectedId) || resolvedPeople[0];
-  const works = selected ? (worksByPersonId.get(selected.id) || []) : [];
+  const works = useMemo(() => {
+    if (!selected) return [];
+    const explicitIds = new Set(selected.itemIds || []);
+    const explicitMatched = [...explicitIds]
+      .map((itemId) => catalogById.get(String(itemId)))
+      .filter((item): item is CatalogItem => Boolean(item));
+    const matched = explicitMatched.length ? explicitMatched : personWorksFor(selected, catalog);
+    return sortForCatalogFilter(matched, 'latest').slice(0, 18);
+  }, [catalog, catalogById, selected]);
 
   const selectedIdForRender = selected?.id || '';
   const selectPerson = useCallback((personId: string) => {
@@ -3305,23 +3301,8 @@ const HomeScreen = memo(function HomeScreen({
   const rows = useMemo(() => buildHomeCatalogRows(catalog), [catalog]);
   const newest = rows[0]?.items || [];
 
-  useEffect(() => {
-    // Use the 10-second branded startup window to warm the artwork actually
-    // visible on Home. Small staggered batches avoid saturating mobile data.
-    const visibleCandidates = [
-      ...newest.slice(0, 5),
-      ...rows.slice(0, 8).flatMap((row) => row.items.slice(0, 5)),
-    ];
-    const urls = [...new Set(visibleCandidates
-      .map((item) => catalogArtworkCandidates(item.poster || item.backdrop || item.posterFallback, 'poster')[0])
-      .filter((url): url is string => Boolean(url)))]
-      .slice(0, 45);
-    const batches = [urls.slice(0, 15), urls.slice(15, 30), urls.slice(30, 45)].filter((batch) => batch.length);
-    const timers = batches.map((batch, index) => setTimeout(() => {
-      void Image.prefetch(batch).catch(() => undefined);
-    }, index * 550));
-    return () => timers.forEach(clearTimeout);
-  }, [newest, rows]);
+  // Visible artwork is loaded and cached by expo-image itself. Avoid a parallel
+  // prefetch flood so taps and the first on-screen posters get priority.
 
   useEffect(() => {
     if (initialScrollOffset > 0) {
@@ -3523,54 +3504,22 @@ const CategoriesScreen = memo(function CategoriesScreen({
 
   const categoryPreviewItems = useMemo(() => {
     const result = new Map<SearchFilter, CatalogItem>();
-    const usedItems = new Set<string>();
-    const usedArtwork = new Set<string>();
-    const artworkKey = (item: CatalogItem) =>
-      optimizedImageUrl(item.poster || item.backdrop || item.posterFallback || item.backdropFallback, 'poster');
+    const scoreByFilter = new Map<SearchFilter, number>();
+    const previewFilters = CATEGORY_CARDS.map((card) => card.filter);
 
-    const pickBestUnused = (filter: SearchFilter) => {
-      let best: CatalogItem | undefined;
-      let bestScore = Number.NEGATIVE_INFINITY;
-      for (const item of categoryPreviewPool) {
-        if (usedItems.has(item.id) || !matchesCatalogFilter(item, filter) || !hasFastCategoryArtwork(item)) continue;
-        const artwork = artworkKey(item);
-        if (!artwork || usedArtwork.has(artwork)) continue;
+    for (const item of categoryPreviewPool) {
+      if (!hasFastCategoryArtwork(item)) continue;
+      const keys = item.categoryKeys || [];
+      for (const filter of previewFilters) {
+        const matches = SERVER_CATEGORY_FILTERS.has(filter) && keys.length
+          ? keys.includes(filter)
+          : fastCatalogFilterMatch(item, filter);
+        if (!matches) continue;
         const score = categoryPreviewScore(item);
-        if (score > bestScore) {
-          best = item;
-          bestScore = score;
-        }
+        if (score <= (scoreByFilter.get(filter) ?? Number.NEGATIVE_INFINITY)) continue;
+        result.set(filter, item);
+        scoreByFilter.set(filter, score);
       }
-      return best;
-    };
-
-    for (const card of CATEGORY_CARDS) {
-      const selected = pickBestUnused(card.filter);
-      if (!selected) continue;
-      result.set(card.filter, selected);
-      usedItems.add(selected.id);
-      const artwork = artworkKey(selected);
-      if (artwork) usedArtwork.add(artwork);
-    }
-
-    // If an exact category has only an artwork already used by another exact
-    // category, reuse that exact-category artwork. Never cross category lines.
-    const pickBestAvailable = (filter: SearchFilter) => {
-      let best: CatalogItem | undefined;
-      let bestScore = Number.NEGATIVE_INFINITY;
-      for (const item of categoryPreviewPool) {
-        if (!matchesCatalogFilter(item, filter) || !hasFastCategoryArtwork(item)) continue;
-        const artwork = artworkKey(item);
-        if (!artwork) continue;
-        const score = categoryPreviewScore(item);
-        if (score > bestScore) { best = item; bestScore = score; }
-      }
-      return best;
-    };
-    for (const card of CATEGORY_CARDS) {
-      if (result.has(card.filter)) continue;
-      const selected = pickBestAvailable(card.filter);
-      if (selected) result.set(card.filter, selected);
     }
     return result;
   }, [categoryPreviewPool]);
