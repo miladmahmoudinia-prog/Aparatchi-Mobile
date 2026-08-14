@@ -14,12 +14,14 @@ test('people section is hidden when no real cast or crew exists', () => {
   assert.ok(!block.includes('styles.peopleEmptyState'));
 });
 
-test('real cast rail remains available and starts from the right edge', () => {
+test('real cast rail remains available and starts from the right edge with deterministic RTL', () => {
   const start = source.indexOf('function PeopleSection');
   const end = source.indexOf('const HorizontalCatalog', start);
   const block = source.slice(start, end);
-  assert.ok(block.includes('data={[...people].reverse()}'));
-  assert.ok(block.includes('peopleRailRef.current?.scrollToEnd({ animated: false })'));
+  assert.ok(block.includes('data={people}'));
+  assert.ok(block.includes('styles.mediaRailRtl'));
+  assert.ok(!block.includes('scrollToEnd'));
+  assert.ok(!block.includes('.reverse()'));
 });
 
 test('people list is built only from real actor/director catalog records', () => {
