@@ -7,7 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, createVideoPlayer, useVideoPlayer } from 'expo-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { WebView } from 'react-native-webview';
+import * as WebBrowser from 'expo-web-browser';
 import {
   ActivityIndicator,
   Alert,
@@ -7022,89 +7022,95 @@ function OperatorWebModal({
   request: OperatorWebRequest;
   onClose: () => void;
 }) {
-  const [loading, setLoading] = useState(true);
+  const [operatorBrowserAttempt, setOperatorBrowserAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
-  const trustedOperatorNavigationRef = useRef(isTrustedOperatorHostUrl(request.url));
+  const [launching, setLaunching] = useState(true);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    setLaunching(true);
+
+    const openOperatorBrowser = async () => {
+      try {
+        // Upera blocks embedded WebViews. expo-web-browser keeps Aparatchi as the
+        // owning app while using Android Chrome Custom Tabs / iOS SafariViewController,
+        // which satisfies the provider's real-browser requirement.
+        const result = await WebBrowser.openBrowserAsync(request.url, {
+          toolbarColor: '#090B10',
+          secondaryToolbarColor: '#11151C',
+          controlsColor: COLORS.gold,
+          showTitle: false,
+          enableBarCollapsing: true,
+          enableDefaultShareMenuItem: false,
+          createTask: false,
+          showInRecents: false,
+          dismissButtonStyle: 'close',
+        });
+        if (cancelled) return;
+
+        // Android resolves with "opened" as soon as the Custom Tab is on top.
+        // Remove the launch sheet underneath it so closing the tab returns directly
+        // to the same Aparatchi detail screen. iOS resolves after the sheet closes.
+        if (result.type === 'opened') {
+          closeTimerRef.current = setTimeout(onClose, 250);
+          return;
+        }
+        onClose();
+      } catch {
+        if (cancelled) return;
+        setLaunching(false);
+        setFailed(true);
+      }
+    };
+
+    void openOperatorBrowser();
+    return () => {
+      cancelled = true;
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, [request.url, operatorBrowserAttempt]);
 
   return (
-    <Modal visible animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView
-        style={styles.operatorWebModal}
-        edges={['top', 'right', 'bottom', 'left']}
-      >
-        <StatusBar style="light" />
-        <View style={styles.operatorWebHeader}>
-          <Pressable onPress={onClose} style={styles.mediaCloseButton}>
-            <Ionicons name="close" color="#fff" size={23} />
-          </Pressable>
-          <View style={styles.operatorWebTitleWrap}>
-            <Text numberOfLines={1} style={styles.operatorWebTitle}>{request.title}</Text>
-            <View style={styles.operatorWebBadge}>
-              <Ionicons name="phone-portrait-outline" color={COLORS.gold} size={11} />
-              <Text style={styles.operatorWebBadgeText}>اینترنت همراه</Text>
-            </View>
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.operatorBrowserLaunchOverlay}>
+        <View style={styles.operatorBrowserLaunchCard}>
+          <View style={styles.operatorBrowserBrandIcon}>
+            <Ionicons name="film-outline" color={COLORS.gold} size={26} />
           </View>
-        </View>
-        <View style={styles.operatorWebBody}>
+          <Text numberOfLines={1} style={styles.operatorBrowserLaunchTitle}>{request.title}</Text>
           {failed ? (
-            <View style={styles.operatorWebError}>
-              <Ionicons name="alert-circle-outline" color={COLORS.gold} size={35} />
-              <Text style={styles.operatorWebErrorTitle}>صفحه باز نشد</Text>
-              <Text style={styles.operatorWebErrorText}>
-                صفحه سرویس‌دهنده پاسخ نداد. اتصال یا محدودیت اپراتور را بررسی کنید و دوباره تلاش کنید.
+            <>
+              <Text style={styles.operatorBrowserLaunchText}>
+                پنجره امن پخش باز نشد. اینترنت همراه را بررسی کنید و دوباره تلاش کنید.
               </Text>
-              <Pressable
-                onPress={() => {
-                  setFailed(false);
-                  setLoading(true);
-                }}
-                style={styles.operatorGatePrimaryButton}
-              >
-                <Ionicons name="refresh" color="#fff" size={17} />
-                <Text style={styles.operatorGatePrimaryText}>تلاش دوباره</Text>
-              </Pressable>
-            </View>
+              <View style={styles.operatorBrowserLaunchActions}>
+                <Pressable
+                  onPress={() => setOperatorBrowserAttempt((value) => value + 1)}
+                  style={styles.operatorGatePrimaryButton}
+                >
+                  <Ionicons name="refresh" color="#fff" size={17} />
+                  <Text style={styles.operatorGatePrimaryText}>تلاش دوباره</Text>
+                </Pressable>
+                <Pressable onPress={onClose} style={styles.operatorGateCancelButton}>
+                  <Text style={styles.operatorGateCancelText}>بستن</Text>
+                </Pressable>
+              </View>
+            </>
           ) : (
-            <WebView
-              source={{ uri: request.url }}
-              style={styles.operatorWebView}
-              originWhitelist={['https://*']}
-              javaScriptEnabled
-              domStorageEnabled
-              sharedCookiesEnabled
-              thirdPartyCookiesEnabled
-              startInLoadingState
-              onShouldStartLoadWithRequest={(navigation) => {
-                if (isTrustedOperatorHostUrl(navigation.url)) {
-                  trustedOperatorNavigationRef.current = true;
-                  return true;
-                }
-                return Boolean(trustedOperatorNavigationRef.current && String(navigation.url || '').toLowerCase().startsWith('https://'));
-              }}
-              onLoadStart={() => setLoading(true)}
-              onLoadEnd={() => setLoading(false)}
-              onError={() => {
-                setLoading(false);
-                setFailed(true);
-              }}
-              // Do not fail the whole operator page for HTTP errors from images,
-              // scripts or other provider subresources. Actual WebView/network load
-              // failures are still handled by onError below.
-              renderLoading={() => (
-                <View style={styles.operatorWebLoading}>
-                  <ActivityIndicator color={COLORS.gold} size="large" />
-                  <Text style={styles.operatorWebLoadingText}>در حال آماده‌سازی پخش…</Text>
-                </View>
-              )}
-            />
+            <>
+              <ActivityIndicator color={COLORS.gold} size="large" />
+              <Text style={styles.operatorBrowserLaunchText}>
+                {launching ? 'در حال باز کردن پخش ویژه همراه در پنجره امن آپاراتچی…' : 'در حال آماده‌سازی پخش…'}
+              </Text>
+              <Text style={styles.operatorBrowserLaunchHint}>
+                پخش در مرورگر درون‌برنامه‌ای باز می‌شود و با بستن آن مستقیم به همین صفحه برمی‌گردید.
+              </Text>
+            </>
           )}
-          {loading && !failed ? (
-            <View pointerEvents="none" style={styles.operatorWebLoadingBadge}>
-              <ActivityIndicator color={COLORS.gold} size="small" />
-            </View>
-          ) : null}
         </View>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
@@ -9189,6 +9195,13 @@ const styles = StyleSheet.create({
   operatorActionText: { flex: 1, alignItems: 'flex-end' },
   operatorActionTitle: { ...rtlText, color: '#fff', fontSize: 11, fontWeight: '900' },
   operatorActionSubtitle: { ...rtlText, color: 'rgba(255,255,255,0.72)', fontSize: 8, lineHeight: 15, marginTop: 4 },
+  operatorBrowserLaunchOverlay: { ...absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22, backgroundColor: 'rgba(3,5,8,0.92)' },
+  operatorBrowserLaunchCard: { width: '100%', maxWidth: 390, paddingHorizontal: 24, paddingVertical: 28, borderRadius: 22, alignItems: 'center', backgroundColor: '#0E1218', borderWidth: 1, borderColor: 'rgba(216,180,90,0.34)' },
+  operatorBrowserBrandIcon: { width: 54, height: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 14, backgroundColor: 'rgba(216,180,90,0.09)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.3)' },
+  operatorBrowserLaunchTitle: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 16, fontWeight: '900', textAlign: 'center', marginBottom: 18 },
+  operatorBrowserLaunchText: { ...rtlText, color: COLORS.text, fontSize: 11.5, lineHeight: 21, fontWeight: '800', textAlign: 'center', marginTop: 14 },
+  operatorBrowserLaunchHint: { ...rtlText, color: COLORS.muted, fontSize: 9.5, lineHeight: 18, textAlign: 'center', marginTop: 8 },
+  operatorBrowserLaunchActions: { marginTop: 18, flexDirection: 'row-reverse', alignItems: 'center', gap: 9 },
   operatorGateOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, backgroundColor: 'rgba(0,0,0,0.76)' },
   operatorGateCard: { width: '100%', maxWidth: 360, minHeight: 250, paddingHorizontal: 24, paddingVertical: 25, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#11140F', borderWidth: 1, borderColor: 'rgba(216,180,90,0.44)' },
   operatorGateIcon: { width: 64, height: 64, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(216,180,90,0.10)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.32)' },

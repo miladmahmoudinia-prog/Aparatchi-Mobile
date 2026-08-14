@@ -37,7 +37,8 @@
           "color": "#D6A84B",
           "defaultChannel": "episode-updates"
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }
