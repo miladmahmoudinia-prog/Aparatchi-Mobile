@@ -6060,6 +6060,8 @@ function VideoPlayerModal({
   const [isMuted, setIsMuted] = useState(false);
   const [playerVolume, setPlayerVolume] = useState(1);
   const [endRecommendationsDismissed, setEndRecommendationsDismissed] = useState(false);
+  const [nextEpisodeDismissed, setNextEpisodeDismissed] = useState(false);
+  const [nextEpisodeCountdown, setNextEpisodeCountdown] = useState(15);
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
   const [timelineWidth, setTimelineWidth] = useState(1);
@@ -6108,6 +6110,12 @@ function VideoPlayerModal({
         .filter((group) => isEpisodeSection(group) && playableVersionsFor(item, group).length > 0)
         .sort(compareEpisodeGroupsOldestFirst)
     : [], [item]);
+  const activeEpisodeIndex = request.episodeId
+    ? playerEpisodeGroups.findIndex((group) => group.id === request.episodeId)
+    : -1;
+  const nextEpisodeGroup = activeEpisodeIndex >= 0
+    ? playerEpisodeGroups[activeEpisodeIndex + 1] || null
+    : null;
 
   const player = useVideoPlayer(initialSource.url, (instance) => {
     instance.timeUpdateEventInterval = 0.5;
@@ -6447,6 +6455,18 @@ function VideoPlayerModal({
     ? declaredCreditsStart
     : Math.max(0, duration - 120);
   const movieEndRecommendations = item?.type === 'movie' ? relatedItems.slice(0, 5) : [];
+  const showNextEpisodeOverlay = Boolean(
+    item?.type === 'series' &&
+    nextEpisodeGroup &&
+    firstFrameReady &&
+    !networkOffline &&
+    !settingsOpen &&
+    !episodesOpen &&
+    !nextEpisodeDismissed &&
+    duration >= 180 &&
+    currentTime >= movieEndOverlayStart &&
+    currentTime < duration
+  );
   const showMovieEndRecommendations = Boolean(
     item?.type === 'movie' &&
     firstFrameReady &&
@@ -6459,6 +6479,24 @@ function VideoPlayerModal({
     currentTime < duration &&
     movieEndRecommendations.length > 0
   );
+  useEffect(() => {
+    if (!showNextEpisodeOverlay || !nextEpisodeGroup) {
+      setNextEpisodeCountdown(15);
+      return;
+    }
+    if (nextEpisodeCountdown <= 0) {
+      const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+      const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+      onProgress(request, position, safeDuration, false);
+      onEpisodeSelect(nextEpisodeGroup, request.language);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setNextEpisodeCountdown((value) => Math.max(0, value - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [showNextEpisodeOverlay, nextEpisodeGroup?.id, nextEpisodeCountdown]);
+
   const chromeVisible = !controlsLocked && !settingsOpen && !episodesOpen && (!firstFrameReady || switchingQuality || controlsVisible);
   const topBarStyle = landscape
     ? { top: Math.max(8, insets.top + 4), left: safeLeft, right: safeRight }
@@ -6531,6 +6569,45 @@ function VideoPlayerModal({
                 </Pressable>
                 <Pressable onPress={closePlayer} style={styles.playerOfflineCancel}>
                   <Text style={styles.playerOfflineCancelText}>بستن</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        {showNextEpisodeOverlay && nextEpisodeGroup && item?.type === 'series' ? (
+          <View pointerEvents="box-none" style={styles.nextEpisodeOverlay}>
+            <View style={[styles.nextEpisodeCard, landscape && styles.nextEpisodeCardLandscape]}>
+              <Pressable
+                onPress={() => setNextEpisodeDismissed(true)}
+                style={styles.nextEpisodeClose}
+                accessibilityLabel="بستن پیشنهاد قسمت بعد"
+              >
+                <Ionicons name="close" color="#fff" size={18} />
+              </Pressable>
+              <CatalogArtwork
+                primary={exactEpisodeArtworkFor(nextEpisodeGroup, item)}
+                style={styles.nextEpisodeArtwork}
+                contentFit="cover"
+                imageKind="backdrop"
+              />
+              <View style={styles.nextEpisodeBody}>
+                <Text style={styles.nextEpisodeEyebrow}>قسمت بعدی</Text>
+                <Text numberOfLines={2} style={styles.nextEpisodeTitle}>
+                  {item.nameFa} — فصل {toPersianDigits(nextEpisodeGroup.seasonNumber || 1)}، قسمت {toPersianDigits(nextEpisodeGroup.episodeNumber || 0)}
+                </Text>
+                <Pressable
+                  style={styles.nextEpisodePlayButton}
+                  onPress={() => {
+                    const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+                    const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+                    onProgress(request, position, safeDuration, false);
+                    setNextEpisodeDismissed(true);
+                    onEpisodeSelect(nextEpisodeGroup, request.language);
+                  }}
+                >
+                  <Ionicons name="play" color="#05070A" size={18} />
+                  <Text style={styles.nextEpisodePlayText}>پخش ({toPersianDigits(nextEpisodeCountdown)})</Text>
                 </Pressable>
               </View>
             </View>
@@ -9131,6 +9208,16 @@ const styles = StyleSheet.create({
   playerPreparingSpinner: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   playerFramePortal: { position: 'absolute', zIndex: 70, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   playerOfflineOverlay: { position: 'absolute', zIndex: 95, elevation: 95, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, backgroundColor: 'rgba(0,0,0,0.78)' },
+  nextEpisodeOverlay: { ...absoluteFillObject, zIndex: 83, elevation: 83, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 18 },
+  nextEpisodeCard: { width: '100%', maxWidth: 610, minHeight: 142, flexDirection: 'row-reverse', alignItems: 'center', gap: 13, padding: 13, borderRadius: 18, backgroundColor: 'rgba(10,12,16,0.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
+  nextEpisodeCardLandscape: { maxWidth: 720, minHeight: 134 },
+  nextEpisodeClose: { position: 'absolute', top: 9, left: 9, zIndex: 3, width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.09)' },
+  nextEpisodeArtwork: { width: 178, height: 104, borderRadius: 12, backgroundColor: COLORS.surfaceStrong },
+  nextEpisodeBody: { flex: 1, minWidth: 0, alignItems: 'flex-end' },
+  nextEpisodeEyebrow: { ...rtlText, color: COLORS.gold, fontSize: 9.5, fontWeight: '900', marginBottom: 4 },
+  nextEpisodeTitle: { ...rtlText, color: '#fff', fontSize: 14, lineHeight: 22, fontWeight: '900', textAlign: 'right' },
+  nextEpisodePlayButton: { minWidth: 154, height: 42, marginTop: 11, paddingHorizontal: 18, borderRadius: 21, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: COLORS.gold },
+  nextEpisodePlayText: { ...rtlText, color: '#05070A', fontSize: 11.5, fontWeight: '900' },
   movieEndRecommendations: { ...absoluteFillObject, zIndex: 82, elevation: 82, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 18 },
   movieEndRecommendationsCard: { width: '100%', maxWidth: 610, padding: 14, borderRadius: 18, backgroundColor: 'rgba(10,12,16,0.95)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
   movieEndRecommendationsCardLandscape: { maxWidth: 760, padding: 12 },
