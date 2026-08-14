@@ -309,6 +309,46 @@ const normalizeComparableText = (value?: string) =>
     .replace(/[^a-z0-9؀-ۿ]+/g, ' ')
     .trim();
 
+const RELATED_GENERIC_CATEGORY_KEYS = new Set([
+  'movies', 'series', 'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
+  'latest', 'updated', 'mobile-operator',
+]);
+
+const relatedCatalogItems = (item: CatalogItem, catalog: CatalogItem[], limit = 5) => {
+  const sourceGenres = new Set((item.genres || []).map(normalizeComparableText).filter(Boolean));
+  const sourceCategories = new Set((item.categoryKeys || []).filter((key) => !RELATED_GENERIC_CATEGORY_KEYS.has(key)));
+  const sourceCountries = new Set((item.countryCodes || []).map((code) => String(code).toUpperCase()));
+
+  const ranked = catalog
+    .filter((candidate) => candidate.id !== item.id && candidate.type === item.type)
+    .filter((candidate) => candidate.type !== 'series' || isSeriesPublished(candidate))
+    .map((candidate) => {
+      const candidateGenres = (candidate.genres || []).map(normalizeComparableText).filter(Boolean);
+      const sharedGenres = candidateGenres.filter((genre) => sourceGenres.has(genre)).length;
+      const sharedCategories = (candidate.categoryKeys || []).filter(
+        (key) => !RELATED_GENERIC_CATEGORY_KEYS.has(key) && sourceCategories.has(key),
+      ).length;
+      const sharedCountries = (candidate.countryCodes || []).filter((code) =>
+        sourceCountries.has(String(code).toUpperCase()),
+      ).length;
+      let score = sharedGenres * 5 + sharedCategories * 4 + sharedCountries * 2;
+      if (item.collectionId && candidate.collectionId === item.collectionId) score += 30;
+      if (item.ir === candidate.ir) score += 1;
+      if (item.isAnimation === candidate.isAnimation) score += 1;
+      if (item.isAnime === candidate.isAnime) score += 1;
+      return { candidate, score };
+    })
+    .sort((a, b) =>
+      b.score - a.score ||
+      Number(b.candidate.rate || 0) - Number(a.candidate.rate || 0) ||
+      Number(b.candidate.year || 0) - Number(a.candidate.year || 0),
+    );
+
+  const strong = ranked.filter((entry) => entry.score > 1);
+  const fallback = ranked.filter((entry) => entry.score <= 1);
+  return [...strong, ...fallback].slice(0, Math.max(0, limit)).map((entry) => entry.candidate);
+};
+
 const titleLayoutMetrics = (value?: string) => {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   const words = text ? text.split(' ').filter(Boolean) : [];
@@ -5991,12 +6031,16 @@ function VideoPlayerModal({
   onClose,
   onProgress,
   onEpisodeSelect,
+  relatedItems,
+  onRecommendationSelect,
 }: {
   request: VideoRequest;
   item?: CatalogItem | null;
   onClose: () => void;
   onProgress: (request: VideoRequest, position: number, duration: number, completed?: boolean) => void;
   onEpisodeSelect: (group: DownloadSection, language?: MediaLanguage) => void;
+  relatedItems: CatalogItem[];
+  onRecommendationSelect: (item: CatalogItem) => void;
 }) {
   const orderedSources = useMemo(
     () => [...request.sources].sort((a, b) => a.rank - b.rank),
@@ -6015,6 +6059,7 @@ function VideoPlayerModal({
   const [controlsLocked, setControlsLocked] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [playerVolume, setPlayerVolume] = useState(1);
+  const [endRecommendationsDismissed, setEndRecommendationsDismissed] = useState(false);
   const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
   const [duration, setDuration] = useState(0);
   const [timelineWidth, setTimelineWidth] = useState(1);
@@ -6387,6 +6432,33 @@ function VideoPlayerModal({
   };
 
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
+  const endCreditsMetadata = item as (CatalogItem & {
+    endCreditsStart?: number;
+    endCreditsStartSeconds?: number;
+    creditsStart?: number;
+  }) | null | undefined;
+  const declaredCreditsStart = Math.max(0, Number(
+    endCreditsMetadata?.endCreditsStartSeconds ??
+    endCreditsMetadata?.endCreditsStart ??
+    endCreditsMetadata?.creditsStart ??
+    0,
+  ));
+  const movieEndOverlayStart = declaredCreditsStart > 0 && declaredCreditsStart < duration
+    ? declaredCreditsStart
+    : Math.max(0, duration - 120);
+  const movieEndRecommendations = item?.type === 'movie' ? relatedItems.slice(0, 5) : [];
+  const showMovieEndRecommendations = Boolean(
+    item?.type === 'movie' &&
+    firstFrameReady &&
+    !networkOffline &&
+    !settingsOpen &&
+    !episodesOpen &&
+    !endRecommendationsDismissed &&
+    duration >= 180 &&
+    currentTime >= movieEndOverlayStart &&
+    currentTime < duration &&
+    movieEndRecommendations.length > 0
+  );
   const chromeVisible = !controlsLocked && !settingsOpen && !episodesOpen && (!firstFrameReady || switchingQuality || controlsVisible);
   const topBarStyle = landscape
     ? { top: Math.max(8, insets.top + 4), left: safeLeft, right: safeRight }
@@ -6461,6 +6533,52 @@ function VideoPlayerModal({
                   <Text style={styles.playerOfflineCancelText}>بستن</Text>
                 </Pressable>
               </View>
+            </View>
+          </View>
+        ) : null}
+
+        {showMovieEndRecommendations ? (
+          <View pointerEvents="box-none" style={styles.movieEndRecommendations}>
+            <View style={[styles.movieEndRecommendationsCard, landscape && styles.movieEndRecommendationsCardLandscape]}>
+              <View style={styles.movieEndRecommendationsHeader}>
+                <Pressable
+                  onPress={() => setEndRecommendationsDismissed(true)}
+                  style={styles.movieEndRecommendationsClose}
+                  accessibilityLabel="بستن پیشنهادها"
+                >
+                  <Ionicons name="close" color="#fff" size={18} />
+                </Pressable>
+                <View style={styles.movieEndRecommendationsHeaderText}>
+                  <Text style={styles.movieEndRecommendationsTitle}>فیلم‌های پیشنهادی</Text>
+                  <Text style={styles.movieEndRecommendationsSubtitle}>مشابه همین فیلم</Text>
+                </View>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.movieEndRecommendationsRail}
+              >
+                {movieEndRecommendations.map((recommendation) => (
+                  <Pressable
+                    key={recommendation.id}
+                    style={styles.movieEndRecommendationItem}
+                    onPress={() => {
+                      setEndRecommendationsDismissed(true);
+                      onRecommendationSelect(recommendation);
+                      closePlayer();
+                    }}
+                  >
+                    <CatalogArtwork
+                      primary={recommendation.poster}
+                      fallback={recommendation.posterFallback}
+                      style={styles.movieEndRecommendationPoster}
+                      contentFit="cover"
+                      imageKind="poster"
+                    />
+                    <Text numberOfLines={1} style={styles.movieEndRecommendationName}>{recommendation.nameFa}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
             </View>
           </View>
         ) : null}
@@ -8369,6 +8487,17 @@ function AppContent() {
           }
           onClose={() => setVideoRequest(null)}
           onProgress={updateWatchProgress}
+          relatedItems={(() => {
+            const playerItem =
+              selectedItem && selectedItem.id === videoRequest.itemId
+                ? selectedItem
+                : content.items.find((candidate) => candidate.id === videoRequest.itemId);
+            return playerItem?.type === 'movie' ? relatedCatalogItems(playerItem, content.items, 5) : [];
+          })()}
+          onRecommendationSelect={(nextItem) => {
+            setSelectedPerson(null);
+            setSelectedItem(nextItem);
+          }}
           onEpisodeSelect={(group, language) => {
             const item =
               selectedItem && selectedItem.id === videoRequest.itemId && selectedItem.detailLoaded === true
@@ -9002,6 +9131,18 @@ const styles = StyleSheet.create({
   playerPreparingSpinner: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   playerFramePortal: { position: 'absolute', zIndex: 70, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   playerOfflineOverlay: { position: 'absolute', zIndex: 95, elevation: 95, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, backgroundColor: 'rgba(0,0,0,0.78)' },
+  movieEndRecommendations: { ...absoluteFillObject, zIndex: 82, elevation: 82, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 18 },
+  movieEndRecommendationsCard: { width: '100%', maxWidth: 610, padding: 14, borderRadius: 18, backgroundColor: 'rgba(10,12,16,0.95)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
+  movieEndRecommendationsCardLandscape: { maxWidth: 760, padding: 12 },
+  movieEndRecommendationsHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 11 },
+  movieEndRecommendationsHeaderText: { flex: 1, alignItems: 'flex-end' },
+  movieEndRecommendationsTitle: { ...rtlText, color: '#fff', fontSize: 15.5, fontWeight: '900' },
+  movieEndRecommendationsSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 9.5, marginTop: 2 },
+  movieEndRecommendationsClose: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.09)' },
+  movieEndRecommendationsRail: { flexDirection: 'row-reverse', gap: 10, paddingHorizontal: 1 },
+  movieEndRecommendationItem: { width: 92, alignItems: 'center' },
+  movieEndRecommendationPoster: { width: 92, height: 126, borderRadius: 11, backgroundColor: COLORS.surfaceStrong },
+  movieEndRecommendationName: { ...rtlText, width: '100%', color: '#fff', fontSize: 9.5, fontWeight: '800', textAlign: 'center', marginTop: 6 },
   playerOfflineCard: { width: '100%', maxWidth: 340, padding: 20, borderRadius: 18, alignItems: 'center', backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.36)' },
   playerOfflineTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 10, textAlign: 'center' },
   playerOfflineText: { ...rtlText, color: COLORS.muted, fontSize: 10, lineHeight: 18, marginTop: 7, textAlign: 'center' },
