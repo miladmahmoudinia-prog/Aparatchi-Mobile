@@ -45,13 +45,13 @@ test('real cast rail remains available and starts from the right edge', () => {
   assert.ok(block.includes('peopleRailRef.current?.scrollToEnd({ animated: false })'));
 });
 
-test('people cards still use real catalog person data', () => {
+test('people list is built only from real actor/director catalog records', () => {
   const start = source.indexOf('function PeopleSection');
   const end = source.indexOf('const HorizontalCatalog', start);
   const block = source.slice(start, end);
   assert.ok(block.includes('item.people || []'));
   assert.ok(block.includes("person.role !== 'director' && person.role !== 'actor'"));
-  assert.ok(block.includes('PersonAvatar'));
+  assert.ok(block.includes('optimizedImageUrl(person.image'));
 });
 `;
 await fs.mkdir('scripts/tests', { recursive: true });
