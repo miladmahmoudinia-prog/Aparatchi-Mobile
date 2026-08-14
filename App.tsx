@@ -6050,7 +6050,7 @@ function VideoPlayerModal({
   onProgress: (request: VideoRequest, position: number, duration: number, completed?: boolean) => void;
   onEpisodeSelect: (group: DownloadSection, language?: MediaLanguage) => void;
   relatedItems: CatalogItem[];
-  onRecommendationSelect: (item: CatalogItem) => void;
+  onRecommendationSelect: (item: CatalogItem) => void | Promise<void>;
 }) {
   const orderedSources = useMemo(
     () => [...request.sources].sort((a, b) => a.rank - b.rank),
@@ -6651,9 +6651,11 @@ function VideoPlayerModal({
                     key={recommendation.id}
                     style={styles.movieEndRecommendationItem}
                     onPress={() => {
+                      const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+                      const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+                      onProgress(request, position, safeDuration, false);
                       setEndRecommendationsDismissed(true);
-                      onRecommendationSelect(recommendation);
-                      closePlayer();
+                      void onRecommendationSelect(recommendation);
                     }}
                   >
                     <CatalogArtwork
@@ -8149,6 +8151,52 @@ function AppContent() {
     );
   };
 
+  const playRecommendedMovieInsidePlayer = async (summary: CatalogItem) => {
+    if (summary.type !== 'movie') return;
+
+    if (!(await internetIsReachable())) {
+      Alert.alert('اتصال اینترنت برقرار نیست', 'برای پخش آنلاین، اینترنت را روشن کنید و دوباره تلاش کنید.');
+      return;
+    }
+    if (await refreshVpnState()) { setVpnWarningVisible(true); return; }
+
+    let item = summary;
+    if (summary.detailPath && summary.detailLoaded !== true) {
+      const hydrated = await loadCatalogItemDetail(summary).catch(() => null);
+      if (hydrated) item = hydrated;
+    }
+
+    const versions = playableVersionsFor(item, null);
+    if (!versions.length) {
+      Alert.alert('پخش آنلاین', 'برای این پیشنهاد لینک پخش آنلاین قابل استفاده پیدا نشد.');
+      return;
+    }
+
+    // Keep the current language when possible, then prefer Persian dub, then
+    // subtitle. No detail-page navigation and no extra version chooser: one tap
+    // switches the existing player directly to the recommended movie.
+    const currentLanguage = videoRequest?.language;
+    const version =
+      (currentLanguage ? versions.find((candidate) => candidate.language === currentLanguage) : undefined) ||
+      versions.find((candidate) => candidate.language === 'dubbed') ||
+      versions.find((candidate) => candidate.language === 'subtitled') ||
+      versions[0];
+
+    setSelectedPerson(null);
+    // Keep the recommended detail behind the modal so closing the player returns
+    // to the movie that is actually playing, without visibly navigating first.
+    setSelectedItem(item);
+    setVideoRequest({
+      title: `${item.nameFa || item.name} — ${version.label}` ,
+      sources: version.sources,
+      initialSourceId: version.defaultSource.id,
+      resumeKey: `${item.id}:main:${version.language || 'direct'}` ,
+      itemId: item.id,
+      artwork: item.backdrop || item.poster,
+      language: version.language,
+      resumeAt: 0,
+    });
+  };
   const playDownloadedRecord = (record: DownloadRecord) => {
     if (!record.localUri) return;
     const source: PlaybackSource = {
@@ -8643,10 +8691,7 @@ function AppContent() {
                 : content.items.find((candidate) => candidate.id === videoRequest.itemId);
             return playerItem?.type === 'movie' ? relatedCatalogItems(playerItem, content.items, 5) : [];
           })()}
-          onRecommendationSelect={(nextItem) => {
-            setSelectedPerson(null);
-            setSelectedItem(nextItem);
-          }}
+          onRecommendationSelect={(nextItem) => playRecommendedMovieInsidePlayer(nextItem)}
           onEpisodeSelect={(group, language) => {
             const item =
               selectedItem && selectedItem.id === videoRequest.itemId && selectedItem.detailLoaded === true
