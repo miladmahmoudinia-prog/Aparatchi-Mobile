@@ -7510,7 +7510,7 @@ function AppContent() {
   const dismissStartup = useCallback(() => {
     if (startupDismissedRef.current) return;
     startupDismissedRef.current = true;
-    const minimumVisibleMs = 850;
+    const minimumVisibleMs = 10000;
     const elapsed = Date.now() - startupStartedAtRef.current;
     const delay = Math.max(0, minimumVisibleMs - elapsed);
     startupDismissTimerRef.current = setTimeout(() => setStartupVisible(false), delay);
@@ -7625,7 +7625,7 @@ function AppContent() {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
     }
-    startupFallbackTimer = setTimeout(dismissStartup, 1200);
+    startupFallbackTimer = setTimeout(dismissStartup, 15000);
 
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
