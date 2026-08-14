@@ -9,35 +9,32 @@ function replaceOnce(before, after, label) {
   source = source.replace(before, after);
 }
 
+// Keep the same Image instance while moving through remote fallbacks. A React
+// key tied to the URL unmounted the image and exposed the placeholder again.
 replaceOnce(
-  "  transition = 0,\n  imageKind = 'poster',",
-  "  transition = 160,\n  imageKind = 'poster',",
-  'CatalogArtwork soft default transition',
+`        <Image\n          key={remoteUrl}\n          source={{ uri: remoteUrl }}\n          style={StyleSheet.absoluteFill}\n          contentFit={contentFit}\n          cachePolicy="memory-disk"\n          transition={transition}\n          recyclingKey={remoteUrl}\n          onError={handleRemoteError}\n        />`,
+`        <Image\n          source={{ uri: remoteUrl }}\n          style={StyleSheet.absoluteFill}\n          contentFit={contentFit}\n          cachePolicy="memory-disk"\n          transition={transition}\n          recyclingKey={\`${imageKind}:\${String(primary || fallback || remoteUrl)}\`}\n          onError={handleRemoteError}\n        />`,
+  'stable CatalogArtwork image instance',
 );
 
-replaceOnce(
-`          style={styles.posterImage}\n          contentFit="cover"\n          transition={0}\n        />`,
-`          style={styles.posterImage}\n          contentFit="cover"\n          transition={160}\n        />`,
-  'poster cards fade in',
-);
+// Android clipping can briefly detach edge cards in nested horizontal lists,
+// which looks like posters jumping/disappearing during a vertical scroll.
+const horizontalAnchor = `      horizontal\n      data={items}`;
+if (source.includes(horizontalAnchor) && !source.includes(`      horizontal\n      removeClippedSubviews={false}\n      data={items}`)) {
+  source = source.replace(horizontalAnchor, `      horizontal\n      removeClippedSubviews={false}\n      data={items}`);
+}
 
-replaceOnce(
-`        style={styles.starWorkPoster}\n        imageKind="poster"\n        transition={0}\n      />`,
-`        style={styles.starWorkPoster}\n        imageKind="poster"\n        transition={160}\n      />`,
-  'star works fade in',
-);
+// Related titles use their own horizontal FlatList.
+const relatedAnchor = `        horizontal\n        data={[...related].reverse()}`;
+if (source.includes(relatedAnchor) && !source.includes(`        horizontal\n        removeClippedSubviews={false}\n        data={[...related].reverse()}`)) {
+  source = source.replace(relatedAnchor, `        horizontal\n        removeClippedSubviews={false}\n        data={[...related].reverse()}`);
+}
 
-replaceOnce(
-`      initialNumToRender={6}\n      maxToRenderPerBatch={6}\n      updateCellsBatchingPeriod={35}\n      windowSize={5}`,
-`      initialNumToRender={4}\n      maxToRenderPerBatch={4}\n      updateCellsBatchingPeriod={50}\n      windowSize={4}`,
-  'progressive horizontal poster batching',
-);
-
-replaceOnce(
-`                  style={styles.collectionPoster}\n                  contentFit="cover"\n                  transition={180}\n                />`,
-`                  style={styles.collectionPoster}\n                  contentFit="cover"\n                  cachePolicy="memory-disk"\n                  recyclingKey={\`collection:\${member.id}:\${member.poster}\`}\n                  transition={180}\n                />`,
-  'collection poster cache',
-);
+// People/stars rails should also keep edge avatars mounted while the parent page moves.
+const peopleAnchor = `      horizontal\n      data={[...people].reverse()}`;
+if (source.includes(peopleAnchor) && !source.includes(`      horizontal\n      removeClippedSubviews={false}\n      data={[...people].reverse()}`)) {
+  source = source.replace(peopleAnchor, `      horizontal\n      removeClippedSubviews={false}\n      data={[...people].reverse()}`);
+}
 
 await fs.writeFile(appPath, source, 'utf8');
 
@@ -48,54 +45,35 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
 
-test('catalog artwork uses memory+disk cache and soft transition', () => {
+test('catalog artwork keeps a stable image instance across fallback urls', () => {
   const start = source.indexOf('const CatalogArtwork');
   const end = source.indexOf('const localArtworkForItem', start);
   const block = source.slice(start, end);
   assert.ok(block.includes('cachePolicy="memory-disk"'));
-  assert.ok(block.includes('transition = 160'));
-  assert.ok(block.includes('recyclingKey={remoteUrl}'));
+  assert.ok(block.includes('transition={transition}'));
+  assert.ok(block.includes('recyclingKey={`${imageKind}:${String(primary || fallback || remoteUrl)}`}'));
+  assert.ok(!block.includes('key={remoteUrl}'));
 });
 
-test('main poster cards do not pop in with zero-duration transition', () => {
-  const start = source.indexOf('const PosterCard');
-  const end = source.indexOf('function MovieCollectionSection', start);
-  const block = source.slice(start, end);
-  assert.ok(block.includes('transition={160}'));
-  assert.ok(!block.includes('transition={0}'));
-});
-
-test('horizontal shelves render posters in smaller progressive batches', () => {
+test('main horizontal catalog does not clip edge posters on Android', () => {
   const start = source.indexOf('const HorizontalCatalog');
   const end = source.indexOf('const StarPersonButton', start);
   const block = source.slice(start, end);
+  assert.ok(block.includes('removeClippedSubviews={false}'));
   assert.ok(block.includes('initialNumToRender={4}'));
   assert.ok(block.includes('maxToRenderPerBatch={4}'));
-  assert.ok(block.includes('updateCellsBatchingPeriod={50}'));
-  assert.ok(block.includes('windowSize={4}'));
 });
 
-test('collection posters share the same memory-disk cache behavior', () => {
-  const start = source.indexOf('function MovieCollectionSection');
-  const end = source.indexOf('const CastPersonCard', start);
-  const block = source.slice(start, end);
-  assert.ok(block.includes('cachePolicy="memory-disk"'));
-  assert.ok(block.includes('recyclingKey='));
-  assert.ok(block.includes('collection:'));
+test('related and people rails keep edge cards mounted', () => {
+  const relatedStart = source.indexOf('function RelatedTitlesSection');
+  const relatedEnd = source.indexOf('function DetailModal', relatedStart);
+  assert.ok(source.slice(relatedStart, relatedEnd).includes('removeClippedSubviews={false}'));
+  const peopleStart = source.indexOf('function PeopleSection');
+  const peopleEnd = source.indexOf('const HorizontalCatalog', peopleStart);
+  assert.ok(source.slice(peopleStart, peopleEnd).includes('removeClippedSubviews={false}'));
 });
 `;
 await fs.mkdir('scripts/tests', { recursive: true });
 await fs.writeFile(testPath, testSource, 'utf8');
 
-const appJsonPath = 'app.json';
-const appJson = JSON.parse(await fs.readFile(appJsonPath, 'utf8'));
-if (appJson?.expo?.version === '0.15.6') appJson.expo.version = '0.15.7';
-if (Number(appJson?.expo?.android?.versionCode || 0) < 27) appJson.expo.android.versionCode = 27;
-await fs.writeFile(appJsonPath, `${JSON.stringify(appJson, null, 2)}\n`, 'utf8');
-
-const packagePath = 'package.json';
-const pkg = JSON.parse(await fs.readFile(packagePath, 'utf8'));
-if (pkg.version === '0.15.6') pkg.version = '0.15.7';
-await fs.writeFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8');
-
-console.log('Applied smooth progressive poster loading fix.');
+console.log('Poster remount/clipping jitter repair applied.');
