@@ -7326,31 +7326,96 @@ const BottomNavigation = memo(function BottomNavigation({ active, onChange }: { 
 
 function StartupScreen() {
   const motion = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
     const animation = Animated.loop(Animated.timing(motion, {
       toValue: 1,
-      duration: 2200,
+      duration: 1800,
       useNativeDriver: true,
     }));
     animation.start();
     return () => animation.stop();
   }, [motion]);
-  const spin = motion.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-  const travel = motion.interpolate({ inputRange: [0, 1], outputRange: [-22, 22] });
+
+  const reelSpin = motion.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const filmTravel = motion.interpolate({ inputRange: [0, 1], outputRange: [-14, 14] });
+  const beamOpacity = motion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.16, 0.42, 0.16] });
+  const screenGlow = motion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.18, 0.46, 0.18] });
+  const operatorBob = motion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -2, 0] });
+
+  const reelHoles = [0, 1, 2, 3];
+  const reelHoleStyles = [
+    styles.startupReelHole0,
+    styles.startupReelHole1,
+    styles.startupReelHole2,
+    styles.startupReelHole3,
+  ];
+
   return (
     <View style={styles.startupOverlay}>
-      <LinearGradient colors={['#05070A', '#11100D', '#05070A']} style={StyleSheet.absoluteFill} />
-      <View style={styles.startupProjectorBeam} />
-      <Animated.View style={[styles.startupLogoMark, { transform: [{ rotate: spin }] }]}>
-        <Ionicons name="film-outline" color={COLORS.gold} size={42} />
+      <LinearGradient colors={['#030406', '#090A0D', '#120E0A', '#030406']} style={StyleSheet.absoluteFill} />
+      <View style={styles.startupProjectionistScene}>
+        <View style={styles.startupCurtainLeft} />
+        <View style={styles.startupCurtainRight} />
+        <View style={styles.startupCurtainTop} />
+
+        <Animated.View pointerEvents="none" style={[styles.startupProjectionBeam, { opacity: beamOpacity }]}>
+          <LinearGradient
+            colors={['rgba(245,220,151,0.02)', 'rgba(245,220,151,0.38)', 'rgba(245,220,151,0.04)']}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 1, y: 0.5 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+
+        <View style={styles.startupCinemaScreenFrame}>
+          <LinearGradient
+            colors={['#E9E0C8', '#F6F0DE', '#D8CBA9']}
+            style={styles.startupCinemaScreen}
+          />
+          <Animated.View style={[styles.startupCinemaScreenGlow, { opacity: screenGlow }]} />
+          <View style={styles.startupScreenFilmMark}>
+            <Ionicons name="play" color="rgba(31,27,20,0.42)" size={22} />
+          </View>
+        </View>
+
+        <View style={styles.startupProjectionFloor} />
+
+        <Animated.View style={[styles.startupOperator, { transform: [{ translateY: operatorBob }] }]}>
+          <View style={styles.startupOperatorHead} />
+          <View style={styles.startupOperatorNeck} />
+          <View style={styles.startupOperatorBody} />
+          <View style={styles.startupOperatorArm} />
+        </Animated.View>
+
+        <View style={styles.startupProjector}>
+          <Animated.View style={[styles.startupProjectorReel, styles.startupProjectorReelBack, { transform: [{ rotate: reelSpin }] }]}>
+            {reelHoles.map((hole) => <View key={`back-${hole}`} style={[styles.startupReelHole, reelHoleStyles[hole]]} />)}
+            <View style={styles.startupReelHub} />
+          </Animated.View>
+          <Animated.View style={[styles.startupProjectorReel, styles.startupProjectorReelFront, { transform: [{ rotate: reelSpin }] }]}>
+            {reelHoles.map((hole) => <View key={`front-${hole}`} style={[styles.startupReelHole, reelHoleStyles[hole]]} />)}
+            <View style={styles.startupReelHub} />
+          </Animated.View>
+          <View style={styles.startupProjectorBody}>
+            <View style={styles.startupProjectorVent} />
+            <View style={styles.startupProjectorLens}>
+              <View style={styles.startupProjectorLensGlass} />
+            </View>
+          </View>
+          <View style={styles.startupProjectorNeck} />
+          <View style={styles.startupProjectorStand} />
+          <View style={styles.startupProjectorFoot} />
+        </View>
+      </View>
+
+      <Text style={styles.startupCinemaBrand}>آپاراتچی</Text>
+      <Text style={styles.startupCinemaTagline}>چراغ‌ها خاموش می‌شوند؛ نمایش تا چند لحظه دیگر آغاز می‌شود</Text>
+
+      <Animated.View style={[styles.startupCinemaFilmStrip, { transform: [{ translateX: filmTravel }] }]}>
+        {[0, 1, 2, 3, 4, 5].map((slot) => <View key={slot} style={styles.startupCinemaFilmFrame} />)}
       </Animated.View>
-      <Text style={styles.startupBrand}>آپاراتچی</Text>
-      <Text style={styles.startupTagline}>نور، تصویر، قصه</Text>
-      <Animated.View style={[styles.startupFilmStrip, { transform: [{ translateX: travel }] }]}>
-        {[0,1,2,3,4].map((slot) => <View key={slot} style={styles.startupFilmFrame} />)}
-      </Animated.View>
-      <ActivityIndicator style={styles.startupSpinner} color={COLORS.gold} size="small" />
-      <Text style={styles.startupLoadingText}>در حال آماده‌کردن پرده نمایش…</Text>
+      <Text style={styles.startupCinemaLoadingText}>آپاراتچی در حال آماده‌کردن حلقهٔ فیلم است…</Text>
     </View>
   );
 }
@@ -8695,6 +8760,43 @@ const styles = StyleSheet.create({
   bottomNavigationSafeArea: { backgroundColor: COLORS.background, paddingHorizontal: 10, paddingTop: 6, zIndex: 120, elevation: 30 },
   screen: { flex: 1, backgroundColor: COLORS.background },
   initialLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30, backgroundColor: COLORS.background },
+  startupProjectionistScene: { width: 340, height: 270, position: 'relative', overflow: 'hidden', borderRadius: 28, backgroundColor: '#090A0D', borderWidth: 1, borderColor: 'rgba(216,180,90,0.22)' },
+  startupCurtainLeft: { position: 'absolute', zIndex: 8, left: -22, top: 0, bottom: 0, width: 70, borderTopRightRadius: 42, borderBottomRightRadius: 42, backgroundColor: 'rgba(74,15,22,0.60)', transform: [{ rotate: '2deg' }] },
+  startupCurtainRight: { position: 'absolute', zIndex: 8, right: -22, top: 0, bottom: 0, width: 70, borderTopLeftRadius: 42, borderBottomLeftRadius: 42, backgroundColor: 'rgba(74,15,22,0.60)', transform: [{ rotate: '-2deg' }] },
+  startupCurtainTop: { position: 'absolute', zIndex: 9, top: -24, left: 0, right: 0, height: 58, borderBottomLeftRadius: 42, borderBottomRightRadius: 42, backgroundColor: 'rgba(68,13,20,0.72)' },
+  startupProjectionBeam: { position: 'absolute', zIndex: 2, left: 90, top: 103, width: 205, height: 78, borderRadius: 39, overflow: 'hidden', transform: [{ rotate: '-9deg' }] },
+  startupCinemaScreenFrame: { position: 'absolute', zIndex: 4, top: 38, right: 35, width: 190, height: 112, padding: 7, borderRadius: 10, backgroundColor: '#17130E', borderWidth: 1, borderColor: 'rgba(216,180,90,0.44)' },
+  startupCinemaScreen: { flex: 1, borderRadius: 5, overflow: 'hidden' },
+  startupCinemaScreenGlow: { ...absoluteFillObject, borderRadius: 5, backgroundColor: '#FFF4C8' },
+  startupScreenFilmMark: { position: 'absolute', alignSelf: 'center', top: 40, width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(52,44,31,0.08)', borderWidth: 1, borderColor: 'rgba(52,44,31,0.12)' },
+  startupProjectionFloor: { position: 'absolute', zIndex: 1, left: 0, right: 0, bottom: 0, height: 66, backgroundColor: 'rgba(0,0,0,0.52)', borderTopWidth: 1, borderTopColor: 'rgba(216,180,90,0.10)' },
+  startupOperator: { position: 'absolute', zIndex: 6, left: 32, bottom: 37, width: 72, height: 98 },
+  startupOperatorHead: { position: 'absolute', top: 0, left: 24, width: 29, height: 31, borderRadius: 15, backgroundColor: '#17191D', borderWidth: 1, borderColor: 'rgba(216,180,90,0.16)' },
+  startupOperatorNeck: { position: 'absolute', top: 27, left: 33, width: 12, height: 10, borderRadius: 4, backgroundColor: '#17191D' },
+  startupOperatorBody: { position: 'absolute', left: 12, bottom: 0, width: 53, height: 65, borderTopLeftRadius: 21, borderTopRightRadius: 21, borderBottomLeftRadius: 10, borderBottomRightRadius: 10, backgroundColor: '#111318', borderWidth: 1, borderColor: 'rgba(216,180,90,0.12)' },
+  startupOperatorArm: { position: 'absolute', zIndex: 7, right: -4, top: 44, width: 43, height: 13, borderRadius: 7, backgroundColor: '#17191D', transform: [{ rotate: '-16deg' }] },
+  startupProjector: { position: 'absolute', zIndex: 7, left: 82, bottom: 35, width: 95, height: 110 },
+  startupProjectorReel: { position: 'absolute', top: 0, width: 50, height: 50, borderRadius: 25, backgroundColor: '#25262A', borderWidth: 3, borderColor: '#A98A48', alignItems: 'center', justifyContent: 'center' },
+  startupProjectorReelBack: { left: 0 },
+  startupProjectorReelFront: { right: 0 },
+  startupReelHole: { position: 'absolute', width: 10, height: 10, borderRadius: 5, backgroundColor: '#090A0D' },
+  startupReelHole0: { top: 7, left: 20 },
+  startupReelHole1: { top: 20, right: 7 },
+  startupReelHole2: { bottom: 7, left: 20 },
+  startupReelHole3: { top: 20, left: 7 },
+  startupReelHub: { width: 9, height: 9, borderRadius: 5, backgroundColor: COLORS.gold },
+  startupProjectorBody: { position: 'absolute', left: 8, top: 42, width: 78, height: 42, borderRadius: 10, backgroundColor: '#202126', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
+  startupProjectorVent: { position: 'absolute', left: 12, top: 13, width: 26, height: 12, borderTopWidth: 2, borderBottomWidth: 2, borderColor: 'rgba(216,180,90,0.32)' },
+  startupProjectorLens: { position: 'absolute', right: -19, top: 10, width: 25, height: 22, borderTopRightRadius: 11, borderBottomRightRadius: 11, backgroundColor: '#34353A', borderWidth: 1, borderColor: 'rgba(216,180,90,0.52)', alignItems: 'center', justifyContent: 'center' },
+  startupProjectorLensGlass: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#E7C96F', opacity: 0.9 },
+  startupProjectorNeck: { position: 'absolute', top: 83, left: 42, width: 10, height: 11, backgroundColor: '#292A2F' },
+  startupProjectorStand: { position: 'absolute', top: 92, left: 44, width: 6, height: 16, backgroundColor: '#3A3B40' },
+  startupProjectorFoot: { position: 'absolute', bottom: 0, left: 30, width: 34, height: 5, borderRadius: 3, backgroundColor: '#4A4B50' },
+  startupCinemaBrand: { ...rtlText, color: '#F4EFE5', fontSize: 29, lineHeight: 38, fontWeight: '900', marginTop: 20, textShadowColor: 'rgba(216,180,90,0.18)', textShadowRadius: 12 },
+  startupCinemaTagline: { ...rtlText, width: 320, color: COLORS.gold, fontSize: 10.5, lineHeight: 20, fontWeight: '800', textAlign: 'center', marginTop: 4 },
+  startupCinemaFilmStrip: { height: 30, marginTop: 20, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 5, borderTopWidth: 2, borderBottomWidth: 2, borderColor: 'rgba(216,180,90,0.58)' },
+  startupCinemaFilmFrame: { width: 31, height: 19, borderRadius: 3, borderWidth: 1, borderColor: 'rgba(216,180,90,0.48)', backgroundColor: 'rgba(216,180,90,0.07)' },
+  startupCinemaLoadingText: { ...rtlText, color: '#8E929B', fontSize: 9.5, marginTop: 10, textAlign: 'center' },
   startupLogoMark: { width: 72, height: 72, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(212,175,95,0.10)', borderWidth: 1, borderColor: 'rgba(212,175,95,0.32)' },
   startupBrand: { ...rtlText, color: COLORS.text, fontSize: 27, lineHeight: 36, fontWeight: '900', marginTop: 15 },
   startupSpinner: { marginTop: 18 },
