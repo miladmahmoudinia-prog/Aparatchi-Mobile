@@ -6121,9 +6121,9 @@ function VideoPlayerModal({
 
   const scheduleControlsHide = useCallback(() => {
     clearControlsTimer();
-    if (!firstFrameReady || settingsOpen || episodesOpen || controlsLocked) return;
+    if (!firstFrameReady || settingsOpen || episodesOpen) return;
     controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 3200);
-  }, [clearControlsTimer, controlsLocked, episodesOpen, firstFrameReady, settingsOpen]);
+  }, [clearControlsTimer, episodesOpen, firstFrameReady, settingsOpen]);
 
   const revealControls = useCallback(() => {
     setControlsVisible(true);
@@ -6240,7 +6240,7 @@ function VideoPlayerModal({
   const handleBack = () => {
     if (controlsLocked) {
       setControlsLocked(false);
-      setControlsVisible(true);
+      revealControls();
       return;
     }
     if (episodesOpen) {
@@ -6307,7 +6307,7 @@ function VideoPlayerModal({
 
   const unlockPlayerControls = () => {
     setControlsLocked(false);
-    setControlsVisible(true);
+    revealControls();
   };
 
   const switchQuality = async (nextSource: PlaybackSource) => {
@@ -6345,7 +6345,11 @@ function VideoPlayerModal({
   };
 
   const toggleSurfaceControls = () => {
-    if (controlsLocked) return;
+    if (controlsLocked) {
+      if (controlsVisible) hideControls();
+      else revealControls();
+      return;
+    }
     if (controlsVisible) hideControls();
     else revealControls();
   };
@@ -6531,7 +6535,7 @@ function VideoPlayerModal({
           </View>
         ) : null}
 
-        {controlsLocked ? (
+        {controlsLocked && controlsVisible ? (
           <Pressable
             onPress={unlockPlayerControls}
             style={[styles.playerLockedButton, { left: safeLeft, top: Math.max(12, insets.top + 8) }]}
