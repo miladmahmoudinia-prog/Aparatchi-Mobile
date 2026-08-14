@@ -30,6 +30,8 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - name: Install project dependencies
+        run: npm ci
       - name: Install Expo WebBrowser
         env:
           CI: '1'
