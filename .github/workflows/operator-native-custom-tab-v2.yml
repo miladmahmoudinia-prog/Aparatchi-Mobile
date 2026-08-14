@@ -69,10 +69,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # Expo prebuild can rewrite tracked project metadata even though those
+          # changes are not part of this fix. Restore every tracked prebuild
+          # side-effect and keep only the already verified App.tsx patch.
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            if [ "$file" != "App.tsx" ]; then
+              git restore -- "$file"
+            fi
+          done < <(git diff --name-only)
+
           if git diff --quiet -- App.tsx; then
             echo "No App.tsx changes to commit."
             exit 0
           fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add App.tsx
