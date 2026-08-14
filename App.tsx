@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { VideoView, createVideoPlayer, useVideoPlayer } from 'expo-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as WebBrowser from 'expo-web-browser';
+import AparatchiCustomTab from './modules/aparatchi-custom-tab/src';
 import {
   ActivityIndicator,
   Alert,
@@ -6988,45 +6989,30 @@ function OperatorWebModal({
 
     const openOperatorBrowser = async () => {
       try {
-        // Upera blocks embedded WebViews. expo-web-browser keeps Aparatchi as the
-        // owning app while using Android Chrome Custom Tabs / iOS SafariViewController,
-        // which satisfies the provider's real-browser requirement.
-        let browserPackage: string | undefined;
         if (Platform.OS === 'android') {
-          const support = await WebBrowser.getCustomTabsSupportingBrowsersAsync();
-          browserPackage = support.preferredBrowserPackage
-            || support.defaultBrowserPackage
-            || support.browserPackages.find((packageName) => packageName === 'com.android.chrome')
-            || support.browserPackages.find((packageName) => /chrome/i.test(packageName))
-            || support.browserPackages[0];
-          if (browserPackage) {
-            await WebBrowser.warmUpAsync(browserPackage).catch(() => undefined);
-            await WebBrowser.mayInitWithUrlAsync(request.url, browserPackage).catch(() => undefined);
-          }
+          // Upera/Filimo requires a real browser context and blocks embedded
+          // WebViews. Use our native Android Custom Tab launcher instead of
+          // expo-web-browser so the Intent is pinned to one concrete browser
+          // activity and Android does not show an “Open with…” resolver.
+          const result = await AparatchiCustomTab.openAsync(request.url);
+          if (cancelled) return;
+          if (!result?.opened) throw new Error('Native Custom Tab did not open.');
+          closeTimerRef.current = setTimeout(onClose, 300);
+          return;
         }
 
-        const result = await WebBrowser.openBrowserAsync(request.url, {
-          ...(browserPackage ? { browserPackage } : {}),
+        // iOS has no Android-style app chooser here, so SafariViewController
+        // remains the correct provider-compliant browser surface.
+        await WebBrowser.openBrowserAsync(request.url, {
           toolbarColor: '#090B10',
           secondaryToolbarColor: '#11151C',
           controlsColor: COLORS.gold,
           showTitle: false,
           enableBarCollapsing: true,
           enableDefaultShareMenuItem: false,
-          createTask: false,
-          showInRecents: false,
           dismissButtonStyle: 'close',
         });
-        if (cancelled) return;
-
-        // Android resolves with "opened" as soon as the Custom Tab is on top.
-        // Remove the launch sheet underneath it so closing the tab returns directly
-        // to the same Aparatchi detail screen. iOS resolves after the sheet closes.
-        if (result.type === 'opened') {
-          closeTimerRef.current = setTimeout(onClose, 250);
-          return;
-        }
-        onClose();
+        if (!cancelled) onClose();
       } catch {
         if (cancelled) return;
         setFailed(true);
@@ -7047,11 +7033,11 @@ function OperatorWebModal({
           <View style={styles.operatorBrowserBrandIcon}>
             <Ionicons name="film-outline" color={COLORS.gold} size={26} />
           </View>
-          <Text numberOfLines={1} style={styles.operatorBrowserLaunchTitle}>{request.title}</Text>
           {failed ? (
             <>
+              <Text numberOfLines={1} style={styles.operatorBrowserLaunchTitle}>{request.title}</Text>
               <Text style={styles.operatorBrowserLaunchText}>
-                پنجره امن پخش باز نشد. اینترنت همراه را بررسی کنید و دوباره تلاش کنید.
+                مرورگر امن پخش باز نشد. اینترنت همراه و نصب بودن Chrome را بررسی کنید و دوباره تلاش کنید.
               </Text>
               <View style={styles.operatorBrowserLaunchActions}>
                 <Pressable
