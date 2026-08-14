@@ -1557,7 +1557,7 @@ const CatalogArtwork = memo(function CatalogArtwork({
   localFallback,
   style,
   contentFit = 'cover',
-  transition = 0,
+  transition = 160,
   imageKind = 'poster',
 }: {
   primary?: string;
@@ -2306,7 +2306,7 @@ const PosterCard = memo(function PosterCard({
           localFallback={localArtworkForItem(item)}
           style={styles.posterImage}
           contentFit="cover"
-          transition={0}
+          transition={160}
         />
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
         {posterBadges.length ? (
@@ -2407,6 +2407,8 @@ function MovieCollectionSection({
                   source={{ uri: member.poster }}
                   style={styles.collectionPoster}
                   contentFit="cover"
+                  cachePolicy="memory-disk"
+                  recyclingKey={`collection:${member.id}:${member.poster}`}
                   transition={180}
                 />
                 <LinearGradient
@@ -2546,10 +2548,10 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-      initialNumToRender={6}
-      maxToRenderPerBatch={6}
-      updateCellsBatchingPeriod={35}
-      windowSize={5}
+      initialNumToRender={4}
+      maxToRenderPerBatch={4}
+      updateCellsBatchingPeriod={50}
+      windowSize={4}
       removeClippedSubviews={false}
       nestedScrollEnabled
       keyboardShouldPersistTaps="always"
@@ -2598,7 +2600,7 @@ const StarWorkPosterCard = memo(function StarWorkPosterCard({
         localFallback={localArtworkForItem(item)}
         style={styles.starWorkPoster}
         imageKind="poster"
-        transition={0}
+        transition={160}
       />
       <Text numberOfLines={2} style={styles.starWorkTitle}>{item.nameFa}</Text>
     </Pressable>
