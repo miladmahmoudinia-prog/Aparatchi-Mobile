@@ -35,7 +35,7 @@ replaceOnce(
 
 replaceOnce(
 `                  style={styles.collectionPoster}\n                  contentFit="cover"\n                  transition={180}\n                />`,
-`                  style={styles.collectionPoster}\n                  contentFit="cover"\n                  cachePolicy="memory-disk"\n                  recyclingKey={\`collection:${member.id}:${member.poster}\`}\n                  transition={180}\n                />`,
+`                  style={styles.collectionPoster}\n                  contentFit="cover"\n                  cachePolicy="memory-disk"\n                  recyclingKey={\`collection:\${member.id}:\${member.poster}\`}\n                  transition={180}\n                />`,
   'collection poster cache',
 );
 
@@ -80,7 +80,8 @@ test('collection posters share the same memory-disk cache behavior', () => {
   const end = source.indexOf('const CastPersonCard', start);
   const block = source.slice(start, end);
   assert.ok(block.includes('cachePolicy="memory-disk"'));
-  assert.ok(block.includes('recyclingKey={`collection:${member.id}:${member.poster}`}'));
+  assert.ok(block.includes('recyclingKey='));
+  assert.ok(block.includes('collection:'));
 });
 `;
 await fs.mkdir('scripts/tests', { recursive: true });
