@@ -19,6 +19,7 @@ import {
   Linking,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   Share,
@@ -7024,20 +7025,33 @@ function OperatorWebModal({
 }) {
   const [operatorBrowserAttempt, setOperatorBrowserAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
-  const [launching, setLaunching] = useState(true);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setFailed(false);
-    setLaunching(true);
 
     const openOperatorBrowser = async () => {
       try {
         // Upera blocks embedded WebViews. expo-web-browser keeps Aparatchi as the
         // owning app while using Android Chrome Custom Tabs / iOS SafariViewController,
         // which satisfies the provider's real-browser requirement.
+        let browserPackage: string | undefined;
+        if (Platform.OS === 'android') {
+          const support = await WebBrowser.getCustomTabsSupportingBrowsersAsync();
+          browserPackage = support.preferredBrowserPackage
+            || support.defaultBrowserPackage
+            || support.browserPackages.find((packageName) => packageName === 'com.android.chrome')
+            || support.browserPackages.find((packageName) => /chrome/i.test(packageName))
+            || support.browserPackages[0];
+          if (browserPackage) {
+            await WebBrowser.warmUpAsync(browserPackage).catch(() => undefined);
+            await WebBrowser.mayInitWithUrlAsync(request.url, browserPackage).catch(() => undefined);
+          }
+        }
+
         const result = await WebBrowser.openBrowserAsync(request.url, {
+          ...(browserPackage ? { browserPackage } : {}),
           toolbarColor: '#090B10',
           secondaryToolbarColor: '#11151C',
           controlsColor: COLORS.gold,
@@ -7060,7 +7074,6 @@ function OperatorWebModal({
         onClose();
       } catch {
         if (cancelled) return;
-        setLaunching(false);
         setFailed(true);
       }
     };
@@ -7099,15 +7112,7 @@ function OperatorWebModal({
               </View>
             </>
           ) : (
-            <>
-              <ActivityIndicator color={COLORS.gold} size="large" />
-              <Text style={styles.operatorBrowserLaunchText}>
-                {launching ? 'در حال باز کردن پخش ویژه همراه در پنجره امن آپاراتچی…' : 'در حال آماده‌سازی پخش…'}
-              </Text>
-              <Text style={styles.operatorBrowserLaunchHint}>
-                پخش در مرورگر درون‌برنامه‌ای باز می‌شود و با بستن آن مستقیم به همین صفحه برمی‌گردید.
-              </Text>
-            </>
+            <ActivityIndicator color={COLORS.gold} size="large" />
           )}
         </View>
       </View>
