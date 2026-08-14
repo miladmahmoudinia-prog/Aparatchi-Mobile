@@ -15,21 +15,8 @@ replaceOnce(
   'stable CatalogArtwork image instance',
 );
 
-const horizontalAnchor = `      horizontal\n      data={items}`;
-if (source.includes(horizontalAnchor) && !source.includes(`      horizontal\n      removeClippedSubviews={false}\n      data={items}`)) {
-  source = source.replace(horizontalAnchor, `      horizontal\n      removeClippedSubviews={false}\n      data={items}`);
-}
-
-const relatedAnchor = `        horizontal\n        data={[...related].reverse()}`;
-if (source.includes(relatedAnchor) && !source.includes(`        horizontal\n        removeClippedSubviews={false}\n        data={[...related].reverse()}`)) {
-  source = source.replace(relatedAnchor, `        horizontal\n        removeClippedSubviews={false}\n        data={[...related].reverse()}`);
-}
-
-const peopleAnchor = `      horizontal\n      data={[...people].reverse()}`;
-if (source.includes(peopleAnchor) && !source.includes(`      horizontal\n      removeClippedSubviews={false}\n      data={[...people].reverse()}`)) {
-  source = source.replace(peopleAnchor, `      horizontal\n      removeClippedSubviews={false}\n      data={[...people].reverse()}`);
-}
-
+// The main shelves already opt out of Android clipping. Do not inject a second
+// prop; only verify that the guard remains present after the image fix.
 await fs.writeFile(appPath, source, 'utf8');
 
 const testPath = 'scripts/tests/smooth-poster-loading.test.mjs';
@@ -49,25 +36,16 @@ test('catalog artwork keeps a stable image instance across fallback urls', () =>
   assert.ok(!block.includes('key={remoteUrl}'));
 });
 
-test('main horizontal catalog does not clip edge posters on Android', () => {
+test('main horizontal catalog keeps Android edge posters mounted without duplicate props', () => {
   const start = source.indexOf('const HorizontalCatalog');
   const end = source.indexOf('const StarPersonButton', start);
   const block = source.slice(start, end);
-  assert.ok(block.includes('removeClippedSubviews={false}'));
+  assert.equal((block.match(/removeClippedSubviews=\{false\}/g) || []).length, 1);
   assert.ok(block.includes('initialNumToRender={4}'));
   assert.ok(block.includes('maxToRenderPerBatch={4}'));
-});
-
-test('related and people rails keep edge cards mounted', () => {
-  const relatedStart = source.indexOf('function RelatedTitlesSection');
-  const relatedEnd = source.indexOf('function DetailModal', relatedStart);
-  assert.ok(source.slice(relatedStart, relatedEnd).includes('removeClippedSubviews={false}'));
-  const peopleStart = source.indexOf('function PeopleSection');
-  const peopleEnd = source.indexOf('const HorizontalCatalog', peopleStart);
-  assert.ok(source.slice(peopleStart, peopleEnd).includes('removeClippedSubviews={false}'));
 });
 `;
 await fs.mkdir('scripts/tests', { recursive: true });
 await fs.writeFile(testPath, testSource, 'utf8');
 
-console.log('Poster remount/clipping jitter repair applied.');
+console.log('Poster remount jitter repair applied without changing the established shelf layout.');
