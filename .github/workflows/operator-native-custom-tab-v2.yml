@@ -1,0 +1,81 @@
+name: Operator native custom tab v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'modules/aparatchi-custom-tab/**'
+      - 'scripts/patch-operator-native-custom-tab-v2.mjs'
+      - 'scripts/test-operator-native-custom-tab-v2.mjs'
+      - '.github/workflows/operator-native-custom-tab-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-operator-native-custom-tab-v2
+  cancel-in-progress: true
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 20
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Patch operator browser path
+        run: node scripts/patch-operator-native-custom-tab-v2.mjs
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check application
+        run: npm run typecheck
+
+      - name: Verify operator browser contract
+        run: node scripts/test-operator-native-custom-tab-v2.mjs
+
+      - name: Generate Android project
+        run: npx expo prebuild --platform android --non-interactive
+        env:
+          NODE_ENV: production
+
+      - name: Verify native module compiles
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew app:compileReleaseKotlin
+        env:
+          NODE_ENV: production
+
+      - name: Commit verified operator patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- App.tsx; then
+            echo "No App.tsx changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx
+          git commit -m "fix: open operator playback with explicit native custom tab"
+          git pull --rebase origin main
+          git push origin HEAD:main
