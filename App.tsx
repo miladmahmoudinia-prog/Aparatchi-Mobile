@@ -5661,6 +5661,59 @@ function DownloadOptionsModal({
   );
 }
 
+function RelatedTitlesSection({
+  item,
+  catalog,
+  onOpen,
+}: {
+  item: CatalogItem;
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+}) {
+  const related = useMemo(() => relatedCatalogItems(item, catalog, 5), [item, catalog]);
+  const railRef = useRef<FlatList<CatalogItem>>(null);
+  if (!related.length) return null;
+
+  return (
+    <View style={styles.relatedTitlesSection}>
+      <View style={styles.relatedTitlesHeader}>
+        <View style={styles.relatedTitlesAccent} />
+        <Text style={styles.relatedTitlesTitle}>مرتبط‌ها</Text>
+      </View>
+      <FlatList
+        ref={railRef}
+        horizontal
+        data={[...related].reverse()}
+        onContentSizeChange={() => railRef.current?.scrollToEnd({ animated: false })}
+        keyExtractor={(relatedItem) => relatedItem.id}
+        renderItem={({ item: relatedItem }) => (
+          <Pressable style={styles.relatedTitleCard} onPress={() => onOpen(relatedItem)}>
+            <CatalogArtwork
+              primary={relatedItem.poster}
+              fallback={relatedItem.posterFallback}
+              style={styles.relatedTitlePoster}
+              contentFit="cover"
+              imageKind="poster"
+            />
+            <Text numberOfLines={1} style={styles.relatedTitleName}>{relatedItem.nameFa}</Text>
+            {Number(relatedItem.rate || 0) > 0 ? (
+              <View style={styles.relatedTitleRate}>
+                <Ionicons name="star" color={COLORS.gold} size={11} />
+                <Text style={styles.relatedTitleRateText}>{toPersianDigits(Number(relatedItem.rate).toFixed(1))}</Text>
+              </View>
+            ) : null}
+          </Pressable>
+        )}
+        contentContainerStyle={styles.relatedTitlesRail}
+        showsHorizontalScrollIndicator={false}
+        initialNumToRender={5}
+        maxToRenderPerBatch={5}
+        windowSize={3}
+      />
+    </View>
+  );
+}
+
 function DetailModal({
   item,
   catalog,
@@ -5818,6 +5871,7 @@ function DetailModal({
             <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text><Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
             <PeopleSection item={item} onOpen={onOpenPerson} />
             <MovieCollectionSection item={item} catalog={catalog} onOpen={onOpenRelated} />
+            <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} />
             {item.type === 'series' && episodeGroups.length ? (
               <SeriesEpisodeShowcase
                 item={item}
@@ -9207,6 +9261,16 @@ const styles = StyleSheet.create({
   playerPreparingOverlay: { ...absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   playerPreparingSpinner: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   playerFramePortal: { position: 'absolute', zIndex: 70, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  relatedTitlesSection: { marginTop: 22, marginBottom: 8 },
+  relatedTitlesHeader: { minHeight: 36, flexDirection: 'row-reverse', alignItems: 'center', gap: 9, marginBottom: 12, paddingHorizontal: 4 },
+  relatedTitlesAccent: { width: 34, height: 2, borderRadius: 2, backgroundColor: COLORS.red },
+  relatedTitlesTitle: { ...rtlText, color: COLORS.text, fontSize: 18, fontWeight: '900' },
+  relatedTitlesRail: { flexDirection: 'row', gap: 12, paddingHorizontal: 2, paddingBottom: 5 },
+  relatedTitleCard: { width: 126, alignItems: 'flex-end' },
+  relatedTitlePoster: { width: 126, height: 178, borderRadius: 14, backgroundColor: COLORS.surfaceStrong },
+  relatedTitleName: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 10.5, fontWeight: '800', textAlign: 'right', marginTop: 7 },
+  relatedTitleRate: { position: 'absolute', left: 7, top: 148, height: 24, paddingHorizontal: 7, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(5,7,10,0.86)' },
+  relatedTitleRateText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
   playerOfflineOverlay: { position: 'absolute', zIndex: 95, elevation: 95, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, backgroundColor: 'rgba(0,0,0,0.78)' },
   nextEpisodeOverlay: { ...absoluteFillObject, zIndex: 83, elevation: 83, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 18 },
   nextEpisodeCard: { width: '100%', maxWidth: 610, minHeight: 142, flexDirection: 'row-reverse', alignItems: 'center', gap: 13, padding: 13, borderRadius: 18, backgroundColor: 'rgba(10,12,16,0.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
