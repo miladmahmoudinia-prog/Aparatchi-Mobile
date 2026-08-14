@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { CATALOG, VERIFIED_IRANIAN_SCHEDULE } from './data';
 import {
+  CONTENT_REPOSITORY_BASES,
   REMOTE_CONTENT_DETAIL_BASE_URL,
   REMOTE_CONTENT_INDEX_URL,
   REMOTE_CONTENT_MANIFEST_URL,
@@ -103,6 +104,28 @@ const REMOTE_ASSET_BASE = (() => {
     return '';
   }
 })();
+
+const remoteRepositoryUrlCandidates = (value: string) => {
+  const url = asString(value);
+  if (!url) return [] as string[];
+
+  let relative = '';
+  for (const base of CONTENT_REPOSITORY_BASES) {
+    if (url.startsWith(base)) {
+      relative = url.slice(base.length);
+      break;
+    }
+  }
+  if (!relative) return [url];
+
+  return [...new Set(CONTENT_REPOSITORY_BASES.map((base) => {
+    try {
+      return new URL(relative, base).toString();
+    } catch {
+      return `${base}${relative}`;
+    }
+  }))];
+};
 
 const resolveCatalogAsset = (value: unknown) => {
   const raw = asString(value).trim();
@@ -1449,8 +1472,18 @@ const normalizedLocalPayload = (): CatalogPayload => {
   };
 };
 
+const unavailableLocalPayload = (): CatalogPayload => ({
+  version: 'bootstrap-unavailable',
+  updatedAt: '',
+  items: [],
+  iranianSchedule: [],
+  weeklySchedule: [],
+  featuredPeople: [],
+  imdbTop100: undefined,
+});
+
 export const getBundledContent = (): LoadedContent => ({
-  ...normalizedLocalPayload(),
+  ...unavailableLocalPayload(),
   source: 'local',
 });
 
@@ -1503,46 +1536,64 @@ const writeCacheMetadata = async (metadata: RemoteCacheMetadata) => {
 const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
   const manifestUrl = REMOTE_CONTENT_MANIFEST_URL.trim();
   if (!manifestUrl) return null;
-  const separator = manifestUrl.includes('?') ? '&' : '?';
-  // Only this tiny file gets a five-minute cache key. The 8+ MB catalog never
-  // receives a time-based cache-buster.
-  const requestUrl = `${manifestUrl}${separator}_aparatchi_manifest=${Math.floor(Date.now() / 300_000)}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6_000);
-  const response = await fetch(requestUrl, {
-    headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
-    signal: controller.signal,
-  }).finally(() => clearTimeout(timeout));
-  if (!response.ok) throw new Error(`Manifest HTTP ${response.status}`);
-  const value = await response.json();
-  if (!value || typeof value !== 'object') throw new Error('Invalid catalog manifest');
-  const record = value as Record<string, unknown>;
-  const revision = asString(record.revision);
-  if (!revision) throw new Error('Catalog manifest has no revision');
-  return {
-    revision,
-    ...(asString(record.clientRevision ?? record.client_revision)
-      ? { clientRevision: asString(record.clientRevision ?? record.client_revision) }
-      : {}),
-    ...(asString(record.catalogVersion ?? record.version)
-      ? { catalogVersion: asString(record.catalogVersion ?? record.version) }
-      : {}),
-    ...(asString(record.catalogUpdatedAt ?? record.updatedAt)
-      ? { catalogUpdatedAt: asString(record.catalogUpdatedAt ?? record.updatedAt) }
-      : {}),
-    ...(asNumber(record.sizeBytes, 0) > 0 ? { sizeBytes: asNumber(record.sizeBytes, 0) } : {}),
-    ...(asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) > 0
-      ? { clientSizeBytes: asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) }
-      : {}),
-    ...(asString(record.clientIndex ?? record.client_index)
-      ? { clientIndex: asString(record.clientIndex ?? record.client_index) }
-      : {}),
-    ...(asString(record.detailBase ?? record.detail_base)
-      ? { detailBase: asString(record.detailBase ?? record.detail_base) }
-      : {}),
-  };
-};
+  let lastError: unknown = null;
 
+  for (const candidate of remoteRepositoryUrlCandidates(manifestUrl)) {
+    const separator = candidate.includes('?') ? '&' : '?';
+    const requestUrl = `${candidate}${separator}_aparatchi_manifest=${Math.floor(Date.now() / 300_000)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const response = await fetch(requestUrl, {
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        lastError = new Error(`Manifest HTTP ${response.status} from ${candidate}`);
+        continue;
+      }
+      const value = await response.json();
+      if (!value || typeof value !== 'object') {
+        lastError = new Error(`Invalid catalog manifest from ${candidate}`);
+        continue;
+      }
+      const record = value as Record<string, unknown>;
+      const revision = asString(record.revision);
+      if (!revision) {
+        lastError = new Error(`Catalog manifest has no revision from ${candidate}`);
+        continue;
+      }
+      return {
+        revision,
+        ...(asString(record.clientRevision ?? record.client_revision)
+          ? { clientRevision: asString(record.clientRevision ?? record.client_revision) }
+          : {}),
+        ...(asString(record.catalogVersion ?? record.version)
+          ? { catalogVersion: asString(record.catalogVersion ?? record.version) }
+          : {}),
+        ...(asString(record.catalogUpdatedAt ?? record.updatedAt)
+          ? { catalogUpdatedAt: asString(record.catalogUpdatedAt ?? record.updatedAt) }
+          : {}),
+        ...(asNumber(record.sizeBytes, 0) > 0 ? { sizeBytes: asNumber(record.sizeBytes, 0) } : {}),
+        ...(asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) > 0
+          ? { clientSizeBytes: asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) }
+          : {}),
+        ...(asString(record.clientIndex ?? record.client_index)
+          ? { clientIndex: asString(record.clientIndex ?? record.client_index) }
+          : {}),
+        ...(asString(record.detailBase ?? record.detail_base)
+          ? { detailBase: asString(record.detailBase ?? record.detail_base) }
+          : {}),
+      };
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Catalog manifest is unavailable from all mirrors');
+};
 const manifestMatchesCachedContent = (
   manifest: RemoteCatalogManifest,
   cached: CatalogPayload,
@@ -1588,7 +1639,7 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     const cached = await readCachedContent();
     if (cached) return { ...cached, source: 'cache' };
     return {
-      ...normalizedLocalPayload(),
+      ...unavailableLocalPayload(),
       source: 'local',
     };
   }
@@ -1616,30 +1667,50 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
   }
 
   try {
-    const controller = new AbortController();
-    // The catalog is large enough that a valid refresh can exceed 12 seconds on mobile networks.
-    // Startup already paints bundled/cache content first, so let the background refresh finish.
-    // Home is already rendered from bundled/cache data, so a slow catalog refresh must not
-    // be killed while the full public index is still downloading on a mobile connection.
-    const timeout = setTimeout(() => controller.abort(), 120_000);
     const requestHeaders: Record<string, string> = {
       Accept: 'application/json',
       'Cache-Control': 'no-cache',
     };
     if (cacheMetadata.etag) requestHeaders['If-None-Match'] = cacheMetadata.etag;
-    if (cacheMetadata.lastModified) {
-      requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
-    }
+    if (cacheMetadata.lastModified) requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
+
     const catalogRevision = manifest?.clientRevision || manifest?.revision || '';
-    const catalogRequestUrl = catalogRevision
-      ? `${remoteUrl}${remoteUrl.includes('?') ? '&' : '?'}revision=${encodeURIComponent(catalogRevision.slice(0, 24))}`
-      : remoteUrl;
-    const response = await fetch(catalogRequestUrl, {
-      headers: {
-        ...requestHeaders,
-      },
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timeout));
+    let response: Awaited<ReturnType<typeof fetch>> | null = null;
+    let lastCatalogError: unknown = null;
+
+    for (const candidate of remoteRepositoryUrlCandidates(remoteUrl)) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60_000);
+      const catalogRequestUrl = catalogRevision
+        ? `${candidate}${candidate.includes('?') ? '&' : '?'}revision=${encodeURIComponent(catalogRevision.slice(0, 24))}`
+        : candidate;
+      try {
+        const nextResponse = await fetch(catalogRequestUrl, {
+          headers: requestHeaders,
+          signal: controller.signal,
+        });
+        if (nextResponse.status === 304 && cached) {
+          response = nextResponse;
+          break;
+        }
+        if (!nextResponse.ok) {
+          lastCatalogError = new Error(`Catalog HTTP ${nextResponse.status} from ${candidate}`);
+          continue;
+        }
+        response = nextResponse;
+        break;
+      } catch (error) {
+        lastCatalogError = error;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    if (!response) {
+      throw lastCatalogError instanceof Error
+        ? lastCatalogError
+        : new Error('Catalog is unavailable from all mirrors');
+    }
     if (response.status === 304) {
       const cached = await readCachedContent();
       if (cached) return { ...cached, source: 'remote' };
@@ -1649,8 +1720,6 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
       }
       throw new Error('Remote catalog returned 304 without a local cache');
     }
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
     // Keep the original response text for the on-device cache. Re-stringifying
     // an 8+ MB object on the JS thread caused a second avoidable UI pause.
     const rawText = await response.text();
@@ -1677,7 +1746,7 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
   } catch {
     if (cached) return { ...cached, source: 'cache' };
     return {
-      ...normalizedLocalPayload(),
+      ...unavailableLocalPayload(),
       source: 'local',
     };
   }
@@ -1735,23 +1804,27 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
 
     const url = detailUrlFor(detailPath);
     if (!url) return null;
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8_000);
-      const response = await fetch(`${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(detailPath)}`, {
-        headers: { Accept: 'application/json', 'Cache-Control': 'public, max-age=31536000, immutable' },
-        signal: controller.signal,
-      }).finally(() => clearTimeout(timeout));
-      if (!response.ok) return null;
-      const raw = await response.text();
-      const parsed = parseDetail(JSON.parse(raw));
-      if (!parsed) return null;
-      detailMemoryCache.set(memoryKey, parsed);
-      if (cacheUri) void FileSystem.writeAsStringAsync(cacheUri, raw).catch(() => undefined);
-      return parsed;
-    } catch {
-      return null;
+
+    for (const candidate of remoteRepositoryUrlCandidates(url)) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+        const response = await fetch(`${candidate}${candidate.includes('?') ? '&' : '?'}v=${encodeURIComponent(detailPath)}`, {
+          headers: { Accept: 'application/json', 'Cache-Control': 'public, max-age=31536000, immutable' },
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timeout));
+        if (!response.ok) continue;
+        const raw = await response.text();
+        const parsed = parseDetail(JSON.parse(raw));
+        if (!parsed) continue;
+        detailMemoryCache.set(memoryKey, parsed);
+        if (cacheUri) void FileSystem.writeAsStringAsync(cacheUri, raw).catch(() => undefined);
+        return parsed;
+      } catch {
+        // Try the next public mirror before giving up on this title.
+      }
     }
+    return null;
   })().finally(() => detailRequestCache.delete(memoryKey));
 
   detailRequestCache.set(memoryKey, request);
