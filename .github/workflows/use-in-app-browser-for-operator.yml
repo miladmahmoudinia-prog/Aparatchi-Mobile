@@ -48,7 +48,7 @@ jobs:
           set -euo pipefail
           git config user.name "aparatchi-mobile-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add App.tsx package.json package-lock.json
+          git add App.tsx package.json package-lock.json app.json
           if git diff --cached --quiet; then
             echo "Operator in-app browser already applied."
             exit 0
