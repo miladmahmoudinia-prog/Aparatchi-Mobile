@@ -1,0 +1,57 @@
+name: Player direct recommendations v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/patch-player-direct-recommendations-v2.mjs'
+      - 'scripts/test-player-direct-recommendations-v2.mjs'
+      - '.github/workflows/player-direct-recommendations-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-player-direct-recommendations-v2
+  cancel-in-progress: true
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 20
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Patch direct recommendation playback
+        run: node scripts/patch-player-direct-recommendations-v2.mjs
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check application
+        run: npm run typecheck
+      - name: Verify direct recommendation behavior
+        run: node scripts/test-player-direct-recommendations-v2.mjs
+      - name: Verify existing movie-end recommendation regression
+        run: node scripts/test-movie-end-recommendations.mjs
+      - name: Commit verified direct recommendation patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- App.tsx; then
+            echo "No App.tsx changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx
+          git commit -m "fix: play movie recommendations directly in player"
+          git pull --rebase origin main
+          git push origin HEAD:main
