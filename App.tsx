@@ -168,8 +168,8 @@ const personImageCandidates = (value?: string) => {
   const isUpera = /^https?:\/\/thumb\.upera\.tv\//i.test(image);
 
   if (isTmdb) {
-    candidates.push(image.replace(/\/t\/p\/(?:original|w\d+)\//i, '/t/p/w185/'));
     candidates.push(`https://wsrv.nl/?url=${encodeURIComponent(sourceWithoutProtocol)}&w=190&output=webp`);
+    candidates.push(image.replace(/\/t\/p\/(?:original|w\d+)\//i, '/t/p/w185/'));
     candidates.push(image);
   } else if (isUpera) {
     candidates.push(image);
@@ -199,8 +199,8 @@ const catalogArtworkCandidates = (
   } else if (isTmdbArtwork) {
     const tmdbWidth = kind === 'poster' ? 'w342' : 'w780';
     candidates.push(
-      image.replace(/\/t\/p\/(?:original|w\d+)\//i, `/t/p/${tmdbWidth}/`),
       proxied,
+      image.replace(/\/t\/p\/(?:original|w\d+)\//i, `/t/p/${tmdbWidth}/`),
       image,
     );
   } else {
@@ -2687,10 +2687,11 @@ function HomeStarsSectionBase({
         : `name:${normalizeComparableText(personName(person))}`;
       const explicitIds = new Set(person.itemIds || []);
       const explicitMatches = [...explicitIds].filter((itemId) => catalogById.has(String(itemId)));
-      const fallbackMatches = personWorksFor(person, catalog).map((item) => item.id);
-      // Never drop a known star merely because old itemIds went stale after a
-      // catalog refresh. Re-resolve their works by cast/name before filtering.
-      const matchedIds = explicitMatches.length ? explicitMatches : fallbackMatches;
+      // Only scan the catalog when the server-provided ids are stale/missing.
+      // This avoids dozens of full-catalog passes every time the stars shelf mounts.
+      const matchedIds = explicitMatches.length
+        ? explicitMatches
+        : personWorksFor(person, catalog).map((item) => item.id);
       if (!matchedIds.length) continue;
       const current = merged.get(key);
       const nextIds = [...new Set([...(current?.itemIds || []), ...matchedIds])];
@@ -3305,15 +3306,22 @@ const HomeScreen = memo(function HomeScreen({
   const newest = rows[0]?.items || [];
 
   useEffect(() => {
-    // Warm the disk cache for the first visible shelves without waiting for
-    // every <Image> to mount. This keeps initial scroll/taps responsive and
-    // prevents poster placeholders from lingering on ordinary mobile data.
-    const urls = catalog
-      .slice(0, 36)
+    // Use the 10-second branded startup window to warm the artwork actually
+    // visible on Home. Small staggered batches avoid saturating mobile data.
+    const visibleCandidates = [
+      ...newest.slice(0, 5),
+      ...rows.slice(0, 8).flatMap((row) => row.items.slice(0, 5)),
+    ];
+    const urls = [...new Set(visibleCandidates
       .map((item) => catalogArtworkCandidates(item.poster || item.backdrop || item.posterFallback, 'poster')[0])
-      .filter((url): url is string => Boolean(url));
-    if (urls.length) void Image.prefetch([...new Set(urls)]).catch(() => undefined);
-  }, [catalog]);
+      .filter((url): url is string => Boolean(url)))]
+      .slice(0, 45);
+    const batches = [urls.slice(0, 15), urls.slice(15, 30), urls.slice(30, 45)].filter((batch) => batch.length);
+    const timers = batches.map((batch, index) => setTimeout(() => {
+      void Image.prefetch(batch).catch(() => undefined);
+    }, index * 550));
+    return () => timers.forEach(clearTimeout);
+  }, [newest, rows]);
 
   useEffect(() => {
     if (initialScrollOffset > 0) {
@@ -3390,10 +3398,10 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={2}
-        maxToRenderPerBatch={2}
-        updateCellsBatchingPeriod={45}
-        windowSize={4}
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
+        updateCellsBatchingPeriod={40}
+        windowSize={5}
         removeClippedSubviews
         keyboardShouldPersistTaps="always"
         onScrollEndDrag={rememberVisibleOffset}
