@@ -57,3 +57,5 @@ jobs:
         run: node --test scripts/tests/locked-control-autohide.test.mjs
       - name: Verify exact episode thumbnails
         run: node --test scripts/tests/exact-device-episode-thumbnails.test.mjs
+
+# rerun marker: aligned metadata regression with RTL rail
