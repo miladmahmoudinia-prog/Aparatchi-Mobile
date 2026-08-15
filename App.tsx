@@ -2438,6 +2438,14 @@ function MovieCollectionSection({
   onOpen: (item: CatalogItem) => void;
 }) {
   const members = collectionMembersFor(item, catalog);
+  const collectionRailRef = useRef<ScrollView>(null);
+  const collectionRailPositionedRef = useRef('');
+  const collectionRailKey = members.map((member) => String(member.id)).join('|');
+  const positionCollectionRail = useCallback(() => {
+    if (!collectionRailKey || collectionRailPositionedRef.current === collectionRailKey) return;
+    collectionRailPositionedRef.current = collectionRailKey;
+    requestAnimationFrame(() => collectionRailRef.current?.scrollToEnd({ animated: false }));
+  }, [collectionRailKey]);
   if (members.length < 2) return null;
   const rawCollectionFa = String(item.collectionNameFa || '').trim();
   const rawCollectionEn = String(item.collectionName || '').trim();
@@ -2464,10 +2472,11 @@ function MovieCollectionSection({
       </View>
 
       <ScrollView
+        ref={collectionRailRef}
         horizontal
-        style={styles.mediaRailRtl}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.collectionList}
+        onContentSizeChange={positionCollectionRail}
       >
         {members.map((member, index) => {
           const current = member.id === item.id;
@@ -2567,6 +2576,8 @@ function PeopleSection({
     });
   }, [item.people]);
 
+  const displayedPeople = useMemo(() => [...people].reverse(), [people]);
+
   if (!people.length) return null;
 
   return (
@@ -2582,15 +2593,17 @@ function PeopleSection({
       </View>
       <FlatList
         horizontal
-        data={people}
+        data={displayedPeople}
         keyExtractor={(person) => person.tmdbId
           ? `tmdb:${person.tmdbId}:${person.role}`
           : `person:${normalizeComparableText(personName(person))}:${person.role}`}
         renderItem={({ item: person }) => <CastPersonCard person={person} onOpen={onOpen} />}
         showsHorizontalScrollIndicator={false}
         nestedScrollEnabled
-        style={[styles.peopleRail, styles.mediaRailRtl]}
+        style={styles.peopleRail}
         contentContainerStyle={styles.peopleList}
+        initialScrollIndex={displayedPeople.length - 1}
+        getItemLayout={(_data, index) => ({ length: 100, offset: 100 * index, index })}
         initialNumToRender={4}
         maxToRenderPerBatch={3}
         updateCellsBatchingPeriod={60}
@@ -2608,6 +2621,7 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
   items: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
 }) {
+  const displayedItems = useMemo(() => [...items].reverse(), [items]);
   const renderPoster = useCallback(({ item }: { item: CatalogItem }) => (
     <PosterCard item={item} onOpen={() => onOpen(item)} />
   ), [onOpen]);
@@ -2615,12 +2629,14 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
   return (
     <FlatList
       horizontal
-      data={items}
+      data={displayedItems}
       keyExtractor={(item) => item.id}
       renderItem={renderPoster}
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
+      initialScrollIndex={displayedItems.length - 1}
+      getItemLayout={(_data, index) => ({ length: 148, offset: 148 * index, index })}
       initialNumToRender={4}
       maxToRenderPerBatch={4}
       updateCellsBatchingPeriod={50}
@@ -2742,6 +2758,7 @@ function HomeStarsSectionBase({
       .slice(0, 60);
   }, [catalog, catalogById, people]);
   const [selectedId, setSelectedId] = useState('');
+  const displayedPeople = useMemo(() => [...resolvedPeople].reverse(), [resolvedPeople]);
 
   useEffect(() => {
     if (!resolvedPeople.length) return;
@@ -2758,6 +2775,7 @@ function HomeStarsSectionBase({
     const matched = explicitMatched.length ? explicitMatched : personWorksFor(selected, catalog);
     return sortForCatalogFilter(matched, 'latest').slice(0, 18);
   }, [catalog, catalogById, selected]);
+  const displayedWorks = useMemo(() => [...works].reverse(), [works]);
 
   const selectedIdForRender = selected?.id || '';
   const selectPerson = useCallback((personId: string) => {
@@ -2800,11 +2818,13 @@ function HomeStarsSectionBase({
 
       <FlatList
         horizontal
-        style={[styles.starPeopleRail, styles.mediaRailRtl]}
-        data={resolvedPeople}
+        style={styles.starPeopleRail}
+        data={displayedPeople}
         keyExtractor={(person) => person.tmdbId ? `tmdb:${person.tmdbId}` : person.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.starsPeopleList}
+        initialScrollIndex={displayedPeople.length - 1}
+        getItemLayout={(_data, index) => ({ length: 66, offset: 66 * index, index })}
         initialNumToRender={10}
         maxToRenderPerBatch={10}
         updateCellsBatchingPeriod={32}
@@ -2830,12 +2850,15 @@ function HomeStarsSectionBase({
         </View>
 
         <FlatList
+          key={`star-works-${selected.id}`}
           horizontal
-          style={[styles.starWorksRail, styles.mediaRailRtl]}
-          data={works}
+          style={styles.starWorksRail}
+          data={displayedWorks}
           keyExtractor={(item) => item.id}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.starWorksList}
+          initialScrollIndex={displayedWorks.length - 1}
+          getItemLayout={(_data, index) => ({ length: 113, offset: 113 * index, index })}
           initialNumToRender={6}
           maxToRenderPerBatch={6}
           updateCellsBatchingPeriod={35}
@@ -5595,6 +5618,7 @@ function RelatedTitlesSection({
   onOpen: (item: CatalogItem) => void;
 }) {
   const related = useMemo(() => relatedCatalogItems(item, catalog, 5), [item, catalog]);
+  const displayedRelated = useMemo(() => [...related].reverse(), [related]);
   if (!related.length) return null;
 
   return (
@@ -5605,8 +5629,7 @@ function RelatedTitlesSection({
       </View>
       <FlatList
         horizontal
-        style={styles.mediaRailRtl}
-        data={related}
+        data={displayedRelated}
         keyExtractor={(relatedItem) => relatedItem.id}
         renderItem={({ item: relatedItem }) => (
           <Pressable style={styles.relatedTitleCard} onPress={() => onOpen(relatedItem)}>
@@ -5627,6 +5650,8 @@ function RelatedTitlesSection({
           </Pressable>
         )}
         contentContainerStyle={styles.relatedTitlesRail}
+        initialScrollIndex={displayedRelated.length - 1}
+        getItemLayout={(_data, index) => ({ length: 138, offset: 138 * index, index })}
         showsHorizontalScrollIndicator={false}
         initialNumToRender={5}
         maxToRenderPerBatch={5}
@@ -5950,6 +5975,14 @@ function PlayerEpisodesOverlay({
   useEffect(() => setSelectedSeason(activeSeason), [activeEpisodeId, activeSeason, item.id]);
   const visibleSeason = seasons[selectedSeason] ? selectedSeason : seasonNumbers[0];
   const visibleGroups = seasons[visibleSeason] || [];
+  const episodeRailRef = useRef<ScrollView>(null);
+  const episodeRailPositionedRef = useRef('');
+  const episodeRailKey = `${item.id}:${visibleSeason}:${visibleGroups.map((group) => group.id).join("|")}`;
+  const positionEpisodeRail = useCallback(() => {
+    if (!visibleGroups.length || episodeRailPositionedRef.current === episodeRailKey) return;
+    episodeRailPositionedRef.current = episodeRailKey;
+    requestAnimationFrame(() => episodeRailRef.current?.scrollToEnd({ animated: false }));
+  }, [episodeRailKey, visibleGroups.length]);
 
   return (
     <View style={[styles.playerEpisodesFrame, frameStyle]}>
@@ -5977,7 +6010,13 @@ function PlayerEpisodesOverlay({
             })}
           </ScrollView>
         ) : null}
-        <ScrollView horizontal style={styles.mediaRailRtl} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.playerEpisodesRail}>
+        <ScrollView
+          ref={episodeRailRef}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.playerEpisodesRail}
+          onContentSizeChange={positionEpisodeRail}
+        >
           {visibleGroups.map((group) => {
             const active = group.id === activeEpisodeId;
             return (
@@ -6431,6 +6470,14 @@ function VideoPlayerModal({
     ? declaredCreditsStart
     : Math.max(0, duration - 120);
   const movieEndRecommendations = item?.type === 'movie' ? relatedItems.slice(0, 5) : [];
+  const movieRecommendationRailRef = useRef<ScrollView>(null);
+  const movieRecommendationRailPositionedRef = useRef('');
+  const movieRecommendationRailKey = movieEndRecommendations.map((entry) => entry.id).join('|');
+  const positionMovieRecommendationRail = useCallback(() => {
+    if (!movieRecommendationRailKey || movieRecommendationRailPositionedRef.current === movieRecommendationRailKey) return;
+    movieRecommendationRailPositionedRef.current = movieRecommendationRailKey;
+    requestAnimationFrame(() => movieRecommendationRailRef.current?.scrollToEnd({ animated: false }));
+  }, [movieRecommendationRailKey]);
   const showNextEpisodeOverlay = Boolean(
     item?.type === 'series' &&
     nextEpisodeGroup &&
@@ -6607,10 +6654,11 @@ function VideoPlayerModal({
                 </View>
               </View>
               <ScrollView
+                ref={movieRecommendationRailRef}
                 horizontal
-                style={styles.mediaRailRtl}
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.movieEndRecommendationsRail}
+                onContentSizeChange={positionMovieRecommendationRail}
               >
                 {movieEndRecommendations.map((recommendation) => (
                   <Pressable
@@ -9022,7 +9070,7 @@ const styles = StyleSheet.create({
   collectionTitle: { ...rtlText, color: COLORS.text, fontSize: 15, fontWeight: '900' },
   collectionEnglish: { color: COLORS.muted, fontSize: 8.5, marginTop: 2, textAlign: 'right' },
   collectionList: { flexDirection: 'row-reverse', gap: 10, paddingHorizontal: 1, paddingBottom: 3 },
-  collectionCard: { width: 112, alignItems: 'stretch' },
+  collectionCard: { width: 112, alignItems: 'center' },
   collectionPosterWrap: { width: 112, height: 159, overflow: 'hidden', borderRadius: 15, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
   collectionPosterCurrent: { borderColor: COLORS.gold, borderWidth: 1.5 },
   collectionPoster: { width: '100%', height: '100%' },
@@ -9031,11 +9079,10 @@ const styles = StyleSheet.create({
   collectionCurrentBadge: { position: 'absolute', left: 7, right: 7, bottom: 25, minHeight: 23, paddingHorizontal: 6, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(132,18,39,0.92)' },
   collectionCurrentText: { ...rtlText, color: '#fff', fontSize: 7.5, fontWeight: '900', textAlign: 'center' },
   collectionYear: { position: 'absolute', right: 8, bottom: 7, color: '#fff', fontSize: 8.5, fontWeight: '900' },
-  collectionMovieName: { ...rtlText, color: COLORS.text, fontSize: 10, lineHeight: 16, fontWeight: '800', marginTop: 7, minHeight: 31 },
-  mediaRailRtl: { direction: 'rtl' },
-  horizontalCatalogList: { flexGrow: 0, direction: 'rtl' },
+  collectionMovieName: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 10, lineHeight: 16, fontWeight: '800', marginTop: 7, minHeight: 31, textAlign: 'center' },
+  horizontalCatalogList: { flexGrow: 0 },
   horizontalCatalog: { gap: 11, paddingHorizontal: 18, paddingTop: 14 },
-  posterCard: { width: 137, alignItems: 'flex-end' },
+  posterCard: { width: 137, alignItems: 'center' },
   posterCardPressed: { opacity: 0.86, transform: [{ scale: 0.985 }] },
   posterImageWrap: { width: 137, height: 194, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', backgroundColor: COLORS.surface },
   posterImage: { width: '100%', height: '100%' },
