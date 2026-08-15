@@ -74,13 +74,11 @@ app = replaceOnce(
 await write('App.tsx', app);
 
 let oldTest = await read('scripts/test-home-detail-render-v2.mjs');
-oldTest = oldTest.replace(
-  `const eagerRows = useMemo(() => rows.slice(0, 4), [rows]);`,
-  `const populatedRows = useMemo(() => rows.filter((row) => row.items.length > 0), [rows]);\n  const eagerRows = useMemo(() => populatedRows.slice(0, 4), [populatedRows]);`,
-);
-oldTest = oldTest.replace(
-  `const deferredRows = useMemo(() => rows.slice(4), [rows]);`,
-  `const deferredRows = useMemo(() => populatedRows.slice(4), [populatedRows]);`,
+oldTest = replaceOnce(
+  oldTest,
+  `assert(home.includes('const eagerRows = useMemo(() => rows.slice(0, 4), [rows]);'), 'Home first rails are not eager');\nassert(home.includes('const deferredRows = useMemo(() => rows.slice(4), [rows]);'), 'Home deferred rows missing');`,
+  `assert(home.includes('const populatedRows = useMemo(() => rows.filter((row) => row.items.length > 0), [rows]);'), 'Home populated-row projection missing');\nassert(home.includes('const eagerRows = useMemo(() => populatedRows.slice(0, 4), [populatedRows]);'), 'Home first populated rails are not eager');\nassert(home.includes('const deferredRows = useMemo(() => populatedRows.slice(4), [populatedRows]);'), 'Home deferred populated rows missing');`,
+  'Home eager/deferred regression expectations',
 );
 await write('scripts/test-home-detail-render-v2.mjs', oldTest);
 
