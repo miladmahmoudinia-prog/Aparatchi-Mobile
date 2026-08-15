@@ -8,9 +8,9 @@
 - Branch: `main`
 
 ## checkpoint — 2026-08-15
-- آخرین commit عملکردی Mobile: `f373c76ac02a7649b4a1b8d50dd56a8200477288` — `fix: render Home and hydrated media immediately [skip ci]`
+- آخرین commit عملکردی Mobile: `6955c564557907828714df2152262c7afb6ce965` — `fix: speed episode and detail interactions [skip ci]`
 - Content HEAD هنگام checkpoint: `1091d37355a40306444272320e1fe2d42352d09d` — `chore: advance oldest-year archive completion`
-- Workflow تأیید fix: `Fix Home and detail render v2`, run `31900029245`, attempt 5؛ TypeScript و تمام regression testهای همان workflow سبز شدند و فقط بعد از سبزشدن commit بالا ساخته شد.
+- Workflow تأیید fix جدید: `Fix runtime latency v3`, run `31901587824`؛ TypeScript و تمام regression testها سبز شدند و فقط بعد از سبزشدن commit عملکردی ساخته شد.
 - APK توسط ChatGPT ساخته نشد.
 
 ---
@@ -29,6 +29,56 @@
 11. بعد از milestone واقعی همین فایل به‌روزرسانی شود.
 12. هیچ اصلاحی «حل‌شده» اعلام نشود تا typecheck/testهای مرتبط سبز نشده باشند.
 13. پاسخ‌های پروژه کوتاه نگه داشته شوند تا گفتگو زود به سقف طول نرسد.
+
+---
+
+# milestone Episode + Detail latency — 2026-08-15
+
+## گزارش واقعی دستگاه
+- کاور قسمت‌های سریال دیر ظاهر می‌شد و لمس قسمت/پخش با تأخیر واکنش می‌داد.
+- کارت «قسمت بعدی» در portrait پایین کل صفحه می‌آمد، نه روی خود video frame.
+- بخش پایین Detail مدت زیادی روی «در حال آماده‌کردن جزئیات…» می‌ماند.
+- titleهایی مثل «ویلای من 1» باعث نمایش تکراری «قسمت ۱ - ویلای من 1» می‌شدند.
+
+## ریشه و اصلاح
+commit عملکردی: `6955c564557907828714df2152262c7afb6ce965`
+
+### Episode artwork / interaction
+- تولید thumbnail روی خود گوشی با `createVideoPlayer/generateThumbnailsAsync` از mount کارت‌های قسمت حذف شد؛ این کار برای هر کارت media decoder می‌ساخت و صف سنگین ایجاد می‌کرد.
+- کارت قسمت فوراً artwork موجود و cache‌شدهٔ خود عنوان را paint می‌کند و فقط اگر exact server episode frame موجود باشد آن را با `expo-image` و `memory-disk` روی fallback قرار می‌دهد.
+- در نتیجه mount/scroll/tap قسمت‌ها دیگر منتظر thumbnail extraction نیست.
+
+### Next Episode
+- overlay از `absoluteFillObject` کل صفحه جدا شد و با `frameRect` دقیقاً داخل video frame قرار می‌گیرد.
+- countdown پانزده‌ثانیه‌ای، auto-play و fallback دو دقیقه‌ای دست‌نخورده‌اند.
+
+### Detail hydration latency
+- `catalog-stable` Raw و CDN دیگر sequential خوانده نمی‌شوند؛ هر دو هم‌زمان شروع می‌شوند، Raw فقط یک grace کوتاه و bounded دارد و سپس اولین pointer معتبر پذیرفته می‌شود.
+- cache-buster و validation pointer حفظ شدند تا stale media link برنگردد.
+- تا زمان media hydration، summary معتبر مثل genre/overview فوراً دیده می‌شود و loader کوچک فقط برای «پخش و قسمت‌ها» باقی می‌ماند؛ media ناقص همچنان به‌عنوان detail کامل نمایش داده نمی‌شود.
+
+### Episode title cleanup
+- بعد از حذف نام سریال از subtitle، bare episode number/ordinal هم boilerplate شناخته می‌شود؛ بنابراین «ویلای من 1» یا مشابه آن دوباره به عنوان اسم مستقل قسمت نمایش داده نمی‌شود.
+- title واقعی و متمایز قسمت همچنان نمایش داده می‌شود.
+
+## تأیید سبز
+Workflow `Fix runtime latency v3`, run `31901587824` همه مراحل را سبز کرد:
+- `npm run typecheck`
+- regression مستقیم چهار مورد بالا
+- Home/detail regression قبلی
+- Home performance
+- operator playback
+- metadata/cast
+- startup
+- poster stability
+- RTL media rails
+- neutral foreign media
+- movie end recommendations
+- next episode overlay
+- detail related titles
+- locked controls
+- episode artwork performance
+- commit عملکردی فقط بعد از سبزشدن همهٔ مراحل انجام شد.
 
 ---
 
@@ -88,6 +138,7 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 - navigation قبل از detail hydration؛ preload سنگین روی `onPressIn` برنگردد.
 - `categoryKeys` fast path، compact `peopleWorks`، Stars lazy و Home bounded حفظ شوند.
 - full catalog scan، bulk prefetch و request flood برنگردد.
+- episode cards نباید هنگام mount ویدئو decoder/thumbnail extraction راه بیندازند.
 
 ## Startup
 - bundled/local catalog در cold start موجود است و remote بعداً refresh می‌کند.
@@ -103,7 +154,7 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 
 ## Images / Player
 - `expo-image` memory+disk cache، proxy/fallback و بدون bulk prefetch حفظ شود.
-- Next Episode countdown پانزده‌ثانیه‌ای حفظ شود.
+- Next Episode countdown پانزده‌ثانیه‌ای و frame-relative overlay حفظ شود.
 - Player controls/fullscreen/lock/mute/volume/quality و smooth transition regression نکنند.
 
 ## دوبله و Content
@@ -116,6 +167,7 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 # قواعد محتوایی دائمی
 - سریال قدیمی: یک عنوان تا حد ممکن کامل، بعد بعدی؛ airing با قسمت جدید به بالای updatedها.
 - دانلود هر قسمت فقط لینک همان قسمت؛ episode links قاطی نشوند.
+- اسم سریال یا شمارهٔ سادهٔ قسمت به‌عنوان title مستقل episode نمایش داده نشود؛ فقط اسم واقعی و متمایز قسمت نمایش داده شود.
 - sync ساعتی و completion قدیمی ادامه داشته باشد؛ window محدود نباید جلوی تکمیل catalog را بگیرد.
 - پخش آنلاین فقط با media واقعی؛ «ویژه همراه» فقط operator-only واقعی.
 - series header دکمه generic تکراری play/download نداشته باشد؛ کنترل‌ها per-episode.
@@ -126,7 +178,8 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 1. `PROJECT-STATE.md` از Mobile main.
 2. HEAD واقعی Mobile و Content.
 3. اگر Content جلوتر است commitهای جدید audit شوند.
-4. Home/Detail از `f373c76...` ادامه پیدا کند و workaroundهای قبلی برنگردند.
-5. اگر کاربر چند ایراد می‌فرستد فقط جمع شود تا «تموم شد/اصلاح کن».
-6. هیچ موردی تا سبزشدن تست مرتبط «حل‌شده» اعلام نشود.
-7. APK فقط با دستور صریح کاربر.
+4. Episode/Detail latency از `6955c564...` ادامه پیدا کند؛ runtime thumbnail extraction و sequential stable-pointer wait برنگردند.
+5. Home/Detail از `f373c76...` ادامه پیدا کند و workaroundهای قبلی برنگردند.
+6. اگر کاربر چند ایراد می‌فرستد فقط جمع شود تا «تموم شد/اصلاح کن».
+7. هیچ موردی تا سبزشدن تست مرتبط «حل‌شده» اعلام نشود.
+8. APK فقط با دستور صریح کاربر.
