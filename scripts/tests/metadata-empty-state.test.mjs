@@ -18,10 +18,12 @@ test('real cast rail remains available and starts from the right edge with deter
   const start = source.indexOf('function PeopleSection');
   const end = source.indexOf('const HorizontalCatalog', start);
   const block = source.slice(start, end);
-  assert.ok(block.includes('data={people}'));
-  assert.ok(block.includes('styles.mediaRailRtl'));
+  assert.ok(block.includes('const displayedPeople = useMemo(() => [...people].reverse(), [people]);'));
+  assert.ok(block.includes('data={displayedPeople}'));
+  assert.ok(block.includes('initialScrollIndex={displayedPeople.length - 1}'));
+  assert.ok(block.includes('getItemLayout='));
+  assert.ok(block.includes('removeClippedSubviews={false}'));
   assert.ok(!block.includes('scrollToEnd'));
-  assert.ok(!block.includes('.reverse()'));
 });
 
 test('people list is built only from real actor/director catalog records', () => {
