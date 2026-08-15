@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'scripts/patch-smooth-right-start-rails-v1.mjs'
+      - 'scripts/patch-smooth-right-start-rails-v2.mjs'
       - 'scripts/test-smooth-right-start-rails-v1.mjs'
       - '.github/workflows/verify-rtl-media-rails.yml'
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
           cache: npm
 
       - name: Apply native-scroll right-start rail repair
-        run: node scripts/patch-smooth-right-start-rails-v1.mjs
+        run: node scripts/patch-smooth-right-start-rails-v2.mjs
 
       - name: Install dependencies
         run: npm ci
