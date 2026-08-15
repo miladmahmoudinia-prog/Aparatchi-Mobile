@@ -13,14 +13,19 @@ import App from './App';
 let requestDeferredFrameCommit: (() => void) | null = null;
 const runAfterInteractions = InteractionManager.runAfterInteractions.bind(InteractionManager);
 
-(InteractionManager as any).runAfterInteractions = (task?: any) => {
-  if (typeof task !== 'function') return runAfterInteractions(task);
-  return runAfterInteractions(() => {
-    const result = task();
-    requestAnimationFrame(() => requestDeferredFrameCommit?.());
-    return result;
-  });
-};
+try {
+  (InteractionManager as any).runAfterInteractions = (task?: any) => {
+    if (typeof task !== 'function') return runAfterInteractions(task);
+    return runAfterInteractions(() => {
+      const result = task();
+      requestAnimationFrame(() => requestDeferredFrameCommit?.());
+      return result;
+    });
+  };
+} catch {
+  // Keep startup safe on runtimes that expose InteractionManager as immutable.
+  // The original scheduling path remains intact in that case.
+}
 
 function AparatchiRoot() {
   const [, commitDeferredFrame] = useState(0);
