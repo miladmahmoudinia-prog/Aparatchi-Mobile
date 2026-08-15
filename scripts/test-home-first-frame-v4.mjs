@@ -6,7 +6,7 @@ const service = await fs.readFile('src/contentService.ts', 'utf8');
 const config = await fs.readFile('src/config.ts', 'utf8');
 
 const horizontalStart = app.indexOf('const HorizontalCatalog = memo(function HorizontalCatalog');
-const horizontalEnd = app.indexOf('const HomeStarsSection', horizontalStart);
+const horizontalEnd = app.indexOf('const StarPersonButton', horizontalStart);
 assert.ok(horizontalStart >= 0 && horizontalEnd > horizontalStart, 'HorizontalCatalog block exists');
 const horizontal = app.slice(horizontalStart, horizontalEnd);
 
