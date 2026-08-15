@@ -7392,6 +7392,8 @@ function StartupScreen() {
   );
 }
 
+const STARTUP_MIN_VISIBLE_MS = 5000;
+
 function AppContent() {
   const appInsets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<MainTab>('home');
@@ -7431,6 +7433,7 @@ function AppContent() {
   const homeScrollOffsetRef = useRef(0);
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
+  const startupStartedAtRef = useRef(Date.now());
   const startupDismissedRef = useRef(false);
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vpnCheckSequenceRef = useRef(0);
@@ -7495,6 +7498,22 @@ function AppContent() {
 
   const dismissStartup = useCallback(() => {
     if (startupDismissedRef.current) return;
+    const remaining = STARTUP_MIN_VISIBLE_MS - (Date.now() - startupStartedAtRef.current);
+    if (remaining > 0) {
+      if (!startupDismissTimerRef.current) {
+        startupDismissTimerRef.current = setTimeout(() => {
+          startupDismissTimerRef.current = null;
+          if (startupDismissedRef.current) return;
+          startupDismissedRef.current = true;
+          setStartupVisible(false);
+        }, remaining);
+      }
+      return;
+    }
+    if (startupDismissTimerRef.current) {
+      clearTimeout(startupDismissTimerRef.current);
+      startupDismissTimerRef.current = null;
+    }
     startupDismissedRef.current = true;
     setStartupVisible(false);
   }, []);
@@ -7551,9 +7570,13 @@ function AppContent() {
           // the full index downloaded. Paint the small real Home bootstrap first,
           // then replace it with the complete catalog in the same async sequence.
           void (async () => {
+            // Start the complete catalog at the same instant as the lightweight
+            // bootstrap. The bootstrap may paint Home first, but it must never
+            // postpone the full catalog/category refresh.
+            const freshContentPromise = loadContent(false);
             const bootstrapContent = await loadBootstrapContent();
             if (bootstrapContent) applyContent(bootstrapContent);
-            const freshContent = await loadContent(false);
+            const freshContent = await freshContentPromise;
             if (freshContent.source !== 'local') applyContent(freshContent);
           })().catch(() => undefined);
         } else if (initialLoad && firstContent.source !== 'remote') {
@@ -7622,7 +7645,7 @@ function AppContent() {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
     }
-    startupFallbackTimer = setTimeout(dismissStartup, 2000);
+    startupFallbackTimer = setTimeout(dismissStartup, 5000);
 
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()

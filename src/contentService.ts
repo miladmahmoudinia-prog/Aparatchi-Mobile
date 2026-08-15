@@ -1603,11 +1603,14 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
   if (!manifestUrl) return null;
   let lastError: unknown = null;
 
-  for (const candidate of remoteRepositoryUrlCandidates(manifestUrl)) {
+  const manifestCandidates = [...remoteRepositoryUrlCandidates(manifestUrl)].sort((a, b) =>
+    Number(/raw\.githubusercontent\.com/i.test(b)) - Number(/raw\.githubusercontent\.com/i.test(a))
+  );
+  for (const candidate of manifestCandidates) {
     const separator = candidate.includes('?') ? '&' : '?';
     const requestUrl = `${candidate}${separator}_aparatchi_manifest=${Math.floor(Date.now() / 300_000)}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
+    const timeout = setTimeout(() => controller.abort(), 1800);
     try {
       const response = await fetch(requestUrl, {
         headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
@@ -1664,14 +1667,21 @@ const manifestMatchesCachedContent = (
   cached: CatalogPayload,
 ) => {
   const revision = manifest.clientRevision || manifest.revision;
+  // A clientRevision identifies the generated mobile artifact itself. Version
+  // and catalogUpdatedAt describe the source catalog and can remain unchanged
+  // while media/category/client-index fixes are published. Never let those
+  // coarse fields bless an older cached client artifact.
+  if (manifest.clientRevision) {
+    return Boolean(cacheMetadata.manifestRevision === manifest.clientRevision);
+  }
+  if (cacheMetadata.manifestRevision) {
+    return cacheMetadata.manifestRevision === revision;
+  }
   return Boolean(
-    (cacheMetadata.manifestRevision && cacheMetadata.manifestRevision === revision) ||
-    (
-      manifest.catalogVersion &&
-      manifest.catalogUpdatedAt &&
-      cached.version === manifest.catalogVersion &&
-      cached.updatedAt === manifest.catalogUpdatedAt
-    )
+    manifest.catalogVersion &&
+    manifest.catalogUpdatedAt &&
+    cached.version === manifest.catalogVersion &&
+    cached.updatedAt === manifest.catalogUpdatedAt
   );
 };
 

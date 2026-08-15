@@ -14,7 +14,7 @@ const required = [
   'آپاراتچی در حال آماده‌کردن حلقهٔ فیلم است…',
   'const reelSpin = motion.interpolate',
   'const beamOpacity = motion.interpolate',
-  'startupFallbackTimer = setTimeout(dismissStartup, 2000);',
+  'startupFallbackTimer = setTimeout(dismissStartup, 5000);',
   'startupDismissedRef.current = true;\n    setStartupVisible(false);',
 ];
 
@@ -28,8 +28,8 @@ const block = app.slice(start, end);
 if (block.includes('در حال آماده‌کردن پرده نمایش')) throw new Error('Legacy startup copy is still present.');
 if (block.includes('startupLogoMark')) throw new Error('Legacy spinning logo startup is still being rendered.');
 if (!block.includes('reelHoleStyles[hole]')) throw new Error('Projector reel hole styles must use the type-safe style array.');
-if (app.includes('minimumVisibleMs')) throw new Error('A forced minimum startup duration must not be present.');
-if (app.includes('startupStartedAtRef')) throw new Error('The obsolete startup minimum-duration clock is still present.');
+if (!app.includes('const STARTUP_MIN_VISIBLE_MS = 5000;')) throw new Error('Startup must keep the requested five-second warm-up.');
+if (!app.includes('const startupStartedAtRef = useRef(Date.now());')) throw new Error('Startup warm-up clock is missing.');
 if (app.includes('startupFallbackTimer = setTimeout(dismissStartup, 15000);')) throw new Error('The old 15-second emergency fallback is still active.');
 if (app.includes('startupFallbackTimer = setTimeout(dismissStartup, 1200);')) throw new Error('The old 1.2-second emergency fallback is still active.');
 
@@ -37,12 +37,12 @@ const dismissStart = app.indexOf('const dismissStartup = useCallback(() => {');
 const dismissEnd = app.indexOf('\n  }, []);', dismissStart);
 const dismissBlock = app.slice(dismissStart, dismissEnd);
 if (dismissStart < 0 || dismissEnd < 0) throw new Error('Startup dismissal callback is missing.');
-if (dismissBlock.includes('setTimeout(')) throw new Error('Ready Home content must not be delayed by a startup timer.');
-if (!dismissBlock.includes('setStartupVisible(false);')) throw new Error('Ready Home content must dismiss startup immediately.');
+if (!dismissBlock.includes('setTimeout(')) throw new Error('Ready content must respect the five-second warm-up.');
+if (!dismissBlock.includes('STARTUP_MIN_VISIBLE_MS')) throw new Error('Startup dismissal is not tied to the warm-up duration.');
 
 console.log(JSON.stringify({
   startup: 'cinema-projectionist',
-  minimumVisibleMs: 0,
-  emergencyFallbackMs: 2000,
-  dismissesImmediatelyWhenContentReady: true,
+  minimumVisibleMs: 5000,
+  emergencyFallbackMs: 5000,
+  dismissesImmediatelyWhenContentReady: false,
 }, null, 2));
