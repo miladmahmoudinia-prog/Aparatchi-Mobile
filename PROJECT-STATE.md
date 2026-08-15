@@ -8,10 +8,10 @@
 - Branch: `main`
 
 ## checkpoint — 2026-08-15
-- آخرین commit عملکردی Mobile: `a45b6486ae5a3c67d3704079accfd4b7f6eafd86` — `fix: keep deferred detail repaint startup-safe [skip ci]`
-- Content HEAD هنگام این checkpoint: `07db70dd0e2681603a6bc7bc9bbc4c786031793c` — `fix: sync language categories with media`
+- آخرین commit عملکردی Mobile: `344da0b7879a661ee4838845eca54a0f436ead28` — `fix: flush initial and hydrated Android frames [skip ci]`
+- Content HEAD هنگام این checkpoint: `7feeff1dbb49f9c9e6ff6454e1cbaeda72df0b79` — `chore: advance oldest-year archive completion`
 - commit اصلی اصلاح refresh دوبله در Content: `da08e72dbb5428aa7a832ea827b4a00abb2953af` — `fix: periodically recheck newly dubbed media [skip ci]`
-- هیچ Action/Sync/APK به‌صورت دستی توسط ChatGPT اجرا نشد. اما commit بعدی Content یعنی `07db70d...` بدون `[skip ci]` روی push، workflowهای عادی مخزن را خودکار trigger کرد؛ در لحظهٔ این checkpoint، run شماره 219 از `Sync Upera Catalog` هنوز `in_progress` بود. قبل از کار بعدی HEAD Content دوباره خوانده شود.
+- هیچ Action/Sync/APK به‌صورت دستی توسط ChatGPT اجرا نشد. Content در این فاصله با workflowهای خودکار جلو رفته است؛ قبل از کار بعدی HEAD Content دوباره خوانده شود.
 
 ---
 
@@ -70,9 +70,10 @@ Audit نشان داد `loadCatalogItemDetail()` آبجکت جدید برمی‌�
 
 اصلاح:
 - `382d2e80af12542ae27f934789d7e3915a4c082a`
-- hardening: `a45b6486ae5a3c67d3704079accfd4b7f6eafd86`
+- hardening اولیه: `a45b6486ae5a3c67d3704079accfd4b7f6eafd86`
+- hardening نهایی: `344da0b7879a661ee4838845eca54a0f436ead28`
 - فایل: `index.ts`
-پس از callback تابعی `InteractionManager.runAfterInteractions` یک root frame commit در frame بعدی درخواست می‌شود تا state تازهٔ Modal بدون نیاز به scroll paint شود. App remount نمی‌شود؛ lazy detail، Player، RTL و image loading دست‌نخورده‌اند. override با `try/catch` محافظت شده است.
+پس از callbackهای `InteractionManager.runAfterInteractions` یک root frame commit درخواست می‌شود تا state تازهٔ Modal بدون نیاز به scroll paint شود. نسخهٔ نهایی علاوه بر callback تابعی، taskهای `gen` را هم پوشش می‌دهد و recovery را به‌شکل bounded/coalesced انجام می‌دهد. App remount نمی‌شود؛ lazy detail، Player، RTL و image loading دست‌نخورده‌اند.
 این مورد device-test نشده و برای تست واقعی APK جدید لازم است.
 
 ## 2) دوبله‌ای که بعداً اضافه می‌شود ممکن بود دوبله شناخته نشود — Content
@@ -93,6 +94,29 @@ commit تکمیلی فعلی Content:
 ## 3) ویژه اینترنت همراه / Open With — سورس از قبل درست بود، APK نصب‌شده قدیمی است
 Mobile source در `01a20b3cdff6608ee1ffd351036ee7c2121d6734` (`fix: pin operator custom tab activity`) مسیر Android را به browser package/component واقعی و Custom Tabs session مشخص pin می‌کند و operator playback به generic `Linking`/`WebBrowser` chooser fallback ندارد.
 آخرین APK موفق auditشده روی HEAD `25366c3e1c581c36be2612e5e5e9b0674eddbb81` ساخته شده بود، یعنی قبل از این native fix. پس native source دوباره دستکاری نشد و APK جدید برای مشاهده/تست fix لازم است.
+
+---
+
+# milestone Home + Detail repaint hardening — 2026-08-15
+
+علائم گزارش‌شده در APK نصب‌شده:
+- Home در شروع می‌توانست ظاهراً تا آماده‌شدن IMDb ناقص بماند و ردیف‌های کاتالوگ بعداً ناگهان paint شوند.
+- دکمه‌های پخش/دانلود بعضی فیلم‌ها بعداً یا پس از حرکت صفحه ظاهر می‌شدند.
+- قسمت‌های سریال تا scroll بالا/پایین کامل دیده نمی‌شدند.
+
+Audit روی HEAD نشان داد:
+- کاتالوگ Home از `visibleLoadedContent(getBundledContent())` از همان cold start در state وجود دارد؛ IMDb شرط آماده‌شدن catalog نیست.
+- cold-start catalog fix قبلی (`1366f283...`) حفظ شده و Content/IMDb دوباره به هم گره زده نشدند.
+- علامت «بعد از scroll ناگهان ظاهر می‌شود» با همان Android deferred-frame/repaint issue سازگار است، نه فقدان واقعی لینک/قسمت.
+
+اصلاح تکمیلی:
+- `344da0b7879a661ee4838845eca54a0f436ead28` — `fix: flush initial and hydrated Android frames [skip ci]`
+- فقط `index.ts` تغییر کرد.
+- روی mount یک recovery burst محدود برای paint اولین batchهای Home اجرا می‌شود تا نمایش catalog به تغییر state دیرتر IMDb/remote وابسته نباشد.
+- بعد از `InteractionManager` نیز next-frame commit + دو follow-up محدود در 120ms و 1100ms انجام می‌شود تا async detail hydration/episode reveal بدون scroll paint شود.
+- burstها coalesced هستند؛ interval دائمی، remount، prefetch یا full-catalog scan اضافه نشده است.
+- Content repo، Player، RTL، image fallback و منطق لینک‌ها دست‌نخورده ماندند.
+- برای تأیید واقعی این اصلاحات روی دستگاه، APK تازه از Mobile HEAD لازم است؛ تا دستور صریح کاربر APK ساخته نشود.
 
 ---
 
