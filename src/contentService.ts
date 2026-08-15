@@ -1688,7 +1688,14 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
     if (!forceRemote && cacheMetadata.lastModified) requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
 
     const catalogRevision = manifest?.clientRevision || manifest?.revision || '';
-    let response: Awaited<ReturnType<typeof fetch>> | null = null;
+    type CatalogCandidateResult = {
+      response: Awaited<ReturnType<typeof fetch>>;
+      rawText: string;
+      parsed: CatalogPayload;
+      matchesManifest: boolean;
+    };
+    let selectedCatalog: CatalogCandidateResult | null = null;
+    let staleFallbackCatalog: CatalogCandidateResult | null = null;
     let lastCatalogError: unknown = null;
 
     for (const candidate of remoteRepositoryUrlCandidates(remoteUrl)) {
@@ -1705,16 +1712,53 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
           headers: requestHeaders,
           signal: controller.signal,
         });
-        if (nextResponse.status === 304 && cached) {
-          response = nextResponse;
-          break;
+
+        if (nextResponse.status === 304) {
+          if (cached) return { ...cached, source: 'remote' };
+          cacheMetadata = {};
+          if (REMOTE_CACHE_META_URI) {
+            void FileSystem.writeAsStringAsync(REMOTE_CACHE_META_URI, '{}').catch(() => undefined);
+          }
+          lastCatalogError = new Error('Remote catalog returned 304 without a local cache');
+          continue;
         }
+
         if (!nextResponse.ok) {
           lastCatalogError = new Error(`Catalog HTTP ${nextResponse.status} from ${candidate}`);
           continue;
         }
-        response = nextResponse;
-        break;
+
+        const nextRawText = await nextResponse.text();
+        let nextRawPayload: unknown;
+        try {
+          nextRawPayload = JSON.parse(nextRawText);
+        } catch (error) {
+          lastCatalogError = error;
+          continue;
+        }
+
+        const nextParsed = parsePayload(nextRawPayload);
+        if (!nextParsed || !nextParsed.items.length) {
+          lastCatalogError = new Error(`Invalid/empty catalog payload from ${candidate}`);
+          continue;
+        }
+
+        const matchesManifest =
+          !manifest?.catalogUpdatedAt || nextParsed.updatedAt === manifest.catalogUpdatedAt;
+        const candidateResult: CatalogCandidateResult = {
+          response: nextResponse,
+          rawText: nextRawText,
+          parsed: nextParsed,
+          matchesManifest,
+        };
+
+        if (matchesManifest) {
+          selectedCatalog = candidateResult;
+          break;
+        }
+
+        if (!staleFallbackCatalog) staleFallbackCatalog = candidateResult;
+        lastCatalogError = new Error(`Catalog and manifest are temporarily out of sync at ${candidate}`);
       } catch (error) {
         lastCatalogError = error;
       } finally {
@@ -1722,30 +1766,20 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
       }
     }
 
-    if (!response) {
+    const acceptedCatalog = selectedCatalog || staleFallbackCatalog;
+    if (!acceptedCatalog) {
       throw lastCatalogError instanceof Error
         ? lastCatalogError
         : new Error('Catalog is unavailable from all mirrors');
     }
-    if (response.status === 304) {
-      const cached = await readCachedContent();
-      if (cached) return { ...cached, source: 'remote' };
-      cacheMetadata = {};
-      if (REMOTE_CACHE_META_URI) {
-        void FileSystem.writeAsStringAsync(REMOTE_CACHE_META_URI, '{}').catch(() => undefined);
-      }
-      throw new Error('Remote catalog returned 304 without a local cache');
-    }
-    // Keep the original response text for the on-device cache. Re-stringifying
-    // an 8+ MB object on the JS thread caused a second avoidable UI pause.
-    const rawText = await response.text();
-    const rawPayload = JSON.parse(rawText);
-    const parsed = parsePayload(rawPayload);
-    if (!parsed) throw new Error('Invalid catalog payload');
-    if (manifest?.catalogUpdatedAt && parsed.updatedAt !== manifest.catalogUpdatedAt) {
-      throw new Error('Catalog and manifest are temporarily out of sync');
-    }
 
+    const {
+      response,
+      rawText,
+      parsed,
+      matchesManifest: catalogMatchesManifest,
+    } = acceptedCatalog;
+    const acceptedManifest = catalogMatchesManifest ? manifest : null;
     memoryContent = parsed;
     const responseEtag = response.headers.get('etag') || cacheMetadata.etag;
     const responseLastModified =
@@ -1753,16 +1787,18 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
     cacheMetadata = {
       ...(responseEtag ? { etag: responseEtag } : {}),
       ...(responseLastModified ? { lastModified: responseLastModified } : {}),
-      ...(manifest?.revision ? { manifestRevision: manifest.clientRevision || manifest.revision } : {}),
-      ...(manifest?.catalogVersion ? { catalogVersion: manifest.catalogVersion } : {}),
-      ...(manifest?.catalogUpdatedAt ? { catalogUpdatedAt: manifest.catalogUpdatedAt } : {}),
+      ...(acceptedManifest?.revision
+        ? { manifestRevision: acceptedManifest.clientRevision || acceptedManifest.revision }
+        : {}),
+      ...(acceptedManifest?.catalogVersion ? { catalogVersion: acceptedManifest.catalogVersion } : {}),
+      ...(acceptedManifest?.catalogUpdatedAt ? { catalogUpdatedAt: acceptedManifest.catalogUpdatedAt } : {}),
     };
     void writeCachedContent(rawText, cacheMetadata);
     return { ...parsed, source: 'remote' };
   } catch {
     if (cached) return { ...cached, source: 'cache' };
     return {
-      ...unavailableLocalPayload(),
+      ...normalizedLocalPayload(),
       source: 'local',
     };
   }
