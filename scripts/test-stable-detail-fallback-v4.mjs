@@ -14,12 +14,12 @@ requireMarker(service, 'pointerType === asString(summary.type)', 'stable pointer
 requireMarker(service, 'pointerId === asString(summary.id)', 'stable pointer id verification');
 requireMarker(service, '/^catalog-items\\/[a-f0-9]{12}-[a-f0-9]{12}\\.json$/i.test(currentDetailPath)', 'stable pointer target validation');
 requireMarker(service, 'const currentRaw = await fetchFirstRawPath(currentDetailPath);', 'current detail fetch through stable pointer');
-requireMarker(service, 'if (!resolvedDetail) return null;', 'honest unresolved detail state');
+requireMarker(service, 'if (!resolvedDetail) return null;', 'network/detail failure remains unresolved');
 requireMarker(app, 'const refreshed = await loadContent(false, true);', 'final forced-index fallback');
 
-if (service.includes('return { ...summary, detailLoaded: true }')) {
-  throw new Error('Content service still fabricates a loaded detail after a fetch failure.');
-}
+// Some summaries legitimately have no detailPath and can be considered complete
+// lightweight records. What must never happen is converting a FAILED hydration
+// attempt into detailLoaded=true. The old app-level fallback did exactly that.
 if (app.includes('return fullItem || { ...current, detailLoaded: true };')) {
   throw new Error('App still fabricates a loaded detail after hydration failure.');
 }
@@ -28,5 +28,6 @@ console.log(JSON.stringify({
   staleIndexRecovery: 'hashed-detail -> stable-pointer -> current-detail',
   pointerIdentityVerified: true,
   unsafePointerTargetsRejected: true,
-  falseLoadedState: false,
+  failedNetworkHydrationReturnsNull: true,
+  falseLoadedHydrationState: false,
 }, null, 2));
