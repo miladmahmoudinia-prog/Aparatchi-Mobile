@@ -39,7 +39,21 @@ let detail = app.slice(detailStart, detailEnd);
 const detailStateStart = detail.indexOf('  const [detailBodyReady, setDetailBodyReady] = useState(false);');
 const detailGuard = detail.indexOf('  if (!item) return null;', detailStateStart);
 if (detailStateStart < 0 || detailGuard < 0) throw new Error('Detail ready state/effect block not found');
-const detailReplacement = `  // catalog-index is only a summary. Never render that summary as if its media\n  // were complete. As soon as the selected detail object is hydrated React\n  // renders the real actions/episodes directly; no InteractionManager/scroll\n  // event is allowed to gate their visibility.\n  const detailBodyReady = Boolean(item && (!item.detailPath || item.detailLoaded === true));\n  const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);\n  const [downloadInitialGroup, setDownloadInitialGroup] = useState<string | null>(null);\n\n  useEffect(() => {\n    setDownloadSheetOpen(false);\n    setDownloadInitialGroup(null);\n  }, [item?.id, visible]);\n`;
+const detailReplacement = [
+  '  // catalog-index is only a summary. Never render that summary as if its media',
+  '  // were complete. As soon as the selected detail object is hydrated React',
+  '  // renders the real actions/episodes directly; no InteractionManager/scroll',
+  '  // event is allowed to gate their visibility.',
+  '  const detailBodyReady = Boolean(item && (!item.detailPath || item.detailLoaded === true));',
+  '  const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);',
+  '  const [downloadInitialGroup, setDownloadInitialGroup] = useState<string | null>(null);',
+  '',
+  '  useEffect(() => {',
+  '    setDownloadSheetOpen(false);',
+  '    setDownloadInitialGroup(null);',
+  '  }, [item?.id, visible]);',
+  '',
+].join('\n');
 detail = detail.slice(0, detailStateStart) + detailReplacement + detail.slice(detailGuard);
 app = app.slice(0, detailStart) + detail + app.slice(detailEnd);
 await write('App.tsx', app);
@@ -56,7 +70,60 @@ service = replaceOnce(
 const exportMarker = 'export async function loadCatalogItemDetail(summary: CatalogItem): Promise<CatalogItem | null> {';
 const exportIndex = service.indexOf(exportMarker);
 if (exportIndex < 0) throw new Error('loadCatalogItemDetail export not found');
-const stableHelper = `const resolveStableDetailPath = async (summary: CatalogItem, fallbackPath: string) => {\n  const identityMatch = fallbackPath.match(/(?:^|\\/)([a-f0-9]{12})-[a-f0-9]{12}\\.json$/i);\n  if (!identityMatch) return fallbackPath;\n\n  const identity = identityMatch[1].toLowerCase();\n  const cached = stableDetailPointerCache.get(identity);\n  if (cached && cached.expiresAt > Date.now()) return cached.path;\n\n  const stablePath = \\`catalog-stable/\\${identity}.json\\`;\n  const stableUrl = detailUrlFor(stablePath);\n  if (!stableUrl) return fallbackPath;\n\n  // catalog-stable is mutable. Prefer GitHub Raw (source of truth) over the CDN\n  // for this tiny pointer, then fall back to the CDN on networks where Raw is\n  // unavailable. Immutable detail shards keep the faster existing CDN path.\n  const candidates = remoteRepositoryUrlCandidates(stableUrl).sort((a, b) =>\n    Number(/raw\\.githubusercontent\\.com/i.test(b)) - Number(/raw\\.githubusercontent\\.com/i.test(a)),\n  );\n\n  for (const candidate of candidates) {\n    const controller = new AbortController();\n    const timeout = setTimeout(() => controller.abort(), 2800);\n    try {\n      const separator = candidate.includes('?') ? '&' : '?';\n      const response = await fetch(\n        \\`\\${candidate}\\${separator}_aparatchi_pointer=\\${Date.now()}\\`,\n        {\n          headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },\n          signal: controller.signal,\n        },\n      );\n      if (!response.ok) continue;\n      const pointer = await response.json() as Record<string, unknown>;\n      const currentPath = asString(pointer.detailPath);\n      const matchesSummary =\n        asString(pointer.type) === asString(summary.type) &&\n        asString(pointer.id) === asString(summary.id);\n      const pathIsSafe = /^catalog-items\\/[a-f0-9]{12}-[a-f0-9]{12}\\.json$/i.test(currentPath);\n      if (!matchesSummary || !pathIsSafe) continue;\n      stableDetailPointerCache.set(identity, { path: currentPath, expiresAt: Date.now() + 5 * 60_000 });\n      return currentPath;\n    } catch {\n      // Try the next public mirror.\n    } finally {\n      clearTimeout(timeout);\n    }\n  }\n\n  return fallbackPath;\n};\n\n`;
+const stableHelper = [
+  'const resolveStableDetailPath = async (summary: CatalogItem, fallbackPath: string) => {',
+  '  const identityMatch = fallbackPath.match(/(?:^|\\/)([a-f0-9]{12})-[a-f0-9]{12}\\.json$/i);',
+  '  if (!identityMatch) return fallbackPath;',
+  '',
+  '  const identity = identityMatch[1].toLowerCase();',
+  '  const cached = stableDetailPointerCache.get(identity);',
+  '  if (cached && cached.expiresAt > Date.now()) return cached.path;',
+  '',
+  '  const stablePath = `catalog-stable/${identity}.json`;',
+  '  const stableUrl = detailUrlFor(stablePath);',
+  '  if (!stableUrl) return fallbackPath;',
+  '',
+  '  // catalog-stable is mutable. Prefer GitHub Raw (source of truth) over the CDN',
+  '  // for this tiny pointer, then fall back to the CDN on networks where Raw is',
+  '  // unavailable. Immutable detail shards keep the faster existing CDN path.',
+  '  const candidates = remoteRepositoryUrlCandidates(stableUrl).sort((a, b) =>',
+  "    Number(/raw\\.githubusercontent\\.com/i.test(b)) - Number(/raw\\.githubusercontent\\.com/i.test(a)),",
+  '  );',
+  '',
+  '  for (const candidate of candidates) {',
+  '    const controller = new AbortController();',
+  '    const timeout = setTimeout(() => controller.abort(), 2800);',
+  '    try {',
+  "      const separator = candidate.includes('?') ? '&' : '?';",
+  '      const response = await fetch(',
+  '        `${candidate}${separator}_aparatchi_pointer=${Date.now()}`,',
+  '        {',
+  "          headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },",
+  '          signal: controller.signal,',
+  '        },',
+  '      );',
+  '      if (!response.ok) continue;',
+  '      const pointer = await response.json() as Record<string, unknown>;',
+  '      const currentPath = asString(pointer.detailPath);',
+  '      const matchesSummary =',
+  '        asString(pointer.type) === asString(summary.type) &&',
+  '        asString(pointer.id) === asString(summary.id);',
+  '      const pathIsSafe = /^catalog-items\\/[a-f0-9]{12}-[a-f0-9]{12}\\.json$/i.test(currentPath);',
+  '      if (!matchesSummary || !pathIsSafe) continue;',
+  '      stableDetailPointerCache.set(identity, { path: currentPath, expiresAt: Date.now() + 5 * 60_000 });',
+  '      return currentPath;',
+  '    } catch {',
+  '      // Try the next public mirror.',
+  '    } finally {',
+  '      clearTimeout(timeout);',
+  '    }',
+  '  }',
+  '',
+  '  return fallbackPath;',
+  '};',
+  '',
+  '',
+].join('\n');
 service = service.slice(0, exportIndex) + stableHelper + service.slice(exportIndex);
 
 service = replaceOnce(
@@ -79,6 +146,6 @@ service = service.replace(
 );
 await write('src/contentService.ts', service);
 
-await write('index.ts', `import { registerRootComponent } from 'expo';\n\nimport App from './App';\n\nregisterRootComponent(App);\n`);
+await write('index.ts', "import { registerRootComponent } from 'expo';\n\nimport App from './App';\n\nregisterRootComponent(App);\n");
 
 console.log('Applied direct Home rendering + pointer-first detail hydration repair.');
