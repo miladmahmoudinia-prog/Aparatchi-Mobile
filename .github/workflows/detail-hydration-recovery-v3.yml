@@ -1,11 +1,13 @@
-name: Detail hydration recovery v3
+name: Detail hydration recovery v4
 
 on:
   push:
     branches: [main]
     paths:
       - 'scripts/patch-detail-hydration-recovery-v3.mjs'
+      - 'scripts/patch-stable-detail-fallback-v4.mjs'
       - 'scripts/test-detail-hydration-recovery-v3.mjs'
+      - 'scripts/test-stable-detail-fallback-v4.mjs'
       - 'scripts/test-real-content-detail-smoke-v3.mjs'
       - '.github/workflows/detail-hydration-recovery-v3.yml'
   workflow_dispatch:
@@ -14,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: aparatchi-mobile-detail-hydration-v3
+  group: aparatchi-mobile-detail-hydration-v4
   cancel-in-progress: true
 
 jobs:
@@ -33,13 +35,17 @@ jobs:
           node-version: '22'
           cache: npm
       - name: Patch detail hydration recovery
-        run: node scripts/patch-detail-hydration-recovery-v3.mjs
+        run: |
+          node scripts/patch-detail-hydration-recovery-v3.mjs
+          node scripts/patch-stable-detail-fallback-v4.mjs
       - name: Install dependencies
         run: npm ci
       - name: Type-check application
         run: npm run typecheck
       - name: Verify hydration recovery contract
-        run: node scripts/test-detail-hydration-recovery-v3.mjs
+        run: |
+          node scripts/test-detail-hydration-recovery-v3.mjs
+          node scripts/test-stable-detail-fallback-v4.mjs
       - name: Verify real current content samples
         run: node scripts/test-real-content-detail-smoke-v3.mjs
       - name: Verify performance regression
@@ -55,6 +61,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add App.tsx src/contentService.ts
-          git commit -m "fix: recover stale detail shards and media links"
+          git commit -m "fix: recover stale detail shards through stable pointers"
           git pull --rebase origin main
           git push origin HEAD:main
