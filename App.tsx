@@ -5322,6 +5322,7 @@ const episodeShowcaseLabel = (item: CatalogItem, group: DownloadSection, quran: 
     `^(?:(?:قسمت|اپیزود)\\s*${ordinal}|(?:episode|ep|part)\\s*[-:#]*\\s*\\d+)$`,
     'i',
   );
+  const bareEpisodeNumberPattern = new RegExp(`^(?:${ordinal}|[۰-۹]+|[٠-٩]+)$`, 'i');
   const pureEpisode = episodeOnlyPattern.test(normalized);
   const seasonEpisodeBoilerplate = /^(?:season|فصل)\s*\d+.*(?:episode|ep|قسمت|اپیزود)\s*\d+\s*$/i.test(normalized);
   const seriesNameBoilerplate = seriesNames.some((name) => {
@@ -5330,7 +5331,9 @@ const episodeShowcaseLabel = (item: CatalogItem, group: DownloadSection, quran: 
     const prefix = new RegExp(`^${escaped}\\s+`, 'i');
     const suffix = new RegExp(`\\s+${escaped}$`, 'i');
     const withoutName = normalized.replace(prefix, '').replace(suffix, '').trim();
-    return withoutName !== normalized && episodeOnlyPattern.test(withoutName);
+    return withoutName !== normalized && (
+      episodeOnlyPattern.test(withoutName) || bareEpisodeNumberPattern.test(withoutName)
+    );
   });
 
   return pureEpisode || seasonEpisodeBoilerplate || seriesNameBoilerplate
@@ -5338,79 +5341,40 @@ const episodeShowcaseLabel = (item: CatalogItem, group: DownloadSection, quran: 
     : `${noun} ${number} - ${raw}`;
 };
 
-const exactEpisodeThumbnailCache = new Map<string, any>();
-const exactEpisodeThumbnailFailures = new Set<string>();
-let exactEpisodeThumbnailQueue: Promise<void> = Promise.resolve();
-
 function ExactEpisodeArtwork({
   item,
-  group,
   artwork,
 }: {
   item: CatalogItem;
-  group: DownloadSection;
   artwork: string;
 }) {
-  // The server-generated frame wins when available. If Upera blocks GitHub's
-  // ffmpeg worker, derive the frame on the Android device from this exact
-  // episode's already-valid playback URL. One native job at a time keeps the JS
-  // thread and bottom navigation responsive while the result is cached in RAM.
-  const exactSource = useMemo(() => {
-    const versions = playableVersionsFor(item, group);
-    return versions[0]?.defaultSource?.url || '';
-  }, [group, item]);
-  const cacheKey = exactSource ? `${item.id}:${group.id}:${exactSource}` : '';
-  const [generated, setGenerated] = useState<any>(() =>
-    cacheKey ? exactEpisodeThumbnailCache.get(cacheKey) || null : null,
+  // Episode cards are navigation controls, so mounting them must never start
+  // video decoders or thumbnail extraction. Paint artwork already seen on the
+  // detail page immediately, then layer the exact server frame when available.
+  const fallbackArtwork = item.backdrop || item.poster || item.posterFallback || '';
+  const exactArtwork = artwork ? optimizedImageUrl(artwork, 'backdrop') : '';
+
+  return (
+    <View style={styles.episodeShowcaseArtwork}>
+      <CatalogArtwork
+        primary={fallbackArtwork}
+        fallback={item.posterFallback || item.poster || item.backdrop}
+        localFallback={localArtworkForItem(item)}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        imageKind="backdrop"
+      />
+      {exactArtwork ? (
+        <Image
+          source={{ uri: exactArtwork }}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={120}
+        />
+      ) : null}
+    </View>
   );
-
-  useEffect(() => {
-    if (!cacheKey) {
-      setGenerated(null);
-      return undefined;
-    }
-    const cached = exactEpisodeThumbnailCache.get(cacheKey);
-    setGenerated(cached || null);
-    if (artwork || cached || exactEpisodeThumbnailFailures.has(cacheKey) || !isDirectMediaUrl(exactSource)) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    exactEpisodeThumbnailQueue = exactEpisodeThumbnailQueue
-      .catch(() => undefined)
-      .then(async () => {
-        if (cancelled || exactEpisodeThumbnailCache.has(cacheKey) || exactEpisodeThumbnailFailures.has(cacheKey)) return;
-        const player = createVideoPlayer(exactSource);
-        try {
-          const episodeNumber = Math.max(1, Number(group.episodeNumber || 1));
-          const requestedTime = 45 + ((episodeNumber * 37) % 150);
-          const thumbnails = await player.generateThumbnailsAsync([requestedTime], { maxWidth: 640 });
-          const thumbnail = thumbnails[0];
-          if (!thumbnail) {
-            exactEpisodeThumbnailFailures.add(cacheKey);
-            return;
-          }
-          exactEpisodeThumbnailCache.set(cacheKey, thumbnail);
-          if (!cancelled) setGenerated(thumbnail);
-        } catch {
-          exactEpisodeThumbnailFailures.add(cacheKey);
-        } finally {
-          player.release();
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [artwork, cacheKey, exactSource, group.episodeNumber]);
-
-  if (artwork) {
-    return <CatalogArtwork primary={artwork} style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />;
-  }
-  if (generated) {
-    return <Image source={generated as any} style={styles.episodeShowcaseArtwork} contentFit="cover" transition={0} />;
-  }
-  return <CatalogArtwork primary="" style={styles.episodeShowcaseArtwork} contentFit="cover" imageKind="backdrop" />;
 }
 
 function SeriesEpisodeShowcase({
@@ -5479,7 +5443,7 @@ function SeriesEpisodeShowcase({
                 onPress={() => canPlay ? onPlay(group) : operatorPlay ? onOpenOperator(operatorPlay) : onOpenDownloads(group)}
                 style={styles.episodeShowcaseArtworkWrap}
               >
-                <ExactEpisodeArtwork item={item} group={group} artwork={artwork} />
+                <ExactEpisodeArtwork item={item} artwork={artwork} />
                 <LinearGradient colors={['transparent', 'rgba(4,6,9,0.92)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.episodeShowcasePlay}>
                   <Ionicons name={canPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
@@ -5790,10 +5754,18 @@ function DetailModal({
 
           <View style={styles.detailBody}>
             {!detailBodyReady ? (
-              <View style={styles.detailPreparing}>
-                <ActivityIndicator color={COLORS.gold} size="small" />
-                <Text style={styles.detailPreparingText}>در حال آماده‌کردن جزئیات…</Text>
-              </View>
+              <>
+                <View style={styles.genreRow}>
+                  {(item.countryCodes || []).map((code, index) => ({ code, index })).filter(({ code }) => String(code).toUpperCase() !== 'JP').map(({ code, index }) => <Pressable key={`country-loading-${code}`} onPress={() => browseAndClose(countryFilter(code))}><Text style={styles.detailGenre}>{item.countryLabels?.[index] || countryLabel(code, catalog)}</Text></Pressable>)}
+                  {item.genres.map((genre) => <Pressable key={`genre-loading-${genre}`} onPress={() => browseAndClose(genreFilter(genre))}><Text style={styles.detailGenre}>{genre}</Text></Pressable>)}
+                </View>
+                <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text>
+                <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
+                <View style={styles.detailPreparing}>
+                  <ActivityIndicator color={COLORS.gold} size="small" />
+                  <Text style={styles.detailPreparingText}>در حال آماده‌کردن پخش و قسمت‌ها…</Text>
+                </View>
+              </>
             ) : (
               <>
             <View style={styles.detailActions}>
@@ -6596,7 +6568,7 @@ function VideoPlayerModal({
         ) : null}
 
         {showNextEpisodeOverlay && nextEpisodeGroup && item?.type === 'series' ? (
-          <View pointerEvents="box-none" style={styles.nextEpisodeOverlay}>
+          <View pointerEvents="box-none" style={[styles.nextEpisodeOverlay, frameRect]}>
             <View style={[styles.nextEpisodeCard, landscape && styles.nextEpisodeCardLandscape]}>
               <Pressable
                 onPress={() => setNextEpisodeDismissed(true)}
@@ -9159,7 +9131,7 @@ const styles = StyleSheet.create({
   detailMeta: { flexDirection: 'row-reverse', gap: 7, marginTop: 11 },
   detailMetaText: { color: '#CFD1D4', fontSize: 9, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 7, borderWidth: 1, borderColor: COLORS.border, backgroundColor: 'rgba(7,9,12,0.55)' },
   detailBody: { paddingHorizontal: 18 },
-  detailPreparing: { minHeight: 220, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  detailPreparing: { minHeight: 72, alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10 },
   detailPreparingText: { ...rtlText, color: COLORS.muted, fontSize: 9.5, fontWeight: '800' },
   detailActions: { flexDirection: 'row-reverse', gap: 10 },
   watchButton: { height: 50, flex: 1, borderRadius: 14, flexDirection: 'row-reverse', gap: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.red },
@@ -9406,7 +9378,7 @@ const styles = StyleSheet.create({
   relatedTitleRate: { position: 'absolute', left: 7, top: 148, height: 24, paddingHorizontal: 7, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(5,7,10,0.86)' },
   relatedTitleRateText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
   playerOfflineOverlay: { position: 'absolute', zIndex: 95, elevation: 95, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, backgroundColor: 'rgba(0,0,0,0.78)' },
-  nextEpisodeOverlay: { ...absoluteFillObject, zIndex: 83, elevation: 83, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 18 },
+  nextEpisodeOverlay: { position: 'absolute', zIndex: 83, elevation: 83, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 12 },
   nextEpisodeCard: { width: '100%', maxWidth: 610, minHeight: 142, flexDirection: 'row-reverse', alignItems: 'center', gap: 13, padding: 13, borderRadius: 18, backgroundColor: 'rgba(10,12,16,0.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
   nextEpisodeCardLandscape: { maxWidth: 720, minHeight: 134 },
   nextEpisodeClose: { position: 'absolute', top: 9, left: 9, zIndex: 3, width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.09)' },

@@ -1822,6 +1822,56 @@ const detailUrlFor = (detailPath: string) => {
   }
 };
 
+const fetchStableDetailPointerCandidate = async (candidate: string, summary: CatalogItem) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1800);
+  try {
+    const separator = candidate.includes('?') ? '&' : '?';
+    const response = await fetch(
+      `${candidate}${separator}_aparatchi_pointer=${Date.now()}`,
+      {
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) return null;
+    const pointer = await response.json() as Record<string, unknown>;
+    const currentPath = asString(pointer.detailPath);
+    const matchesSummary =
+      asString(pointer.type) === asString(summary.type) &&
+      asString(pointer.id) === asString(summary.id);
+    const pathIsSafe = /^catalog-items\/[a-f0-9]{12}-[a-f0-9]{12}\.json$/i.test(currentPath);
+    return matchesSummary && pathIsSafe ? currentPath : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const firstValidStableDetailPath = (candidates: string[], summary: CatalogItem) => {
+  if (!candidates.length) return Promise.resolve<string | null>(null);
+  return new Promise<string | null>((resolve) => {
+    let pending = candidates.length;
+    let settled = false;
+    candidates.forEach((candidate) => {
+      void fetchStableDetailPointerCandidate(candidate, summary).then((path) => {
+        if (settled) return;
+        if (path) {
+          settled = true;
+          resolve(path);
+          return;
+        }
+        pending -= 1;
+        if (pending <= 0) {
+          settled = true;
+          resolve(null);
+        }
+      });
+    });
+  });
+};
+
 const resolveStableDetailPath = async (summary: CatalogItem, fallbackPath: string) => {
   const identityMatch = fallbackPath.match(/(?:^|\/)([a-f0-9]{12})-[a-f0-9]{12}\.json$/i);
   if (!identityMatch) return fallbackPath;
@@ -1834,42 +1884,49 @@ const resolveStableDetailPath = async (summary: CatalogItem, fallbackPath: strin
   const stableUrl = detailUrlFor(stablePath);
   if (!stableUrl) return fallbackPath;
 
-  // catalog-stable is mutable. Prefer GitHub Raw (source of truth) over the CDN
-  // for this tiny pointer, then fall back to the CDN on networks where Raw is
-  // unavailable. Immutable detail shards keep the faster existing CDN path.
-  const candidates = remoteRepositoryUrlCandidates(stableUrl).sort((a, b) =>
-    Number(/raw\.githubusercontent\.com/i.test(b)) - Number(/raw\.githubusercontent\.com/i.test(a)),
-  );
+  // Start Raw and CDN pointer reads together. Give the source-of-truth Raw URL
+  // a short head start, then accept the first valid cache-busted mirror. This
+  // keeps stale-pointer protection without making every first detail open wait
+  // through sequential multi-second network timeouts.
+  const candidates = remoteRepositoryUrlCandidates(stableUrl);
+  const rawCandidates = candidates.filter((candidate) => /raw\.githubusercontent\.com/i.test(candidate));
+  const mirrorCandidates = candidates.filter((candidate) => !/raw\.githubusercontent\.com/i.test(candidate));
+  const rawPromise = firstValidStableDetailPath(rawCandidates, summary);
+  const mirrorPromise = firstValidStableDetailPath(mirrorCandidates, summary);
 
-  for (const candidate of candidates) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2800);
-    try {
-      const separator = candidate.includes('?') ? '&' : '?';
-      const response = await fetch(
-        `${candidate}${separator}_aparatchi_pointer=${Date.now()}`,
-        {
-          headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
-          signal: controller.signal,
-        },
-      );
-      if (!response.ok) continue;
-      const pointer = await response.json() as Record<string, unknown>;
-      const currentPath = asString(pointer.detailPath);
-      const matchesSummary =
-        asString(pointer.type) === asString(summary.type) &&
-        asString(pointer.id) === asString(summary.id);
-      const pathIsSafe = /^catalog-items\/[a-f0-9]{12}-[a-f0-9]{12}\.json$/i.test(currentPath);
-      if (!matchesSummary || !pathIsSafe) continue;
-      stableDetailPointerCache.set(identity, { path: currentPath, expiresAt: Date.now() + 5 * 60_000 });
-      return currentPath;
-    } catch {
-      // Try the next public mirror.
-    } finally {
-      clearTimeout(timeout);
-    }
+  const preferredRaw = await Promise.race([
+    rawPromise,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 450)),
+  ]);
+  if (preferredRaw) {
+    stableDetailPointerCache.set(identity, { path: preferredRaw, expiresAt: Date.now() + 5 * 60_000 });
+    return preferredRaw;
   }
 
+  const currentPath = await new Promise<string | null>((resolve) => {
+    let pending = 2;
+    let settled = false;
+    const accept = (path: string | null) => {
+      if (settled) return;
+      if (path) {
+        settled = true;
+        resolve(path);
+        return;
+      }
+      pending -= 1;
+      if (pending <= 0) {
+        settled = true;
+        resolve(null);
+      }
+    };
+    void rawPromise.then(accept);
+    void mirrorPromise.then(accept);
+  });
+
+  if (currentPath) {
+    stableDetailPointerCache.set(identity, { path: currentPath, expiresAt: Date.now() + 5 * 60_000 });
+    return currentPath;
+  }
   return fallbackPath;
 };
 
