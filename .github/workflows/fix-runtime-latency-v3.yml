@@ -37,6 +37,12 @@ jobs:
       - name: Apply runtime latency repair
         run: node scripts/fix-runtime-latency-v3.mjs
 
+      - name: Inspect patched source around syntax-sensitive blocks
+        shell: bash
+        run: |
+          nl -ba App.tsx | sed -n '5360,5465p'
+          nl -ba App.tsx | sed -n '5630,5755p'
+
       - name: Install dependencies
         run: npm ci
 
