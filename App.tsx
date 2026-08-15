@@ -774,7 +774,28 @@ const reconcileUperaMediaFiles = (files: DownloadFile[]): DownloadFile[] => {
       .map(([url]) => url),
   );
   const safe = conflictedUrls.size
-    ? prepared.filter((file) => !conflictedUrls.has(String(file.url || '').trim()))
+    ? (() => {
+        const result: DownloadFile[] = [];
+        const emitted = new Set<string>();
+        for (const file of prepared) {
+          const url = String(file.url || '').trim();
+          if (!conflictedUrls.has(url)) {
+            result.push(file);
+            continue;
+          }
+          if (emitted.has(url)) continue;
+          const sameUrl = prepared.filter((candidate) => String(candidate.url || '').trim() === url);
+          const representative = sameUrl.find((candidate) => String(candidate.mode || 'download') === 'download')
+            || sameUrl.find((candidate) => String(candidate.mode || '') === 'play')
+            || file;
+          if (representative !== file) continue;
+          emitted.add(url);
+          // Conflicting language metadata is ambiguous, but the media itself is
+          // still real. Keep one neutral row rather than making play/download vanish.
+          result.push({ ...representative, language: undefined });
+        }
+        return result;
+      })()
     : prepared;
 
   const explicit = new Set<MediaLanguage>(
@@ -5696,7 +5717,9 @@ function DetailModal({
   }, [item?.id, visible]);
   if (!item) return null;
 
-  const downloadGroups = detailBodyReady ? item.downloads || [] : [];
+  // Movie summaries now carry a compact actionable media preview. Do not hide
+  // those real links while the richer detail shard is still hydrating.
+  const downloadGroups = item.downloads || [];
   const episodeGroups = downloadGroups.filter((group) => isEpisodeSection(group) && (languageSectionsForFiles(group.files, group.id, isIranianItem(item)).length || operatorFilesFor(group.files).length));
   const standaloneOperatorGroups = downloadGroups.filter((group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0);
   const standaloneOperatorPlayFile = standaloneOperatorGroups.flatMap((group) => operatorFilesFor(group.files)).find((file) => downloadModeFor(file) === 'operator-play');
@@ -5708,7 +5731,7 @@ function DetailModal({
   const hasDownloads = downloadGroups.some((group) => group.files.some((file) =>
     downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
   ));
-  const hasPlayableStream = detailBodyReady ? playableVersionsFor(item).length > 0 : false;
+  const hasPlayableStream = playableVersionsFor(item).length > 0;
 
   const browseAndClose = (filter: SearchFilter) => { onClose(); requestAnimationFrame(() => onBrowse(filter)); };
 
@@ -5766,10 +5789,23 @@ function DetailModal({
                 </View>
                 <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text>
                 <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
-                <View style={styles.detailPreparing}>
-                  <ActivityIndicator color={COLORS.gold} size="small" />
-                  <Text style={styles.detailPreparingText}>در حال آماده‌کردن پخش و قسمت‌ها…</Text>
-                </View>
+                {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile || hasDownloads) ? (
+                  <View style={styles.detailActions}>
+                    {!vpnActive && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
+                    {hasDownloads ? (
+                      <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
+                        <Ionicons name="download-outline" color={COLORS.gold} size={19} />
+                        <Text style={styles.detailDownloadActionText}>دانلود</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable onPress={() => void shareCatalogItem(item)} style={styles.detailSecondaryButton}><Ionicons name="share-social-outline" color={COLORS.text} size={20} /></Pressable>
+                  </View>
+                ) : (
+                  <View style={styles.detailPreparing}>
+                    <ActivityIndicator color={COLORS.gold} size="small" />
+                    <Text style={styles.detailPreparingText}>در حال آماده‌کردن پخش و قسمت‌ها…</Text>
+                  </View>
+                )}
               </>
             ) : (
               <>
@@ -7579,12 +7615,14 @@ function AppContent() {
       // Paint Home from the bundled catalog first; network/cache refreshes must
       // never hold the branded startup screen for 15–25 seconds.
       // Keep the first Home interaction free of multi-megabyte catalog parsing.
-      initialRefreshTimer = setTimeout(reloadContentWhenIdle, 650);
+      // The real bootstrap refresh must start immediately on first install;
+      // InteractionManager remains reserved for later periodic/app-state refreshes.
+      void reloadContent(false);
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
     }
-    startupFallbackTimer = setTimeout(dismissStartup, 5000);
+    startupFallbackTimer = setTimeout(dismissStartup, 2000);
 
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()

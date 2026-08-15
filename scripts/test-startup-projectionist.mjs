@@ -14,7 +14,7 @@ const required = [
   'آپاراتچی در حال آماده‌کردن حلقهٔ فیلم است…',
   'const reelSpin = motion.interpolate',
   'const beamOpacity = motion.interpolate',
-  'startupFallbackTimer = setTimeout(dismissStartup, 5000);',
+  'startupFallbackTimer = setTimeout(dismissStartup, 2000);',
   'startupDismissedRef.current = true;\n    setStartupVisible(false);',
 ];
 
@@ -43,6 +43,6 @@ if (!dismissBlock.includes('setStartupVisible(false);')) throw new Error('Ready 
 console.log(JSON.stringify({
   startup: 'cinema-projectionist',
   minimumVisibleMs: 0,
-  emergencyFallbackMs: 5000,
+  emergencyFallbackMs: 2000,
   dismissesImmediatelyWhenContentReady: true,
 }, null, 2));
