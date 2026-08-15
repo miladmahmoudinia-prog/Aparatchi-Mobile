@@ -1,4 +1,5 @@
 name: Fix runtime latency v3
+# Verification-only workflow; it never builds or publishes an APK.
 
 on:
   push:
