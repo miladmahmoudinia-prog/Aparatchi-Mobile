@@ -2883,44 +2883,6 @@ const IMDB_PERSIAN_TITLE_OVERRIDES: Record<string, string> = {
   'the kashmir files': 'پرونده های کشمیر',
 };
 
-const transliterateLatinTitleToPersian = (value: string) => {
-  const source = String(value || '').trim();
-  if (!source) return '';
-  const overridden = IMDB_PERSIAN_TITLE_OVERRIDES[normalizeComparableText(source)];
-  if (overridden) return overridden;
-
-  const latin = source
-    .replace(/0/g, '۰').replace(/1/g, '۱').replace(/2/g, '۲').replace(/3/g, '۳').replace(/4/g, '۴')
-    .replace(/5/g, '۵').replace(/6/g, '۶').replace(/7/g, '۷').replace(/8/g, '۸').replace(/9/g, '۹');
-  if (/^[^A-Za-z]*$/.test(latin)) return latin;
-
-  const replacements: Array<[RegExp, string]> = [
-    [/sh/gi, 'ش'], [/ch/gi, 'چ'], [/zh/gi, 'ژ'], [/kh/gi, 'خ'], [/gh/gi, 'غ'],
-    [/ph/gi, 'ف'], [/th/gi, 'ت'], [/ck/gi, 'ک'], [/qu/gi, 'کو'], [/oo/gi, 'و'],
-    [/ee/gi, 'ی'], [/ea/gi, 'ی'], [/ou/gi, 'او'], [/ai/gi, 'ای'], [/ay/gi, 'ای'],
-  ];
-  let text = latin.toLowerCase();
-  const placeholders: string[] = [];
-  for (const [pattern, replacement] of replacements) {
-    text = text.replace(pattern, () => {
-      const index = placeholders.push(replacement) - 1;
-      return `§${index}§`;
-    });
-  }
-  const letters: Record<string, string> = {
-    a: 'ا', b: 'ب', c: 'ک', d: 'د', e: 'ِ', f: 'ف', g: 'گ', h: 'ه', i: 'ی',
-    j: 'ج', k: 'ک', l: 'ل', m: 'م', n: 'ن', o: 'و', p: 'پ', q: 'ق', r: 'ر',
-    s: 'س', t: 'ت', u: 'و', v: 'و', w: 'و', x: 'کس', y: 'ی', z: 'ز',
-  };
-  text = text.replace(/[a-z]/g, (letter) => letters[letter] || letter);
-  text = text.replace(/§(\d+)§/g, (_match, index) => placeholders[Number(index)] || '');
-  return text
-    .replace(/ِ+/g, '')
-    .replace(/\s+/g, ' ')
-    .replace(/\s+([:،؛!?])/g, '$1')
-    .trim();
-};
-
 const findImdbTopItem = (
   entry: ImdbTopEntry,
   byId: Map<string, CatalogItem>,
@@ -2938,7 +2900,11 @@ const imdbEntryTitles = (entry: ImdbTopEntry, item?: CatalogItem | null) => {
   const itemTitleFa = /[\u0600-\u06FF]/.test(String(item?.nameFa || '')) ? String(item?.nameFa || '').trim() : '';
   const entryTitleFa = /[\u0600-\u06FF]/.test(rawTitleFa) ? rawTitleFa : '';
   const title = String(item?.name || (!rawTitleIsPersian ? rawTitle : '')).trim();
-  const titleFa = itemTitleFa || entryTitleFa || (rawTitleIsPersian ? rawTitle : '') || transliterateLatinTitleToPersian(title || rawTitle);
+  const verifiedOverrideFa = IMDB_PERSIAN_TITLE_OVERRIDES[normalizeComparableText(title || rawTitle)] || '';
+  // Never invent a Persian-looking label from Latin text. Prefer a real Persian
+  // title from the catalog/ranking or a manually verified override; otherwise
+  // display the original English title unchanged.
+  const titleFa = itemTitleFa || entryTitleFa || (rawTitleIsPersian ? rawTitle : '') || verifiedOverrideFa;
   const primary = titleFa || title || rawTitle;
   const secondary = title && normalizeComparableText(title) !== normalizeComparableText(primary)
     ? title
