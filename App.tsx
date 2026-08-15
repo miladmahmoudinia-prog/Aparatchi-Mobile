@@ -7421,7 +7421,6 @@ function AppContent() {
   const homeScrollOffsetRef = useRef(0);
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
-  const startupStartedAtRef = useRef(Date.now());
   const startupDismissedRef = useRef(false);
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vpnCheckSequenceRef = useRef(0);
@@ -7487,10 +7486,7 @@ function AppContent() {
   const dismissStartup = useCallback(() => {
     if (startupDismissedRef.current) return;
     startupDismissedRef.current = true;
-    const minimumVisibleMs = 10000;
-    const elapsed = Date.now() - startupStartedAtRef.current;
-    const delay = Math.max(0, minimumVisibleMs - elapsed);
-    startupDismissTimerRef.current = setTimeout(() => setStartupVisible(false), delay);
+    setStartupVisible(false);
   }, []);
 
   const reloadContent = async (force = true) => {
@@ -7602,7 +7598,7 @@ function AppContent() {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
     }
-    startupFallbackTimer = setTimeout(dismissStartup, 15000);
+    startupFallbackTimer = setTimeout(dismissStartup, 5000);
 
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
