@@ -4,23 +4,67 @@ import { InteractionManager } from 'react-native';
 
 import App from './App';
 
-// Android can occasionally keep a freshly-revealed Modal subtree on the
-// previous frame until the user scrolls it. DetailModal intentionally defers
-// its heavier body with InteractionManager, so request one extra root render
-// on the next frame after those deferred callbacks finish. This preserves the
-// existing lazy-detail/performance path while making the committed detail
-// state visible without requiring a scroll gesture.
+// Android can occasionally keep a freshly-updated subtree on the previous
+// frame until another UI event (most visibly a scroll) happens. This affects
+// both Home's first virtualized rows and DetailModal after async hydration.
+// Keep the recovery bounded: one next-frame commit plus two short follow-ups,
+// coalesced across InteractionManager callbacks. App is never remounted.
 let requestDeferredFrameCommit: (() => void) | null = null;
+let pendingFrame: number | null = null;
+let recoveryTimers: Array<ReturnType<typeof setTimeout>> = [];
 const runAfterInteractions = InteractionManager.runAfterInteractions.bind(InteractionManager);
+
+const cancelRecoveryTimers = () => {
+  recoveryTimers.forEach((timer) => clearTimeout(timer));
+  recoveryTimers = [];
+};
+
+const requestRootFrameCommit = () => {
+  if (pendingFrame !== null) return;
+  pendingFrame = requestAnimationFrame(() => {
+    pendingFrame = null;
+    requestDeferredFrameCommit?.();
+  });
+};
+
+const schedulePaintRecoveryBurst = () => {
+  requestRootFrameCommit();
+  cancelRecoveryTimers();
+
+  // 120 ms covers the first virtualized Home batch. 1100 ms also covers the
+  // bounded detail-shard retry path without keeping a periodic render loop.
+  recoveryTimers = [120, 1100].map((delay) =>
+    setTimeout(() => {
+      requestRootFrameCommit();
+    }, delay),
+  );
+};
 
 try {
   (InteractionManager as any).runAfterInteractions = (task?: any) => {
-    if (typeof task !== 'function') return runAfterInteractions(task);
-    return runAfterInteractions(() => {
-      const result = task();
-      requestAnimationFrame(() => requestDeferredFrameCommit?.());
-      return result;
-    });
+    if (typeof task === 'function') {
+      return runAfterInteractions(() => {
+        try {
+          return task();
+        } finally {
+          schedulePaintRecoveryBurst();
+        }
+      });
+    }
+
+    if (task && typeof task.gen === 'function') {
+      const originalGen = task.gen.bind(task);
+      return runAfterInteractions({
+        ...task,
+        gen: () => {
+          const result = originalGen();
+          Promise.resolve(result).then(schedulePaintRecoveryBurst, schedulePaintRecoveryBurst);
+          return result;
+        },
+      });
+    }
+
+    return runAfterInteractions(task);
   };
 } catch {
   // Keep startup safe on runtimes that expose InteractionManager as immutable.
@@ -32,8 +76,19 @@ function AparatchiRoot() {
 
   useEffect(() => {
     requestDeferredFrameCommit = () => commitDeferredFrame((value) => value + 1);
+
+    // Catalog data is already available from the bundled/local payload on cold
+    // start. Commit it independently from the slower IMDb/remote refresh so
+    // the Home rows never need that later state change (or a scroll) to paint.
+    schedulePaintRecoveryBurst();
+
     return () => {
       requestDeferredFrameCommit = null;
+      cancelRecoveryTimers();
+      if (pendingFrame !== null) {
+        cancelAnimationFrame(pendingFrame);
+        pendingFrame = null;
+      }
     };
   }, []);
 
