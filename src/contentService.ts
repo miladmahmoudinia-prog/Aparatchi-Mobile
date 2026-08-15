@@ -69,6 +69,7 @@ let cacheMetadataLoaded = false;
 let cacheMetadata: RemoteCacheMetadata = {};
 const detailMemoryCache = new Map<string, CatalogItem>();
 const detailRequestCache = new Map<string, Promise<CatalogItem | null>>();
+const stableDetailPointerCache = new Map<string, { path: string; expiresAt: number }>();
 
 const DAY_IDS: DayId[] = [
   'saturday',
@@ -1821,10 +1822,64 @@ const detailUrlFor = (detailPath: string) => {
   }
 };
 
-export async function loadCatalogItemDetail(summary: CatalogItem): Promise<CatalogItem | null> {
-  const detailPath = asString(summary?.detailPath);
-  if (!detailPath || summary.detailLoaded) return { ...summary, detailLoaded: true };
+const resolveStableDetailPath = async (summary: CatalogItem, fallbackPath: string) => {
+  const identityMatch = fallbackPath.match(/(?:^|\/)([a-f0-9]{12})-[a-f0-9]{12}\.json$/i);
+  if (!identityMatch) return fallbackPath;
 
+  const identity = identityMatch[1].toLowerCase();
+  const cached = stableDetailPointerCache.get(identity);
+  if (cached && cached.expiresAt > Date.now()) return cached.path;
+
+  const stablePath = `catalog-stable/${identity}.json`;
+  const stableUrl = detailUrlFor(stablePath);
+  if (!stableUrl) return fallbackPath;
+
+  // catalog-stable is mutable. Prefer GitHub Raw (source of truth) over the CDN
+  // for this tiny pointer, then fall back to the CDN on networks where Raw is
+  // unavailable. Immutable detail shards keep the faster existing CDN path.
+  const candidates = remoteRepositoryUrlCandidates(stableUrl).sort((a, b) =>
+    Number(/raw\.githubusercontent\.com/i.test(b)) - Number(/raw\.githubusercontent\.com/i.test(a)),
+  );
+
+  for (const candidate of candidates) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2800);
+    try {
+      const separator = candidate.includes('?') ? '&' : '?';
+      const response = await fetch(
+        `${candidate}${separator}_aparatchi_pointer=${Date.now()}`,
+        {
+          headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) continue;
+      const pointer = await response.json() as Record<string, unknown>;
+      const currentPath = asString(pointer.detailPath);
+      const matchesSummary =
+        asString(pointer.type) === asString(summary.type) &&
+        asString(pointer.id) === asString(summary.id);
+      const pathIsSafe = /^catalog-items\/[a-f0-9]{12}-[a-f0-9]{12}\.json$/i.test(currentPath);
+      if (!matchesSummary || !pathIsSafe) continue;
+      stableDetailPointerCache.set(identity, { path: currentPath, expiresAt: Date.now() + 5 * 60_000 });
+      return currentPath;
+    } catch {
+      // Try the next public mirror.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  return fallbackPath;
+};
+
+export async function loadCatalogItemDetail(summary: CatalogItem): Promise<CatalogItem | null> {
+  const summaryDetailPath = asString(summary?.detailPath);
+  if (!summaryDetailPath || summary.detailLoaded) return { ...summary, detailLoaded: true };
+
+  // Resolve the mutable stable pointer before trusting a cached/immutable shard.
+  // A cached catalog-index may legally be older than the latest media links.
+  const detailPath = await resolveStableDetailPath(summary, summaryDetailPath);
   const memoryKey = `${summary.type}:${summary.id}:${detailPath}`;
   const memory = detailMemoryCache.get(memoryKey);
   if (memory) return memory;
@@ -1836,7 +1891,9 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
     const parseDetail = (value: unknown) => {
       const normalized = normalizeCatalogItem(value);
       if (!normalized || normalized.id !== summary.id || normalized.type !== summary.type) return null;
-      return { ...normalized, detailPath, detailLoaded: true } as CatalogItem;
+      // Keep the summary path on the selected object so App does not downgrade
+      // a freshly resolved detail merely because its lightweight index was stale.
+      return { ...normalized, detailPath: summaryDetailPath, detailLoaded: true } as CatalogItem;
     };
 
     if (cacheUri) {
@@ -1931,7 +1988,7 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
               try {
                 const separator = candidate.includes('?') ? '&' : '?';
                 const response = await fetch(
-                  `${candidate}${separator}v=${encodeURIComponent(targetPath)}&stable=1`,
+                  `${candidate}${separator}v=${encodeURIComponent(targetPath)}&stable=${Date.now()}`,
                   {
                     headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
                     signal: controller.signal,

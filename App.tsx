@@ -3312,6 +3312,11 @@ const HomeScreen = memo(function HomeScreen({
   // startup work as the archive grew and blocked taps on the JS thread.
   const rows = useMemo(() => buildHomeCatalogRows(catalog), [catalog]);
   const newest = rows[0]?.items || [];
+  // The first Home rails must exist in the native tree on the very first frame.
+  // Keeping only the later rails virtualized avoids the Android blank-until-scroll
+  // regression without turning the whole Home catalog into an eager render.
+  const eagerRows = useMemo(() => rows.slice(0, 4), [rows]);
+  const deferredRows = useMemo(() => rows.slice(4), [rows]);
 
   // Visible artwork is loaded and cached by expo-image itself. Avoid a parallel
   // prefetch flood so taps and the first on-screen posters get priority.
@@ -3330,8 +3335,18 @@ const HomeScreen = memo(function HomeScreen({
         catalog={catalog}
         onOpen={onOpen}
       />
+      {eagerRows.map((row) => (
+        <HomeCatalogSection
+          key={`home-eager-${row.filter}`}
+          row={row}
+          featuredPeople={featuredPeople}
+          catalog={catalog}
+          onOpen={onOpen}
+          onBrowse={onBrowse}
+        />
+      ))}
     </>
-  ), [catalog, imdbTop100, isActive, newest, onOpen]);
+  ), [catalog, eagerRows, featuredPeople, imdbTop100, isActive, newest, onBrowse, onOpen]);
 
   const renderHomeRow = useCallback(({ item: row }: { item: HomeCatalogRow }) => (
     <HomeCatalogSection
@@ -3386,7 +3401,7 @@ const HomeScreen = memo(function HomeScreen({
       <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
       <FlatList
         ref={listRef}
-        data={rows}
+        data={deferredRows}
         keyExtractor={(row) => row.filter}
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
@@ -5698,36 +5713,18 @@ function DetailModal({
   vpnActive: boolean;
   onVpnRetry: () => void;
 }) {
-  const [detailBodyReady, setDetailBodyReady] = useState(false);
+  // catalog-index is only a summary. Never render that summary as if its media
+  // were complete. As soon as the selected detail object is hydrated React
+  // renders the real actions/episodes directly; no InteractionManager/scroll
+  // event is allowed to gate their visibility.
+  const detailBodyReady = Boolean(item && (!item.detailPath || item.detailLoaded === true));
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
   const [downloadInitialGroup, setDownloadInitialGroup] = useState<string | null>(null);
 
   useEffect(() => {
-    setDetailBodyReady(false);
     setDownloadSheetOpen(false);
     setDownloadInitialGroup(null);
-    if (!visible || !item) return undefined;
-    // Summary rows from catalog-index deliberately omit downloads/people. Do
-    // not render an empty detail body while the one small detail shard is still
-    // loading. The parent hydrates only this selected title.
-    if (item.detailPath && item.detailLoaded !== true) {
-      const summaryFallback = setTimeout(() => setDetailBodyReady(true), 1800);
-      return () => clearTimeout(summaryFallback);
-    }
-    let cancelled = false;
-    const reveal = () => {
-      if (cancelled) return;
-      cancelled = true;
-      setDetailBodyReady(true);
-    };
-    const interaction = InteractionManager.runAfterInteractions(reveal);
-    const fallback = setTimeout(reveal, 80);
-    return () => {
-      cancelled = true;
-      interaction.cancel();
-      clearTimeout(fallback);
-    };
-  }, [item?.detailLoaded, item?.detailPath, item?.id, visible]);
+  }, [item?.id, visible]);
   if (!item) return null;
 
   const downloadGroups = detailBodyReady ? item.downloads || [] : [];
