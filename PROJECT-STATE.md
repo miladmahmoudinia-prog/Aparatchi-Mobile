@@ -1,6 +1,6 @@
 # وضعیت پایدار پروژه آپاراتچی
 
-این فایل حافظهٔ انتقال پروژه بین چت‌های ChatGPT است. هر چت جدید باید **اول این فایل و سپس HEAD واقعی `main` هر دو مخزن** را بخواند. وضعیت این فایل checkpoint است؛ اگر GitHub Actions یا commit جدیدی آمده باشد، HEAD واقعی اولویت دارد.
+این فایل حافظهٔ انتقال پروژه بین چت‌های ChatGPT است. هر چت جدید باید **اول این فایل و سپس HEAD واقعی `main` هر دو مخزن** را بخواند. HEAD واقعی همیشه از checkpoint این فایل معتبرتر است، چون Content ممکن است با GitHub Actions جلو برود.
 
 ## مخزن‌ها
 
@@ -8,421 +8,241 @@
 - Content: `miladmahmoudinia-prog/Aparatchi-Content`
 - Branch هدف: `main`
 
-## checkpoint آخرین بازبینی — 2026-08-15
+## checkpoint آخرین milestone — 2026-08-15
 
-- آخرین commit عملکردی Mobile قبل از همین به‌روزرسانی state:
-  - `1366f2839b3f1a28c2bb83da2f5609ac686fa69a`
-  - `fix: keep cold-start catalog visible`
-- Content HEAD هنگام آخرین بازبینی:
-  - `f22694cb8b714b2b47f0bd9f7edba5d8a14ab99c`
-  - `chore: advance oldest-year archive completion`
-
-> همیشه HEAD جدید دوباره خوانده شود. از SHAهای این فایل برای کار روی نسخهٔ قدیمی استفاده نشود.
+- آخرین commit عملکردی Mobile قبل از همین state update:
+  - `a45b6486ae5a3c67d3704079accfd4b7f6eafd86`
+  - `fix: keep deferred detail repaint startup-safe [skip ci]`
+- Content HEAD این milestone:
+  - `da08e72dbb5428aa7a832ea827b4a00abb2953af`
+  - `fix: periodically recheck newly dubbed media [skip ci]`
+- هیچ GitHub Action، Sync یا Build APK در این milestone دستی اجرا نشد.
 
 ---
 
 # قوانین قطعی کار
 
 1. اگر کاربر چند ایراد پشت سر هم می‌فرستد، تا وقتی نگفته «تموم شد» یا «اصلاح کن» هیچ کدی تغییر نکند و فقط ایرادها جمع شوند.
-2. بعد از «اصلاح کن»، همهٔ موارد با هم بررسی شوند و قبل از تغییر مشخص شود: `از قبل حل شده / ناقص / هنوز خراب`.
-3. هیچ موردی فقط از روی عکس APK قدیمی یا توضیح قبلی خراب فرض نشود؛ HEAD فعلی ملاک است.
+2. بعد از «اصلاح کن»، همهٔ موارد با هم audit شوند و فقط مواردی تغییر کنند که در HEAD فعلی واقعاً هنوز مشکل دارند.
+3. screenshot یا APK قدیمی به‌تنهایی دلیل خرابی HEAD فعلی نیست.
 4. فقط فایل‌های واقعاً لازم تغییر کنند؛ کل پروژه بازنویسی نشود.
-5. Performance، ظاهر و رفتار قسمت‌های سالم حفظ شود و Regression ایجاد نشود.
-6. قبل از اصلاح محتوا مشخص شود مشکل از Mobile است یا Content.
-7. catalog/index/detailها نباید پاک، خالی یا ناقص شوند.
-8. ساختار `catalog-index.json`، `catalog-items/`، `catalog-stable/` و `catalog-manifest.json` حفظ شود.
-9. نام فارسی ساختگی، ترجمهٔ حدسی یا آوانویسی مصنوعی برای نمایش تولید نشود؛ اگر عنوان فارسی معتبر نداریم، عنوان اصلی بهتر است.
-10. RTL، Player، image cache/proxy/fallback و detail recoveryهای فعلی بی‌دلیل دستکاری نشوند.
-11. GitHub Action، Sync یا Build APK بدون دستور صریح کاربر اجرا نشود.
-12. APK هرگز خودکار ساخته نشود.
-13. Content ممکن است خودکار با Actions جلو برود؛ قبل از هر کار Content HEAD دوباره خوانده شود.
-14. بعد از هر milestone اصلاح واقعی، همین `PROJECT-STATE.md` کوتاه و دقیق آپدیت شود.
-15. در پایان کار فقط خلاصه شود: چه چیزی بررسی/اصلاح شد، چه فایل‌هایی تغییر کردند، commit چیست و APK جدید لازم هست یا نه.
+5. Performance، ظاهر و رفتار بخش‌های سالم حفظ شود.
+6. قبل از اصلاح محتوا مشخص شود مشکل Mobile است یا Content.
+7. `catalog-index.json`، `catalog-items/`، `catalog-stable/`، `catalog-manifest.json` و catalog اصلی نباید پاک/خالی/ناقص شوند.
+8. نام فارسی ساختگی، ترجمهٔ حدسی یا آوانویسی مصنوعی برای نمایش تولید نشود؛ اگر فارسی معتبر نداریم، عنوان اصلی استفاده شود.
+9. RTL، Player، image cache/proxy/fallback و detail recovery بی‌دلیل دستکاری نشوند.
+10. GitHub Action، Sync یا Build APK بدون دستور صریح کاربر اجرا نشود؛ APK هرگز خودکار ساخته نشود.
+11. قبل از هر کار Content HEAD دوباره خوانده شود.
+12. بعد از هر milestone اصلاح واقعی همین فایل کوتاه و دقیق به‌روزرسانی شود.
+13. پایان کار فقط شامل: چه چیزی اصلاح شد، چه فایل‌هایی تغییر کردند، commit نهایی و نیاز/عدم نیاز به APK باشد.
 
 ---
 
-# مرحلهٔ فعلی پروژه
+# مرحلهٔ فعلی
 
-مرحلهٔ فعلی: **بازبینی نهایی اصلاحات موجود + رفع فقط موارد واقعاً باقی‌مانده.**
-
-در آخرین audit، بخش بزرگی از ایرادهای قبلی در HEAD فعلی از قبل رفع شده بودند؛ بنابراین نباید دوباره با راه‌حل جدید بازنویسی شوند.
+مرحلهٔ فعلی: **بازبینی نهایی روی HEAD واقعی + رفع فقط regressionهای باقی‌مانده.**
 
 ---
 
-# موارد تأییدشده در آخرین audit
+# معماری‌ها و اصلاحات تأییدشده که نباید دوباره بازنویسی شوند
 
-## 1) Detail hydration / لینک یا قسمت خالی — حل‌شده در معماری فعلی
+## Detail hydration / stale shard recovery
 
-Mobile commitهای مهم:
+commitهای مهم Mobile:
 
-- `020b62c5291a089f6ca2eb1501c87cb0a3678e78` — `fix: recover stale detail shards through stable pointers`
-- `f63c1671e941df8664c08cde56b075fd4c30f5f7` — `fix: recover stale detail shards and media links`
-- `1f4485cca8b8e1544e0bfbc65f199e823e7b5f6a` — `fix: add resilient detail hydration recovery patch`
-
-رفتار فعلی مورد تأیید:
-
-- `src/contentService.ts` در شکست detail مستقیم، identity دوازده‌کاراکتری را از مسیر immutable استخراج می‌کند.
-- `catalog-stable/<identity>.json` را می‌خواند و pointer فعلی را validate می‌کند.
-- detail immutable جدید را از mirrorهای remote می‌گیرد و نتیجهٔ معتبر را cache می‌کند.
-- `loadContent(preferCache=false, forceRemote=false)` وجود دارد.
-- `forceRemote=true` cache/conditional HTTP را دور می‌زند و catalog تازه می‌گیرد.
-- اگر hydration detail با index قدیمی شکست بخورد، App یک بار catalog تازه می‌گیرد و دوباره تلاش می‌کند.
-- catalog cache از v2 به v3 ارتقا یافته است.
-- stable pointerها در Content واقعاً وجود دارند.
-
-نتیجه: **معماری stale detail recovery در HEAD بررسی و تأیید شده؛ دوباره بازنویسی نشود مگر Regression جدید با HEAD فعلی ثابت شود.**
-
-نمونه‌های تاریخی APK قدیمی مثل `ویلای من`، `قلب یخی` و `درد مشترک` به‌تنهایی دلیل خرابی HEAD فعلی نیستند.
-
----
-
-## 2) Performance اصلی اپ — اصلاح‌شده و باید حفظ شود
-
-commitهای مهم:
-
-- `d3aa1096378e410046ecd8ee5fda70ef77a3e008` — `perf: unblock critical app interactions`
-- `508b24ded137a5c764042b381aa44663b9c4044d` — `perf: add critical interaction patch`
-- `274a65a14361d4c0568bbd50a62fad0d026f57fc` — `perf: consume compact people index lazily`
-
-رفتارهای تأییدشده:
-
-- `PosterCard` و Hero دیگر در `onPressIn` detail preload سنگین انجام نمی‌دهند؛ navigation اول انجام می‌شود.
-- `categoryKeys` سرور fast-path است و اسکن/classification سنگین بی‌دلیل انجام نمی‌شود.
-- Featured people از Content authoritative است؛ fallback فقط در نبود داده استفاده می‌شود.
-- Star works فقط برای ستارهٔ انتخاب‌شده محاسبه می‌شود، نه همهٔ ستاره‌ها.
-- people reverse index از ref فشرده (`string | number`) پشتیبانی می‌کند.
-- Home category preview bounded/single-pass است.
-- bulk image prefetch حذف شده و تصاویر visible با `expo-image` مدیریت می‌شوند.
-- BottomNavigation از `onPressIn` و `unstable_pressDelay={0}` استفاده می‌کند؛ tab انتخاب‌شده disabled است.
-- در revision یکسان، app tree بی‌دلیل replace نمی‌شود.
-- اولین content usable قبل از dismiss startup اعمال می‌شود؛ refresh بعدی transition/background است.
-
-نتیجه: **این مسیر Performance سالم است و نباید eager detail load، full-catalog scan، prefetch flood یا محاسبهٔ همهٔ Stars دوباره وارد شود.**
-
----
-
-## 3) Startup / Splash — اصلاح‌شده
-
-commitهای مهم:
-
-- `931b0e37e13b8cf9d9c9b2550c58832a60cc00a8` — `fix: dismiss startup as soon as home is ready`
-- `b248cbc162d1dd155ab1e09d6dbb593cdf04568b` — `feat: redesign startup as a cinema projectionist scene`
-
-رفتار تأییدشده:
-
-- minimum اجباری چندثانیه‌ای برای splash وجود ندارد.
-- `dismissStartup()` مستقیم startup را مخفی می‌کند.
-- fallback پنج‌ثانیه‌ای فقط برای جلوگیری از گیرکردن دائمی است.
-- bundled/local catalog اکنون از اولین render قابل استفاده است و Home می‌تواند قبل از remote refresh محتوا نشان دهد.
-- network refresh بعداً با مسیر cache/remote فعلی انجام می‌شود.
-
-Regression قدیمی که نباید برگردد:
-
-- `minimumVisibleMs = 10000`
-- fallback حدود ۱۵ ثانیه
-- workflow/script قدیمی `redesign-startup-projectionist` که ممکن بود ۱۰ ثانیه را دوباره enforce کند.
-
----
-
-## 4) Home poster rails / پوستر خالی هنگام اسکرول — اصلاح‌شده
-
-commit مهم:
-
-- `58587db1ce69690399b8de04ecbe770c1520fdee` — `fix: keep Home poster rails mounted while scrolling`
-
-تأیید شده:
-
-- Home vertical list در محل‌های حساس `removeClippedSubviews={false}` دارد.
-- railهای poster هنگام اسکرول نباید unmount/reload مخرب داشته باشند.
-
-این fix نباید برای optimization ظاهری برگردانده شود.
-
----
-
-## 5) RTL و ریل‌های افقی — اصلاح‌شده
-
-commit مهم:
-
-- `ed1ff11e9b2149fd9443b09c7e28517e6a476dd0` — `fix: keep media rails smooth while starting from right`
-
-معماری تأییدشده:
-
-- native `direction: rtl` روی ScrollView/FlatList به‌صورت عمومی استفاده نمی‌شود.
-- FlatListها با reverse display data + `initialScrollIndex` از راست شروع می‌شوند.
-- ScrollViewها در موارد لازم با `scrollToEnd` کنترل‌شده از راست شروع می‌شوند.
-- broad `mediaRailRtl` direction حذف شده است.
-- alignment کارت/عنوان‌ها اصلاح شده است.
-
-بخش‌هایی که این رفتار باید در آنها حفظ شود:
-
-- `HorizontalCatalog`
-- People/Cast
-- Stars و Star Works
-- Related
-- Collections
-- Player Episodes
-- Movie/Player recommendations
-
-Regression ممنوع: فضای خالی بزرگ اول لیست، پرش، اسکرول معکوس غیرطبیعی یا برگرداندن `direction: rtl` عمومی.
-
----
-
-## 6) IMDb / فارسی ساختگی — Mobile اصلاح شده؛ Content همچنان در هر تغییر title باید با نمونه واقعی audit شود
-
-Mobile commit:
-
-- `7d5731f36f4fa3207c13df31dc3d31bf19739516` — `fix: keep unknown IMDb titles in original English`
-
-تأیید Mobile:
-
-- fallback مصنوعی Latin→Persian برای نمایش حذف شده.
-- ترتیب ترجیح: فارسی واقعی catalog / فارسی ranking / override معتبر؛ در غیر این صورت original English.
-
-Content title logic چند مرحله اصلاح شده:
-
-- `20d06c397c7319bfbb6db6a818ad8f010ed0943f` — transliteration-aware repair
-- `f391d01ef9ba6ae57090bd789d0725c1e6138f72` — رد گسترده synthetic transliteration (بعداً مشخص شد بیش از حد broad است)
-- `44271a065194e2095b74043e2aded2a2f19f0f3b` — conservative detection
-- `3ec2e838aaae41a03bb114e9305b711d29ae8bc1` — `fix: preserve valid Persian proper-name titles`
-
-قانون فعلی:
-
-- transliteration helper داخلی فقط می‌تواند برای detection استفاده شود، نه fallback نمایش مصنوعی.
-- Persian-origin هرگز صرفاً به‌خاطر شباهت آوایی synthetic فرض نشود.
-- proper name کوتاه بی‌دلیل حذف نشود.
-- full phrase transliteration مصنوعی می‌تواند reject شود.
-- عنوان synthetic/generated باید به original title برگردد.
-
-نمونه‌های proper-name که نباید قربانی detection شوند: `سیتا رامام`، `پینوکیو`، `راستین` و مشابه‌ها.
-
-**وضعیت:** Mobile behavior تأیید شده؛ برای تغییرات بعدی Content title، چند نمونهٔ واقعی از catalog فعلی حتماً مستقیم بررسی شود. این بخش را «کاملاً بسته و غیرقابل بررسی» فرض نکن.
-
----
-
-## 7) Next Episode Overlay — اصلاح‌شده
-
-commit:
-
-- `6e205875e494cbc14d39e3a9243d276c47088e29` — `feat: suggest next episode near playback end`
+- `020b62c5291a089f6ca2eb1501c87cb0a3678e78`
+- `f63c1671e941df8664c08cde56b075fd4c30f5f7`
+- `1f4485cca8b8e1544e0bfbc65f199e823e7b5f6a`
 
 رفتار فعلی:
 
-- episodeهای playable مرتب می‌شوند.
-- قسمت فعال و قسمت بعدی پیدا می‌شود.
-- نزدیک پایان پخش overlay داخل Player ظاهر می‌شود.
-- countdown = 15 ثانیه.
-- با صفر شدن، progress ذخیره و همان Player به قسمت بعدی می‌رود.
-- دکمهٔ پخش دستی نیز همان مسیر را اجرا می‌کند.
-- artwork قسمت بعد با `exactEpisodeArtworkFor` گرفته می‌شود.
+- `src/contentService.ts` از detail immutable خراب/قدیمی identity را استخراج می‌کند.
+- `catalog-stable/<identity>.json` را می‌خواند و به detail فعلی می‌رود.
+- remote mirror + cache v3 + forceRemote retry وجود دارد.
+- App در شکست hydration ناشی از index قدیمی یک fresh catalog load و retry محدود انجام می‌دهد.
+- این معماری دوباره بازنویسی نشود مگر regression جدید روی HEAD ثابت شود.
 
----
+## Performance
 
-## 8) Images / cache / fallback — معماری فعلی سالم است
+commitهای مهم:
 
-commit مهم:
+- `d3aa1096378e410046ecd8ee5fda70ef77a3e008`
+- `508b24ded137a5c764042b381aa44663b9c4044d`
+- `274a65a14361d4c0568bbd50a62fad0d026f57fc`
 
-- `aefcc17b49afe00bd33fb8226169b8a309f0b163` — `fix: smooth progressive poster loading`
-- `19d3dda7039805ebc15be2f1cc7154c1f8dee9f8` — مسیر proxy/fallback تصاویر TMDB
+حفظ شود:
 
-رفتار فعلی:
+- navigation قبل از detail hydration؛ preload سنگین روی `onPressIn` برنگردد.
+- `categoryKeys` fast-path، compact `peopleWorks`، محاسبهٔ lazy Stars، Home bounded/single-pass.
+- bulk image prefetch و full-catalog scan برنگردد.
+- BottomNavigation سریع و revision یکسان بدون replace بی‌دلیل tree.
 
-- `expo-image` با memory+disk cache.
-- image instance بین fallback URLها بی‌دلیل با `key={remoteUrl}` remount نمی‌شود.
-- `recyclingKey` پایدار دارد.
-- TMDB proxy candidate قبل/کنار direct URL وجود دارد.
-- bulk prefetch سنگین حذف شده.
+## Startup / cold-start catalog
 
-در تغییرات آینده candidate/retry chain نباید request flood ایجاد کند.
+commitهای مهم:
 
----
-
-## 9) catalog Content واقعاً خالی نیست — تأیید مجدد 2026-08-15
-
-Content HEAD هنگام بازبینی: `f22694cb8b714b2b47f0bd9f7edba5d8a14ab99c`.
-
-در همین HEAD:
-
-- `catalog-index.json` حدود 7.9 MB و دارای item واقعی است.
-- `catalog.json` حدود 43.6 MB است.
-- `catalog-items/` و `catalog-stable/` وجود دارند.
-- `catalog-manifest.json` معتبر است.
-
-پس صفحات صفرنتیجه و skeleton گزارش‌شده از Content خالی نبودند؛ علت در bootstrap اپ Mobile بود.
-
----
-
-## 10) Cold-start / نصب تازه و catalog خالی — اصلاح‌شده در Mobile
-
-گزارش کاربر:
-
-- Home فقط skeleton نشان می‌داد.
-- «همه فیلم‌ها» و «همه سریال‌ها» صفر نتیجه داشتند.
-- دسته‌بندی UI بالا می‌آمد ولی catalog به UI نمی‌رسید.
-
-علت ریشه‌ای در HEAD قبلی Mobile:
-
-- `getBundledContent()` عمداً `unavailableLocalPayload()` با `items: []` برمی‌گرداند.
-- در `loadContent(preferCache=true)` اگر نصب تازه cache نداشت، دوباره همان payload خالی برمی‌گشت.
-- در شروع اولیه App، `loadContent(initialLoad)` با `initialLoad=true` اجرا می‌شود؛ بنابراین قبل از تکمیل دانلود چندمگابایتی remote هیچ catalog قابل نمایش وجود نداشت.
-- fallback پنج‌ثانیه‌ای Splash می‌توانست پوشش startup را بردارد در حالی که remote هنوز در حال دانلود/timeout بود؛ نتیجه همان skeleton و صفرنتیجهٔ گزارش‌شده بود.
-
-اصلاح عملکردی:
-
+- `931b0e37e13b8cf9d9c9b2550c58832a60cc00a8`
+- `b248cbc162d1dd155ab1e09d6dbb593cdf04568b`
 - `1366f2839b3f1a28c2bb83da2f5609ac686fa69a` — `fix: keep cold-start catalog visible`
-- فایل: `src/contentService.ts`
-- فقط دو خط تغییر کرد:
-  - `getBundledContent()` اکنون `normalizedLocalPayload()` را برمی‌گرداند.
-  - مسیر `preferCache` در نبود cache نیز `normalizedLocalPayload()` را برمی‌گرداند.
-- catalog کوچک داخلی فوراً قابل نمایش است و remote/cache architecture موجود بعداً آن را با catalog کامل جایگزین می‌کند.
-- remote mirror validation، manifest، cache v3، stable detail recovery، Player، RTL، image cache و Performance تغییر نکردند.
 
-Regression ممنوع:
+رفتار فعلی:
 
-- cold-start دوباره نباید در نبود cache به `items: []` برگردد.
-- برای جلوگیری از نمایش catalog محلی، `getBundledContent()` یا fallback بدون-cache دوباره به `unavailableLocalPayload()` برگردانده نشود.
+- splash minimum چندثانیه‌ای ندارد؛ fallback فقط anti-stuck است.
+- نصب تازه در نبود cache دیگر به `items: []` برنمی‌گردد؛ bundled/local catalog فوراً قابل نمایش است و remote بعداً آن را جایگزین می‌کند.
+- `getBundledContent()` و no-cache fallback دوباره به `unavailableLocalPayload()` برگردانده نشوند.
 
-برای مشاهدهٔ این اصلاح در گوشی، APK نصب‌شده باید شامل commit جدید باشد؛ **APK جدید لازم است، ولی فقط با دستور صریح کاربر ساخته شود.**
+## Home poster rails / RTL
+
+- `58587db1ce69690399b8de04ecbe770c1520fdee` — poster railها هنگام scroll unmount مخرب نداشته باشند.
+- `ed1ff11e9b2149fd9443b09c7e28517e6a476dd0` — ریل‌های فارسی با reverse data/right-start یا `scrollToEnd` کنترل‌شده؛ broad `direction: rtl` روی FlatList/ScrollView برنگردد.
+- این رفتار برای HorizontalCatalog، Cast/People، Stars، Related، Collections، Player Episodes و recommendations حفظ شود.
+
+## IMDb / عنوان فارسی
+
+- Mobile `7d5731f36f4fa3207c13df31dc3d31bf19739516`: اگر فارسی معتبر نیست original English نمایش داده شود.
+- Content title detection نباید proper-nameهای معتبر مثل `سیتا رامام`، `پینوکیو` و `راستین` را فقط به دلیل شباهت آوایی حذف کند.
+- transliteration helper فقط detection؛ نه تولید fallback نمایشی.
+
+## Next Episode / Images
+
+- `6e205875e494cbc14d39e3a9243d276c47088e29`: Next Episode با countdown 15 ثانیه حفظ شود.
+- `aefcc17b49afe00bd33fb8226169b8a309f0b163` و `19d3dda7039805ebc15be2f1cc7154c1f8dee9f8`: `expo-image` memory+disk cache، proxy/fallback و بدون request flood حفظ شود.
 
 ---
 
-# مواردی که هنوز باید در صورت گزارش کاربر با HEAD فعلی بررسی شوند
+# milestone جدید: سه ایراد گزارش‌شده در 2026-08-15
 
-## ویژه اینترنت همراه / Android Open With
+## 1) جزئیات بعد از اسکرول تازه کامل دیده می‌شد — Mobile اصلاح شد
 
-هدف قطعی:
+علامت گزارش‌شده: در صفحهٔ جزئیات، بعضی متن‌ها/دکمه‌ها/قسمت‌ها تا یک حرکت scroll تازه روی صفحه paint می‌شدند.
 
-- Android از Native Expo Module زیر استفاده کند:
+Audit:
+
+- `loadCatalogItemDetail()` آبجکت جدید برمی‌گرداند؛ مشکل same-reference mutation نبود.
+- `DetailModal` بخش سنگین را با `InteractionManager.runAfterInteractions` به‌صورت deferred reveal می‌کند.
+- دادهٔ summary مثل English title از قبل وجود دارد؛ بنابراین علامت «ظاهرشدن پس از scroll» با frame/repaint deferred روی Android سازگار بود، نه حذف داده.
+
+اصلاح:
+
+- `382d2e80af12542ae27f934789d7e3915a4c082a` و hardening بعدی `a45b6486ae5a3c67d3704079accfd4b7f6eafd86`.
+- فایل عملکردی: `index.ts`.
+- بعد از callbackهای تابعی `InteractionManager.runAfterInteractions` یک root frame commit در frame بعدی درخواست می‌شود تا state تازهٔ modal بدون نیاز به scroll روی Android paint شود.
+- App remount نمی‌شود و state حفظ می‌شود؛ مسیر lazy detail، Player، RTL و image loading تغییر نکرد.
+- override با `try/catch` محافظت شده تا runtimeای که InteractionManager را immutable ارائه می‌دهد startup را crash نکند.
+- این اصلاح روی APK واقعی هنوز device-test نشده؛ برای دیدن آن APK جدید لازم است.
+
+## 2) دوبله‌های جدید بعداً به عنوان دوبله شناخته نمی‌شدند — Content اصلاح شد
+
+Audit:
+
+- parser فعلی `scripts/sync-upera.mjs` در نسخهٔ media audit 8 از قبل دوبله/زیرنویس، group hint، audio/voice language و لینک‌های واقعی را تشخیص می‌دهد.
+- `scripts/client-catalog.mjs` نیز `availableLanguages` و برچسب `دوبله فارسی/زیرنویس فارسی` را فقط از media معتبر می‌سازد؛ parser/client sanitization سالم بود و بازنویسی نشد.
+- نقص واقعی freshness بود: عنوان سالمی که یک‌بار با audit version فعلی بررسی شده بود، اگر Upera بعداً نسخهٔ دوبله اضافه می‌کرد الزاماً دوباره وارد media-language audit نمی‌شد.
+
+اصلاح Content:
+
+- commit `da08e72dbb5428aa7a832ea827b4a00abb2953af`.
+- فایل: `scripts/prepare-archive-backfill.mjs`.
+- audit version این helper با parser اصلی از 6 به 8 همسان شد.
+- هر چرخهٔ موجود فقط تعداد bounded از فیلم‌های خارجیِ سالم و قدیمی از نظر media audit را برای re-audit دوباره صف می‌کند؛ پیش‌فرض 6 فیلم و حداکثر 12 مورد outstanding، با اولویت sourceهای تازه‌تر.
+- برای سریال خارجی فقط یک re-audit همزمان ایجاد می‌شود و اولویت با سریال در حال پخش/اخیراً به‌روزشده است تا archive completion با صف بزرگ خراب نشود.
+- هیچ parser موازی و هیچ حدس دوبله ساخته نشده؛ همان parser معتبر فعلی دوباره media واقعی را می‌خواند.
+- این تغییر خودش Sync را اجرا نکرد؛ اثر محتوایی آن در اجرای معمول بعدی workflow موجود اعمال می‌شود.
+
+## 3) «ویژه اینترنت همراه» هنوز Open With نشان می‌داد — source فعلی از قبل اصلاح شده بود
+
+Audit Mobile HEAD قبل از milestone:
+
+- commit `01a20b3cdff6608ee1ffd351036ee7c2121d6734` — `fix: pin operator custom tab activity`.
+- فایل native:
   `modules/aparatchi-custom-tab/android/src/main/java/expo/modules/aparatchicustomtab/AparatchiCustomTabModule.kt`
-- Custom Tab به browser package مشخص bind شود، session واقعی داشته باشد و با `setPackage(browserPackage)` باز شود.
-- برای operator playback روی Android fallback عمومی `Linking` / `WebBrowser` / Intent chooser برنگردد.
-- iOS می‌تواند `WebBrowser` داشته باشد.
+- Android به browser package مشخص bind می‌شود، real CustomTabs session می‌سازد، package/component را pin می‌کند و operator playback به generic `Linking`/`WebBrowser` chooser fallback نمی‌کند.
 
-در audit قبلی `AparatchiCustomTab.openAsync()` و package-bound session دیده شده بود. اگر دوباره این مورد گزارش شد، فقط HEAD فعلی مسیر Android audit شود؛ از نو بازنویسی نشود مگر fallback واقعاً برگشته باشد.
+علت مشاهدهٔ chooser در تست کاربر:
+
+- آخرین APK موفقی که audit شد روی HEAD `25366c3e1c581c36be2612e5e5e9b0674eddbb81` ساخته شده بود؛ این APK قبل از `01a20b3...` است.
+- بنابراین برای این مورد فایل native دوباره دستکاری نشد؛ **APK جدید لازم است** تا fix موجود تست شود.
 
 ---
 
-# قوانین محتوایی دائمی پروژه
+# قوانین محتوایی دائمی
 
 ## سریال‌ها
 
-- سریال قدیمی: یک سریال باید تا حد ممکن کامل شود، سپس انتشار/حرکت به سریال بعدی.
-- سریال در حال پخش: با آمدن قسمت جدید به‌روزرسانی شود و به بالای «به‌روزشده‌ها» بیاید.
-- episode links هر قسمت فقط متعلق به همان قسمت باشد؛ لینک‌های قسمت‌ها قاطی نشوند.
-- کاربر انتظار sync ساعتی دارد و نمی‌خواهد منطق صرفاً به window قدیمی 72h محدود شود.
+- سریال قدیمی: یک عنوان تا حد ممکن کامل شود، بعد صف به بعدی برود.
+- سریال در حال پخش: قسمت جدید اضافه و عنوان به بالای updatedها برود.
+- لینک‌های episodeها قاطی نشوند؛ download هر قسمت فقط لینک همان قسمت.
+- sync مورد انتظار ساعتی است و منطق نباید صرفاً window قدیمی 72h باشد.
 
-## فیلم/سریال و لینک‌ها
+## Stream / Download / Operator
 
-- پخش آنلاین فقط وقتی media قابل پخش وجود دارد.
-- برچسب «ویژه همراه/اینترنت همراه» فقط برای محتوای واقعاً operator-only.
-- برای series header دکمهٔ عمومی و تکراری «پخش آنلاین/دانلود» لازم نیست؛ کنترل‌ها per-episode باشند.
-- download هر episode فقط لینک‌های همان episode را نشان دهد.
-- وضعیت free/purchase را قبل از هر تغییر از منطق فعلی HEAD بخوان؛ قوانین این بخش در طول پروژه تغییر کرده و نباید از حافظهٔ قدیمی به کد تحمیل شود.
+- پخش آنلاین فقط با media واقعی قابل پخش.
+- «ویژه همراه» فقط برای operator-only واقعی.
+- series header دکمهٔ تکراری generic play/download نداشته باشد؛ کنترل‌ها per-episode.
+- free/purchase logic قبل از تغییر از HEAD واقعی audit شود؛ از حافظهٔ قدیمی تحمیل نشود.
 
-## دسته‌بندی‌ها
+## دسته‌بندی
 
-قواعد تثبیت‌شده کاربر:
-
-- دستهٔ مستقل «ژاپنی» حذف باشد؛ عناوین ژاپنی زیر خارجی.
-- Kids برای محتوای کودکِ غیرانیمیشن هم وجود داشته باشد.
-- برنامه/تاک‌شو/مسابقه در دستهٔ مناسب باشند و فیلم عادی وارد «مسابقه» نشود.
-- «مذهبی» نباید فیلم عادی را اشتباهی بگیرد.
-- Documentary و wildlife/documentary classification قاطی نشوند.
-- animation-series و anime classification با نوع واقعی محتوا سازگار باشد.
-- تعداد دسته‌ها بی‌دلیل زیاد نشود.
+- ژاپنی مستقل حذف؛ عناوین ژاپنی زیر خارجی.
+- Kids شامل محتوای کودک غیرانیمیشن هم باشد.
+- برنامه/تاک‌شو/مسابقه صحیح؛ فیلم عادی وارد مسابقه/مذهبی نشود.
+- Documentary و wildlife درست تفکیک شوند.
+- animation-series/anime با نوع واقعی سازگار باشد.
+- دسته‌های اضافهٔ بی‌دلیل ساخته نشوند.
 
 ---
 
-# UI/UX ثابت که نباید Regression پیدا کند
+# UI/UX که باید حفظ شود
 
-- سرعت لمس روی پوسترها، دسته‌بندی‌ها، «مشاهده همه»، Bottom Navigation و Stars بسیار مهم است.
-- Dynamic title sizing برای عنوان‌های کوتاه/بلند حفظ شود.
-- Back باید یک مرحله به view قبلی برگردد، نه چند undo متوالی.
-- «ادامه تماشا» طبق درخواست کاربر حذف/غیرفعال بماند مگر بعداً صریحاً درخواست شود.
-- offline برای stream/download باید پیام واضح روشن‌کردن اینترنت بدهد.
-- play icon هر episode وسط و مرتب باشد.
-- normal↔fullscreen Player نباید flash صفحهٔ زیرین ایجاد کند.
-- ریل‌های فارسی از سمت راست شروع شوند و نرم باشند.
-- poster fallback و cache فعلی حذف نشود.
+- سرعت لمس پوستر، دسته‌بندی، مشاهده همه، Bottom Navigation و Stars مهم است.
+- Dynamic title sizing حفظ شود.
+- Back یک مرحله برگردد.
+- «ادامه تماشا» غیرفعال/حذف بماند مگر درخواست جدید.
+- offline stream/download پیام واضح روشن‌کردن اینترنت بدهد.
+- play icon episode وسط باشد.
+- normal↔fullscreen Player flash صفحهٔ زیرین نداشته باشد.
+- ریل‌های فارسی از راست و نرم.
+- poster fallback/cache حفظ شود.
 - likes/comments فعلاً اضافه نشود.
 
----
+# Player — جهت طراحی ثابت
 
-# Player — جهت طراحی مورد انتظار کاربر
-
-کاربر Player مرتب شبیه منطق Rubika می‌خواهد:
-
-- با tap روی ویدئو controls ظاهر شوند و همراه timeline دوباره محو شوند.
-- fullscreen/zoom مرتب و در جای ثابت.
-- دکمه close جدا و منظم.
-- lock در ناحیهٔ fullscreen/zoom برای قفل همهٔ controls.
-- mute و volume controls.
-- timeline و کنترل‌های پایین منظم.
-- کیفیت‌ها به شکل جمع‌وجور و مناسب، نه overlay بسیار بزرگ.
+- tap controls را ظاهر و همراه timeline مخفی کند.
+- fullscreen/zoom، close، lock، mute/volume و timeline مرتب باشند.
+- quality UI جمع‌وجور باشد.
 - Next Episode فعلی حفظ شود.
-
-اگر Player بعداً اصلاح شد، ویژگی‌های سالم فعلی (quality/fullscreen/lock/audio/episode selection/Next Episode) همزمان regression تست شوند.
-
----
+- هر تغییر Player باید quality/fullscreen/lock/audio/episode selection/Next Episode را regression-test کند.
 
 # Stars / Cast
 
-- actor page و actor image لازم است.
-- TMDB enrichment workflow جداگانه وجود دارد.
-- تصاویر actor باید تا حد امکان بدون VPN با cache/proxy قابل استفاده باشند.
-- search by actor از compact `peopleWorks` reverse lookup استفاده می‌کند؛ full people array را دوباره روی هر summary embed نکن.
+- actor page/image حفظ شود.
+- TMDB enrichment جداگانه است.
+- actor image تا حد امکان با cache/proxy بدون VPN.
+- actor search از compact `peopleWorks` استفاده کند؛ full people array دوباره روی هر summary embed نشود.
 
----
+# IMDb Top 100
 
-# IMDb Top 100 — قابلیت مورد درخواست
+- جای برنامه هفتگی/طبق طراحی فعلی Top 100 فیلم و سریال به‌روز باشد.
+- عنوان موجود در catalog باز شود؛ عنوان ناموجود پیام `هنوز به آپاراتچی اضافه نشده` بدهد.
+- قبل از تغییر دوباره HEAD فعلی audit شود.
 
-کاربر خواسته بخش برنامه هفتگی حذف/جایگزین شود و Top 100 IMDb برای فیلم و سریال وجود داشته باشد:
+# GitHub Actions / Build
 
-- خودکار به‌روزرسانی شود.
-- اگر title در catalog موجود است، باز شود.
-- اگر موجود نیست، پیام `هنوز به آپاراتچی اضافه نشده` نمایش داده شود.
-
-قبل از پیاده‌سازی/تغییر این بخش، HEAD فعلی بررسی شود چون ممکن است بخشی از آن از قبل اضافه شده باشد.
-
----
-
-# GitHub Actions / هزینه و Build
-
-- سابقهٔ محدودیت GitHub Actions/storage وجود دارد؛ plan حدود 0.5 GB و budget صفر باعث block شدن runها شده بود.
-- بنابراین workflowها بی‌دلیل اجرا نشوند.
-- sync historically ساعتی بوده و workflowهای catalog/TMDB/APK جدا هستند.
-- APK فقط وقتی کاربر صریحاً گفت ساخته شود.
-- در این اصلاح **هیچ Action، Sync یا APK اجرا/ساخته نشد.**
-
----
-
-# آخرین نتیجهٔ کاری این چت
-
-آخرین گزارش واقعی کاربر این بود که Home فقط skeleton دارد و صفحات «همه فیلم‌ها/همه سریال‌ها» صفر نتیجه‌اند.
-
-Audit روی HEAD واقعی نشان داد:
-
-1. Content خالی نیست و index حدود 7.9 MB با item واقعی دارد.
-2. مشکل از Mobile cold-start بود.
-3. دو fallback نصب تازه در `src/contentService.ts` هنوز `items: []` می‌دادند.
-4. commit عملکردی `1366f2839b3f1a28c2bb83da2f5609ac686fa69a` فقط همین دو نقطه را به `normalizedLocalPayload()` تغییر داد.
-5. diff عملکردی دقیقاً 2 addition + 2 deletion است؛ هیچ معماری سالم قبلی بازنویسی نشد.
-6. هیچ Action/Sync/APK اجرا نشد.
-
-مرحلهٔ بعد برای تست روی گوشی: فقط در صورت درخواست صریح کاربر APK جدید از Mobile HEAD جدید ساخته شود.
+- سابقهٔ محدودیت Actions/storage و budget صفر وجود دارد؛ workflow بی‌دلیل اجرا نشود.
+- APK فقط با درخواست صریح ساخته شود.
+- commitهای این milestone با `[skip ci]` نوشته شدند و هیچ Action/Sync/APK دستی اجرا نشد.
 
 ---
 
 # روش شروع هر چت جدید
 
-وقتی کاربر گفت «آپاراتچی را ادامه بده»:
-
 1. `PROJECT-STATE.md` را از Mobile `main` بخوان.
-2. HEAD واقعی Mobile و Content را بخوان.
-3. اگر از checkpoint جلوترند، commitهای جدید مرتبط را audit کن.
+2. HEAD واقعی Mobile و Content را دوباره بخوان.
+3. اگر از checkpoint جلوترند commitهای مرتبط را audit کن.
 4. screenshot/APK قدیمی را دلیل قطعی خرابی HEAD ندان.
-5. موارد تأییدشده بالا را بی‌دلیل دوباره پیاده‌سازی نکن.
-6. اگر کاربر چند ایراد می‌فرستد، فقط جمع کن تا بگوید «تموم شد/اصلاح کن».
-7. بعد از اصلاح واقعی، همین فایل را دوباره آپدیت کن.
+5. اصلاحات تأییدشده را بی‌دلیل دوباره پیاده‌سازی نکن.
+6. اگر چند ایراد پشت سر هم می‌آید فقط جمع کن تا کاربر بگوید «تموم شد/اصلاح کن».
+7. بعد از اصلاح واقعی همین فایل را به‌روزرسانی کن.
 8. APK فقط با درخواست صریح.
 
 ## جملهٔ کوتاه برای چت جدید
