@@ -1,11 +1,11 @@
-name: Verify RTL media rails
+name: Verify smooth right-start media rails
 
 on:
   push:
     branches: [main]
     paths:
-      - 'scripts/apply-rtl-media-rails.mjs'
-      - 'scripts/test-rtl-media-rails.mjs'
+      - 'scripts/patch-smooth-right-start-rails-v1.mjs'
+      - 'scripts/test-smooth-right-start-rails-v1.mjs'
       - '.github/workflows/verify-rtl-media-rails.yml'
   workflow_dispatch:
 
@@ -19,27 +19,36 @@ concurrency:
 jobs:
   patch-test-commit:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout project
         uses: actions/checkout@v6
         with:
           ref: main
-          fetch-depth: 0
+          fetch-depth: 30
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
+
+      - name: Apply native-scroll right-start rail repair
+        run: node scripts/patch-smooth-right-start-rails-v1.mjs
+
       - name: Install dependencies
         run: npm ci
-      - name: Apply RTL media rails
-        run: node scripts/apply-rtl-media-rails.mjs
+
       - name: Type-check application
         run: npm run typecheck
-      - name: Run RTL rail regression
-        run: node scripts/test-rtl-media-rails.mjs
-      - name: Commit verified RTL rails
+
+      - name: Verify horizontal rail gesture regression
+        run: node scripts/test-smooth-right-start-rails-v1.mjs
+
+      - name: Verify Home performance budget
+        run: node scripts/test-home-performance-pass.mjs
+
+      - name: Commit verified rail repair
         shell: bash
         run: |
           set -euo pipefail
@@ -47,10 +56,10 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add App.tsx
           if git diff --cached --quiet; then
-            echo "RTL media rails already applied."
+            echo "Smooth right-start rails already applied."
             exit 0
           fi
-          git commit -m "fix: start media rails from the right"
+          git commit -m "fix: keep media rails smooth while starting from right"
           PUSHED=0
           for attempt in 1 2 3 4 5; do
             if git pull --rebase origin main && git push origin HEAD:main; then PUSHED=1; break; fi
