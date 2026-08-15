@@ -37,9 +37,15 @@ app = replaceOnce(app, oldPreparing, newPreparing, 'show movie actions from comp
 
 app = replaceOnce(
   app,
-  `  if (hasBundledCatalog) {\n    initialRefreshTimer = setTimeout(reloadContentWhenIdle, 650);\n  } else {\n    void reloadContent();\n  }\n  startupFallbackTimer = setTimeout(dismissStartup, 5000);`,
-  `  if (hasBundledCatalog) {\n    // The emergency catalog already exists synchronously, so start its real\n    // bootstrap refresh immediately. Waiting for InteractionManager here made\n    // the 5-second anti-stuck timer become the normal first-install path.\n    void reloadContent(false);\n  } else {\n    void reloadContent();\n  }\n  startupFallbackTimer = setTimeout(dismissStartup, 2000);`,
+  `      initialRefreshTimer = setTimeout(reloadContentWhenIdle, 650);`,
+  `      // The real bootstrap refresh must start immediately on first install;\n      // InteractionManager remains reserved for later periodic/app-state refreshes.\n      void reloadContent(false);`,
   'remove first-install idle gate',
+);
+app = replaceOnce(
+  app,
+  `    startupFallbackTimer = setTimeout(dismissStartup, 5000);`,
+  `    startupFallbackTimer = setTimeout(dismissStartup, 2000);`,
+  'shorten startup anti-stuck fallback',
 );
 
 await write('App.tsx', app);
