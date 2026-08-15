@@ -17,6 +17,13 @@ export const REMOTE_CONTENT_INDEX_URL =
   `${CONTENT_REPOSITORY_BASES[0]}catalog-index.json`;
 
 /**
+ * نمای کم‌حجم صفحهٔ اصلی برای اولین اجرای بدون cache. این فایل شامل
+ * summary واقعی ردیف‌های Home و IMDb است و بعداً با index کامل جایگزین می‌شود.
+ */
+export const REMOTE_CONTENT_BOOTSTRAP_URL =
+  `${CONTENT_REPOSITORY_BASES[0]}catalog-bootstrap.json`;
+
+/**
  * نسخهٔ کامل قدیمی فقط برای سازگاری با اولین اجرای مهاجرت نگه داشته شده است.
  * برنامه در حالت عادی آن را دانلود نمی‌کند.
  */

@@ -39,7 +39,7 @@ import {
 import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
-import { getBundledContent, loadCatalogItemDetail, loadContent, LoadedContent } from './src/contentService';
+import { getBundledContent, loadBootstrapContent, loadCatalogItemDetail, loadContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
   checkMobileOperatorAccess,
@@ -2621,7 +2621,6 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
   items: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
 }) {
-  const displayedItems = useMemo(() => [...items].reverse(), [items]);
   const renderPoster = useCallback(({ item }: { item: CatalogItem }) => (
     <PosterCard item={item} onOpen={() => onOpen(item)} />
   ), [onOpen]);
@@ -2629,13 +2628,13 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
   return (
     <FlatList
       horizontal
-      data={displayedItems}
+      data={items}
       keyExtractor={(item) => item.id}
       renderItem={renderPoster}
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-      initialScrollIndex={displayedItems.length - 1}
+      inverted
       getItemLayout={(_data, index) => ({ length: 148, offset: 148 * index, index })}
       initialNumToRender={4}
       maxToRenderPerBatch={4}
@@ -3013,6 +3012,11 @@ function ImdbTop100Section({
 
   const rankingReady = Boolean(ranking?.movies?.length || ranking?.series?.length);
 
+  // The emergency bundled catalog has no IMDb payload. Do not show a large
+  // indefinite loader while the real bootstrap/full index is resolving; mount
+  // the section atomically as soon as truthful ranking data exists.
+  if (!rankingReady || entries.length === 0) return null;
+
   const topThree = entries.slice(0, 3);
   const previewRows = entries.slice(3, 5);
 
@@ -3312,11 +3316,12 @@ const HomeScreen = memo(function HomeScreen({
   // startup work as the archive grew and blocked taps on the JS thread.
   const rows = useMemo(() => buildHomeCatalogRows(catalog), [catalog]);
   const newest = rows[0]?.items || [];
-  // The first Home rails must exist in the native tree on the very first frame.
-  // Keeping only the later rails virtualized avoids the Android blank-until-scroll
-  // regression without turning the whole Home catalog into an eager render.
-  const eagerRows = useMemo(() => rows.slice(0, 4), [rows]);
-  const deferredRows = useMemo(() => rows.slice(4), [rows]);
+  // Empty configured categories must not consume the four eager native slots.
+  // The first four *real* rails are mounted in the header immediately; only
+  // later populated rails stay virtualized.
+  const populatedRows = useMemo(() => rows.filter((row) => row.items.length > 0), [rows]);
+  const eagerRows = useMemo(() => populatedRows.slice(0, 4), [populatedRows]);
+  const deferredRows = useMemo(() => populatedRows.slice(4), [populatedRows]);
 
   // Visible artwork is loaded and cached by expo-image itself. Avoid a parallel
   // prefetch flood so taps and the first on-screen posters get priority.
@@ -7505,9 +7510,21 @@ function AppContent() {
 
       if (firstApplied) {
         dismissStartup();
-        if (initialLoad && firstContent.source !== 'remote') {
+        if (initialLoad && firstContent.source === 'local') {
+          // A fresh install used to expose the nine-item emergency catalog while
+          // the full index downloaded. Paint the small real Home bootstrap first,
+          // then replace it with the complete catalog in the same async sequence.
+          void (async () => {
+            const bootstrapContent = await loadBootstrapContent();
+            if (bootstrapContent) applyContent(bootstrapContent);
+            const freshContent = await loadContent(false);
+            if (freshContent.source !== 'local') applyContent(freshContent);
+          })().catch(() => undefined);
+        } else if (initialLoad && firstContent.source !== 'remote') {
           void loadContent(false)
-            .then((freshContent) => { applyContent(freshContent); })
+            .then((freshContent) => {
+              if (freshContent.source !== 'local') applyContent(freshContent);
+            })
             .catch(() => undefined);
         }
         return;

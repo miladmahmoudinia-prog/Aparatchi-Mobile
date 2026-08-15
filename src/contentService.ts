@@ -2,6 +2,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { CATALOG, VERIFIED_IRANIAN_SCHEDULE } from './data';
 import {
   CONTENT_REPOSITORY_BASES,
+  REMOTE_CONTENT_BOOTSTRAP_URL,
   REMOTE_CONTENT_DETAIL_BASE_URL,
   REMOTE_CONTENT_INDEX_URL,
   REMOTE_CONTENT_MANIFEST_URL,
@@ -1500,6 +1501,56 @@ export const getBundledContent = (): LoadedContent => ({
   ...normalizedLocalPayload(),
   source: 'local',
 });
+
+/**
+ * Fetch the tiny Home bootstrap before the multi-megabyte catalog index on a
+ * true cold start. CDN and GitHub Raw race each other so one blocked mirror can
+ * never hold the first useful Home frame for a full request timeout.
+ */
+export async function loadBootstrapContent(): Promise<LoadedContent | null> {
+  const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();
+  if (!remoteUrl) return null;
+  const candidates = remoteRepositoryUrlCandidates(remoteUrl);
+  if (!candidates.length) return null;
+
+  const controllers = candidates.map(() => new AbortController());
+  return await new Promise<LoadedContent | null>((resolve) => {
+    let remaining = candidates.length;
+    let settled = false;
+    const finishEmpty = () => {
+      remaining -= 1;
+      if (!settled && remaining <= 0) {
+        settled = true;
+        resolve(null);
+      }
+    };
+
+    candidates.forEach((candidate, index) => {
+      const controller = controllers[index];
+      const timeout = setTimeout(() => controller.abort(), 12_000);
+      const separator = candidate.includes('?') ? '&' : '?';
+      fetch(`${candidate}${separator}_aparatchi_bootstrap=${Math.floor(Date.now() / 300_000)}`, {
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`Bootstrap HTTP ${response.status}`);
+          const parsed = parsePayload(JSON.parse(await response.text()));
+          if (!parsed || parsed.items.length === 0 || settled) return;
+          settled = true;
+          controllers.forEach((other, otherIndex) => {
+            if (otherIndex !== index) other.abort();
+          });
+          resolve({ ...parsed, source: 'remote' });
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          clearTimeout(timeout);
+          if (!settled) finishEmpty();
+        });
+    });
+  });
+}
 
 const readCachedContent = async (): Promise<CatalogPayload | null> => {
   if (memoryContent) return memoryContent;
