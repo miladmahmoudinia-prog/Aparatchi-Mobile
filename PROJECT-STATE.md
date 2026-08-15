@@ -8,9 +8,10 @@
 - Branch: `main`
 
 ## checkpoint — 2026-08-15
-- آخرین commit عملکردی Mobile: `6955c564557907828714df2152262c7afb6ce965` — `fix: speed episode and detail interactions [skip ci]`
-- Content HEAD هنگام checkpoint: `1091d37355a40306444272320e1fe2d42352d09d` — `chore: advance oldest-year archive completion`
-- Workflow تأیید fix جدید: `Fix runtime latency v3`, run `31901587824`؛ TypeScript و تمام regression testها سبز شدند و فقط بعد از سبزشدن commit عملکردی ساخته شد.
+- آخرین commit عملکردی Mobile: `fad7c57d6d3de22817c2ce4f6581a54cd44eb98b` — `fix: make Home first frame deterministic [skip ci]`
+- Content bootstrap commit: `5a243b352af80e52d4c6ada749fe9e9fa9bdc31f` — `perf: publish fast Home bootstrap [skip ci]`
+- Workflow تأیید Mobile: `Fix Home first frame v4`, run `31903599514`؛ TypeScript و همهٔ regressionهای Home/Detail/Performance/RTL/Startup/Poster/Operator/Metadata سبز شدند.
+- Workflow تأیید Content: `Add Home bootstrap v1`, run `31903499320` سبز شد و bootstrap کم‌حجم واقعی منتشر شد.
 - APK توسط ChatGPT ساخته نشد.
 
 ---
@@ -29,6 +30,54 @@
 11. بعد از milestone واقعی همین فایل به‌روزرسانی شود.
 12. هیچ اصلاحی «حل‌شده» اعلام نشود تا typecheck/testهای مرتبط سبز نشده باشند.
 13. پاسخ‌های پروژه کوتاه نگه داشته شوند تا گفتگو زود به سقف طول نرسد.
+
+---
+
+# milestone Home first-frame + cold-start bootstrap — 2026-08-15
+
+## گزارش واقعی دستگاه
+- در بعضی railهای Home فقط یک پوستر در سمت راست paint می‌شد و فضای بزرگی خالی می‌ماند تا scroll/interaction انجام شود.
+- در نصب/اجرای تازه، Hero از catalog اضطراری چندآیتمی می‌آمد و IMDb روی «در حال آماده‌سازی» می‌ماند تا index کامل دانلود شود.
+
+## ریشه
+- HorizontalCatalog داده را reverse می‌کرد و Android را با initialScrollIndex به انتهای لیست می‌فرستاد؛ در nested horizontal virtualization گاهی فقط همان cell دور materialize می‌شد.
+- چهار eager slot بر اساس چهار row تنظیم‌شده انتخاب می‌شدند، نه چهار row واقعاً دارای محتوا؛ category خالی می‌توانست slot eager را هدر بدهد.
+- cold start بعد از local emergency catalog مستقیماً منتظر client index حدود ۸MB می‌ماند و local payload هم IMDb واقعی نداشت.
+
+## اصلاح نهایی
+Mobile commit: `fad7c57d6d3de22817c2ce4f6581a54cd44eb98b`
+Content commit: `5a243b352af80e52d4c6ada749fe9e9fa9bdc31f`
+
+### Home rails
+- HorizontalCatalog دیگر reverse-data + far-end initialScrollIndex ندارد؛ source order مستقیم با inverted هدفمند استفاده می‌شود تا item صفر از سمت راست فوراً materialize شود.
+- محدودیت performance حفظ شد: initialNumToRender/maxToRenderPerBatch برابر ۴، windowSize برابر ۴ و removeClippedSubviews=false.
+- eagerRows از چهار row واقعاً populated انتخاب می‌شوند؛ rowهای خالی دیگر slot اولیه را مصرف نمی‌کنند.
+- این تغییر فقط HorizontalCatalog Home است؛ railهای حساس Stars/People/Related که regression جدا دارند بی‌دلیل بازنویسی نشدند.
+
+### Cold start / IMDb
+- Content اکنون در هر rebuild/sync فایل `catalog-bootstrap.json` را می‌سازد؛ شامل summary واقعی ردیف‌های اصلی Home، تازه‌ها/به‌روزشده‌ها، featuredPeople و IMDb است و peopleWorks حجیم را حمل نمی‌کند.
+- manifest bootstrap را با revision/size/index معرفی می‌کند؛ اندازهٔ bootstrap تأییدشده 404486 بایت است، در برابر client index حدود 8265435 بایت.
+- Mobile در cold start واقعی CDN و GitHub Raw bootstrap را هم‌زمان race می‌کند، اولین payload معتبر را اعمال می‌کند و سپس index کامل را در همان مسیر پس‌زمینه جایگزین می‌کند.
+- refresh ناموفق اجازه ندارد bootstrap واقعی را دوباره با emergency local catalog downgrade کند.
+- IMDb تا قبل از ranking واقعی loader بزرگ و بی‌انتها نشان نمی‌دهد؛ section وقتی دادهٔ معتبر آماده شد atomically mount می‌شود.
+
+## تأیید سبز
+Workflow `Fix Home first frame v4`, run `31903599514`:
+- npm run typecheck
+- Home first-frame regression
+- Home/detail regression
+- Home performance boundaries
+- runtime latency regression
+- RTL rails خارج از Home
+- startup projectionist
+- poster stability
+- operator playback
+- neutral foreign media
+- metadata/detail/next-episode/episode-artwork
+
+Workflow `Add Home bootstrap v1`, run `31903499320` نیز client catalog regressions، final stability و bootstrap واقعی را سبز کرد.
+
+APK ساخته نشد.
 
 ---
 
@@ -141,13 +190,14 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 - episode cards نباید هنگام mount ویدئو decoder/thumbnail extraction راه بیندازند.
 
 ## Startup
-- bundled/local catalog در cold start موجود است و remote بعداً refresh می‌کند.
-- IMDb شرط آماده‌شدن catalog نیست.
+- emergency local catalog فقط fallback ضدگیرکردن است؛ در cold start واقعی bootstrap کم‌حجم Home قبل از client index کامل resolve و اعمال شود.
+- bootstrap باید summary واقعی Home + IMDb را داشته باشد و بعد با index کامل refresh شود؛ failure نباید آن را به local اضطراری downgrade کند.
+- IMDb شرط آماده‌شدن catalog نیست و در نبود ranking معتبر section نباید loader بزرگ بی‌انتها نشان دهد.
 - splash minimum چندثانیه‌ای برنگردد؛ fallback فقط anti-stuck.
 
 ## RTL / rails
 - `removeClippedSubviews={false}` در railهای حساس حفظ شود.
-- استراتژی فعلی `reverse-data + initialScrollIndex` برای rails حساس حفظ شود؛ broad native `direction: rtl`/`inverted` یا scroll hack بی‌دلیل برنگردد.
+- برای Stars/People/Related همان `reverse-data + initialScrollIndex` تست‌شده حفظ شود؛ HorizontalCatalog صفحهٔ Home استثنائاً direct-data + `inverted` هدفمند دارد تا first cell فوراً از راست paint شود. broad `direction: rtl` یا scroll hack سراسری برنگردد.
 
 ## Operator
 - Android operator playback از native `AparatchiCustomTab` با session و browser component صریح استفاده می‌کند؛ generic Open With/Linking fallback برنگردد.
