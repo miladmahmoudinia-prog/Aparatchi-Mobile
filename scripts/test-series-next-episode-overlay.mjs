@@ -14,6 +14,8 @@ const required = [
   "قسمت بعدی",
   "بستن پیشنهاد قسمت بعد",
   "پخش ({toPersianDigits(nextEpisodeCountdown)})",
+  "style={[styles.nextEpisodeOverlay, frameRect]}",
+  "nextEpisodeOverlay: { position: 'absolute'",
 ];
 
 for (const marker of required) {
@@ -22,9 +24,14 @@ for (const marker of required) {
 
 if (!app.includes("duration - 120")) throw new Error('Two-minute fallback is missing.');
 if (!app.includes('endCreditsStartSeconds')) throw new Error('Credits metadata hook is missing.');
+const styleStart = app.indexOf('nextEpisodeOverlay: {');
+const styleEnd = app.indexOf('nextEpisodeCard:', styleStart);
+const overlayStyle = app.slice(styleStart, styleEnd);
+if (overlayStyle.includes('absoluteFillObject')) throw new Error('Next episode overlay still fills the entire phone screen.');
 
 console.log(JSON.stringify({
   overlay: 'series-next-episode',
+  placement: 'video-frame',
   requiresRealNextEpisode: true,
   countdownSeconds: 15,
   autoPlay: true,
