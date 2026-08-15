@@ -8,17 +8,17 @@
 - Branch: `main`
 
 ## checkpoint — 2026-08-15
-- آخرین commit عملکردی Mobile: `344da0b7879a661ee4838845eca54a0f436ead28` — `fix: flush initial and hydrated Android frames [skip ci]`
+- آخرین commit عملکردی Mobile: `ce8b0646b37db5442f9427ddbbb42300e297896b` — `fix: keep Home rails and detail links visible [skip ci]`
 - Content HEAD هنگام این checkpoint: `7feeff1dbb49f9c9e6ff6454e1cbaeda72df0b79` — `chore: advance oldest-year archive completion`
 - commit اصلی اصلاح refresh دوبله در Content: `da08e72dbb5428aa7a832ea827b4a00abb2953af` — `fix: periodically recheck newly dubbed media [skip ci]`
-- هیچ Action/Sync/APK به‌صورت دستی توسط ChatGPT اجرا نشد. Content در این فاصله با workflowهای خودکار جلو رفته است؛ قبل از کار بعدی HEAD Content دوباره خوانده شود.
+- هیچ Action/Sync/APK به‌صورت دستی توسط ChatGPT اجرا نشد.
 
 ---
 
 # قوانین قطعی کار
 1. اگر کاربر چند ایراد پشت سر هم می‌فرستد، تا «تموم شد» یا «اصلاح کن» فقط جمع شوند و هیچ تغییری داده نشود.
 2. بعد از «اصلاح کن»، همهٔ موارد audit شوند و فقط مواردی تغییر کنند که روی HEAD فعلی واقعاً هنوز مشکل دارند.
-3. screenshot/APK قدیمی به‌تنهایی اثبات خرابی HEAD فعلی نیست.
+3. screenshot/APK قدیمی به‌تنهایی اثبات خرابی HEAD فعلی نیست؛ ویدیوی تست دستگاه برای regression فعلی معتبر است.
 4. فقط فایل‌های لازم تغییر کنند؛ Performance، ظاهر و بخش‌های سالم حفظ شوند.
 5. قبل از اصلاح محتوا مشخص شود مشکل Mobile است یا Content.
 6. `catalog-index.json`، `catalog-items/`، `catalog-stable/`، `catalog-manifest.json` و catalog اصلی پاک/خالی/ناقص نشوند.
@@ -35,18 +35,18 @@
 
 ## Detail hydration / stale shard recovery
 commitهای مهم Mobile: `020b62c...`, `f63c167...`, `1f4485c...`.
-`src/contentService.ts` identity را از immutable detail می‌گیرد، `catalog-stable/<identity>.json` را دنبال می‌کند، remote mirror/cache v3/forceRemote retry دارد و App در stale-index یک fresh catalog retry محدود انجام می‌دهد.
+`src/contentService.ts` detail یک عنوان را lazy می‌گیرد، cache دارد، CDN/Raw را موازی امتحان می‌کند، در stale shard از `catalog-stable/<identity>.json` استفاده می‌کند و App در شکست نهایی fresh catalog retry محدود دارد. full-catalog prefetch برنگردد.
 
 ## Performance
 commitهای مهم: `d3aa109...`, `508b24d...`, `274a65a...`.
 - navigation قبل از detail hydration؛ preload سنگین روی `onPressIn` برنگردد.
-- `categoryKeys` fast path، compact `peopleWorks`، Stars lazy، Home bounded/single-pass حفظ شود.
+- `categoryKeys` fast path، compact `peopleWorks`، Stars lazy و Home bounded حفظ شوند.
 - full catalog scan، bulk prefetch و request flood برنگردد.
 
 ## Startup / cold-start catalog
 `931b0e3...`, `b248cbc...`, `1366f283...`.
-- splash minimum چندثانیه‌ای ندارد؛ fallback فقط anti-stuck.
-- bundled/local catalog در cold start قابل نمایش است و remote بعداً refresh می‌کند.
+- bundled/local catalog در cold start موجود است و remote بعداً refresh می‌کند.
+- IMDb شرط آماده‌شدن catalog نیست.
 
 ## RTL / rails
 `58587db...` و `ed1ff11...`.
@@ -54,69 +54,51 @@ commitهای مهم: `d3aa109...`, `508b24d...`, `274a65a...`.
 - broad native `direction: rtl` روی FlatList/ScrollView برنگردد؛ reverse-data/right-start یا `scrollToEnd` کنترل‌شده حفظ شود.
 
 ## IMDb / Persian title
-Mobile `7d5731f...`: فارسی معتبر، وگرنه original English. transliteration فقط detection است، نه fallback نمایشی. proper-nameهایی مثل `سیتا رامام`، `پینوکیو` و `راستین` بی‌دلیل حذف نشوند.
+Mobile `7d5731f...`: فارسی معتبر، وگرنه original English. transliteration فقط detection است، نه fallback نمایشی.
 
-## Next Episode / Images
+## Next Episode / Images / Operator
 - `6e20587...`: countdown پانزده‌ثانیه‌ای Next Episode حفظ شود.
 - `aefcc17...`, `19d3dda...`: `expo-image` memory+disk cache، proxy/fallback و بدون bulk prefetch حفظ شود.
+- `01a20b3...`: operator Custom Tab به browser واقعی pin شده؛ generic Open With برنگردد.
 
 ---
 
-# milestone سه ایراد 2026-08-15
-
-## 1) جزئیات تا اسکرول کامل paint نمی‌شد — Mobile
-علامت: متن‌ها/دکمه‌ها/قسمت‌های صفحه Detail بعد از یک حرکت scroll تازه کامل دیده می‌شدند.
-Audit نشان داد `loadCatalogItemDetail()` آبجکت جدید برمی‌گرداند و مشکل same-reference mutation نیست. `DetailModal` بخش سنگین را با `InteractionManager.runAfterInteractions` deferred reveal می‌کند؛ دادهٔ summary مثل English title از قبل وجود دارد، پس علامت با frame/repaint deferred Android سازگار بود.
-
-اصلاح:
-- `382d2e80af12542ae27f934789d7e3915a4c082a`
-- hardening اولیه: `a45b6486ae5a3c67d3704079accfd4b7f6eafd86`
-- hardening نهایی: `344da0b7879a661ee4838845eca54a0f436ead28`
-- فایل: `index.ts`
-پس از callbackهای `InteractionManager.runAfterInteractions` یک root frame commit درخواست می‌شود تا state تازهٔ Modal بدون نیاز به scroll paint شود. نسخهٔ نهایی علاوه بر callback تابعی، taskهای `gen` را هم پوشش می‌دهد و recovery را به‌شکل bounded/coalesced انجام می‌دهد. App remount نمی‌شود؛ lazy detail، Player، RTL و image loading دست‌نخورده‌اند.
-این مورد device-test نشده و برای تست واقعی APK جدید لازم است.
-
-## 2) دوبله‌ای که بعداً اضافه می‌شود ممکن بود دوبله شناخته نشود — Content
-Parser اصلی `scripts/sync-upera.mjs` در media audit version 8 از قبل دوبله/زیرنویس، group hint، audio/voice language و media معتبر را تشخیص می‌دهد. مشکل parser نبود؛ freshness بود: عنوانی که قبلاً با version فعلی audit شده، اگر Upera بعداً دوبله اضافه کند ممکن بود دوباره وارد media-language audit نشود.
-
-اصلاح اصلی:
-- `da08e72dbb5428aa7a832ea827b4a00abb2953af`
-- فایل: `scripts/prepare-archive-backfill.mjs`
-- helper با audit version 8 همسان شد.
-- refresh دوره‌ای bounded اضافه شد: پیش‌فرض 6 فیلم خارجی در هر چرخه و حداکثر 12 outstanding، با اولویت source تازه‌تر؛ برای سریال فقط یک re-audit خارجیِ کامل/منتشرشده در هر زمان و اولویت با airing/recently-updated، تا archive completion عقب نیفتد.
-- parser موازی یا حدس دوبله ساخته نشد؛ همان parser معتبر فعلی دوباره media واقعی را می‌خواند.
-
-commit تکمیلی فعلی Content:
-- `07db70dd0e2681603a6bc7bc9bbc4c786031793c`
-- فایل: `scripts/client-catalog.mjs`
-`availableLanguages` معتبر را با `categoryKeys/categoryLabels` همگام می‌کند؛ بنابراین `dubbed/subtitled` و `دوبله فارسی/زیرنویس فارسی` از media واقعی اضافه یا حذف می‌شوند و category قدیمیِ اشتباه باقی نمی‌ماند.
-
-## 3) ویژه اینترنت همراه / Open With — سورس از قبل درست بود، APK نصب‌شده قدیمی است
-Mobile source در `01a20b3cdff6608ee1ffd351036ee7c2121d6734` (`fix: pin operator custom tab activity`) مسیر Android را به browser package/component واقعی و Custom Tabs session مشخص pin می‌کند و operator playback به generic `Linking`/`WebBrowser` chooser fallback ندارد.
-آخرین APK موفق auditشده روی HEAD `25366c3e1c581c36be2612e5e5e9b0674eddbb81` ساخته شده بود، یعنی قبل از این native fix. پس native source دوباره دستکاری نشد و APK جدید برای مشاهده/تست fix لازم است.
+# milestone دوبله — 2026-08-15
+Parser اصلی Content از media واقعی زبان را تشخیص می‌دهد. مشکل titleهایی که بعداً دوبله می‌شوند با refresh دوره‌ای bounded و همگام‌سازی `availableLanguages`/categoryKeys رفع شد.
+- `da08e72dbb5428aa7a832ea827b4a00abb2953af` — `scripts/prepare-archive-backfill.mjs`
+- `07db70dd0e2681603a6bc7bc9bbc4c786031793c` — `scripts/client-catalog.mjs`
+حدس دوبله/زیرنویس یا parser موازی ساخته نشود.
 
 ---
 
-# milestone Home + Detail repaint hardening — 2026-08-15
+# milestone Home + Detail — اصلاح قبلی ناکافی و hardening جدید 2026-08-15
 
-علائم گزارش‌شده در APK نصب‌شده:
-- Home در شروع می‌توانست ظاهراً تا آماده‌شدن IMDb ناقص بماند و ردیف‌های کاتالوگ بعداً ناگهان paint شوند.
-- دکمه‌های پخش/دانلود بعضی فیلم‌ها بعداً یا پس از حرکت صفحه ظاهر می‌شدند.
-- قسمت‌های سریال تا scroll بالا/پایین کامل دیده نمی‌شدند.
+## گزارش واقعی دستگاه بعد از `344da0b...`
+کاربر با ویدیو تأیید کرد که workaround قبلیِ root-frame repaint کافی نبوده است:
+- Home با وجود header/hero/IMDb، ردیف‌های اصلی کاتالوگ را در شروع ناقص/غایب نشان می‌داد و بعد از interaction/refresh ظاهر می‌کرد.
+- روی Detail بعضی فیلم‌ها پخش آنلاین/دانلود غایب می‌ماند و بعد از refresh ظاهر می‌شد.
+- خانوادهٔ همان علامت قبلاً روی قسمت‌های سریال هم دیده شده بود.
+پس `344da0b...` دیگر به‌عنوان fix نهایی این regression در نظر گرفته نشود.
 
-Audit روی HEAD نشان داد:
-- کاتالوگ Home از `visibleLoadedContent(getBundledContent())` از همان cold start در state وجود دارد؛ IMDb شرط آماده‌شدن catalog نیست.
-- cold-start catalog fix قبلی (`1366f283...`) حفظ شده و Content/IMDb دوباره به هم گره زده نشدند.
-- علامت «بعد از scroll ناگهان ظاهر می‌شود» با همان Android deferred-frame/repaint issue سازگار است، نه فقدان واقعی لینک/قسمت.
+## Audit ریشه‌ای
+- Home داده را از همان bundled/local catalog دارد؛ مشکل «منتظر IMDb بودن data» نیست.
+- outer Home `FlatList` یک `ListHeaderComponent` بلند (Hero + IMDb) دارد و ردیف‌های مهم کاتالوگ cellهای بعد از header هستند. روی Android این ترکیب در APK تست‌شده می‌تواند اولین batch را تا interaction بعدی عقب بیندازد.
+- `DetailModal` summary را عمداً بدون downloads/people می‌گیرد، اما یک fallback دقیقاً 1800ms بعد `detailBodyReady=true` می‌کرد؛ بنابراین اگر detail shard هنوز نرسیده بود، summary به‌اشتباه مثل صفحهٔ کامل render می‌شد و پخش/دانلود/قسمت‌ها غایب به نظر می‌رسیدند.
+- `catalog-stable/<identity>.json` pointer قابل تغییر است؛ query ثابت می‌تواند توسط intermediary cache شود و recovery را به shard قدیمی بفرستد.
 
-اصلاح تکمیلی:
-- `344da0b7879a661ee4838845eca54a0f436ead28` — `fix: flush initial and hydrated Android frames [skip ci]`
-- فقط `index.ts` تغییر کرد.
-- روی mount یک recovery burst محدود برای paint اولین batchهای Home اجرا می‌شود تا نمایش catalog به تغییر state دیرتر IMDb/remote وابسته نباشد.
-- بعد از `InteractionManager` نیز next-frame commit + دو follow-up محدود در 120ms و 1100ms انجام می‌شود تا async detail hydration/episode reveal بدون scroll paint شود.
-- burstها coalesced هستند؛ interval دائمی، remount، prefetch یا full-catalog scan اضافه نشده است.
-- Content repo، Player، RTL، image fallback و منطق لینک‌ها دست‌نخورده ماندند.
-- برای تأیید واقعی این اصلاحات روی دستگاه، APK تازه از Mobile HEAD لازم است؛ تا دستور صریح کاربر APK ساخته نشود.
+## اصلاح جدید
+commit عملکردی:
+- `ce8b0646b37db5442f9427ddbbb42300e297896b` — `fix: keep Home rails and detail links visible [skip ci]`
+- فایل عملکردی: `index.ts`
+
+رفتار جدید:
+1. فقط Home `FlatList` با signature مشخص (`latest`, `updated`, Home rows) شناسایی می‌شود. چهار ردیف اول کاتالوگ که قبلاً initial batch بودند داخل header tree به‌صورت eager mount می‌شوند؛ بقیه همچنان با Native FlatList virtualized و bounded می‌مانند. full eager render اضافه نشده است.
+2. workaround قبلیِ global `InteractionManager`/root repaint کاملاً حذف شد.
+3. فقط requestهای کوچک `catalog-stable/<identity>.json` cache-buster per-request می‌گیرند تا pointer mutable از cache قدیمی نیاید؛ immutable detail JSON و catalog اصلی دست‌نخورده‌اند.
+4. fallback دقیق 1800ms Detail تا 15s عقب برده شده تا summary فاقد links به‌عنوان detail کامل نمایش داده نشود. وقتی `detailLoaded=true` می‌شود، reveal عادی خود DetailModal انجام می‌شود.
+5. Content repo، Player، RTL، image loading، download logic و classification دست‌نخورده‌اند.
+
+این hardening روی سورس audit شده ولی device-test نشده است. برای تأیید روی گوشی APK تازه از Mobile HEAD لازم است؛ تا دستور صریح کاربر APK ساخته نشود.
 
 ---
 
@@ -132,18 +114,19 @@ Audit روی HEAD نشان داد:
 - لمس پوستر/دسته/مشاهده همه/BottomNav/Stars سریع بماند.
 - dynamic title sizing، Back یک‌مرحله‌ای، offline message، centered episode play icon، smooth fullscreen و poster fallback/cache حفظ شوند.
 - «ادامه تماشا» و likes/comments تا درخواست جدید برنگردند.
-- Player: tap controls/timeline، fullscreen/zoom، close، lock، mute/volume، compact quality UI و Next Episode فعلی regression نکنند.
+- Player: tap controls/timeline، fullscreen/zoom، close، lock، mute/volume، compact quality UI و Next Episode regression نکنند.
 
 # Stars / IMDb
 - actor page/image و compact `peopleWorks` حفظ شود؛ full people array روی summary برنگردد.
-- IMDb Top 100 فیلم/سریال: عنوان موجود باز شود، ناموجود پیام `هنوز به آپاراتچی اضافه نشده` بدهد؛ قبل از تغییر HEAD واقعی audit شود.
+- IMDb Top 100 فیلم/سریال: عنوان موجود باز شود، ناموجود پیام `هنوز به آپاراتچی اضافه نشده` بدهد.
 
 # شروع چت جدید
 1. `PROJECT-STATE.md` از Mobile main.
 2. HEAD واقعی Mobile و Content.
-3. اگر Content از checkpoint جلوتر است commitهای جدید audit شوند.
-4. اصلاحات تأییدشده بی‌دلیل تکرار نشوند.
-5. اگر کاربر چند ایراد می‌فرستد فقط جمع شود تا «تموم شد/اصلاح کن».
-6. APK فقط با دستور صریح.
+3. اگر Content جلوتر است commitهای جدید audit شوند.
+4. `344da0b...` برای Home/Detail fix نهایی محسوب نشود؛ وضعیت جدید از `ce8b064...` ادامه پیدا کند.
+5. اصلاحات تأییدشده بی‌دلیل تکرار نشوند.
+6. اگر کاربر چند ایراد می‌فرستد فقط جمع شود تا «تموم شد/اصلاح کن».
+7. APK فقط با دستور صریح.
 
-جملهٔ کوتاه: `پروژه آپاراتچی را از PROJECT-STATE.md روی Mobile main ادامه بده؛ اول HEAD واقعی Mobile و Content را بخوان، اصلاحات تأییدشده را دوباره دستکاری نکن و فقط موارد واقعاً باقی‌مانده را اصلاح کن.`
+جملهٔ کوتاه: `پروژه آپاراتچی را از PROJECT-STATE.md روی Mobile main ادامه بده؛ اول HEAD واقعی Mobile و Content را بخوان، برای Home/Detail از ce8b064... ادامه بده و APK فقط با دستور صریح ساخته شود.`
