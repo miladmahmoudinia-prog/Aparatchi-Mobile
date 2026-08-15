@@ -10,13 +10,11 @@
 
 ## checkpoint آخرین بازبینی — 2026-08-15
 
-- Mobile HEAD قبل از همین به‌روزرسانی وضعیت: `0051de9d89f50488ae69b52cc10378c2f3e11bce`
-  - `docs: add persistent Aparatchi project state`
-- آخرین commit عملکردی Mobile قبل از فایل state:
-  - `7bf7ee5b8a48c04d742389f36114e29625739c86`
-  - `fix: keep catalog visible while remote refresh loads`
+- آخرین commit عملکردی Mobile قبل از همین به‌روزرسانی state:
+  - `1366f2839b3f1a28c2bb83da2f5609ac686fa69a`
+  - `fix: keep cold-start catalog visible`
 - Content HEAD هنگام آخرین بازبینی:
-  - `c13430e5a4583602e0cced1a152972d1562c8754`
+  - `f22694cb8b714b2b47f0bd9f7edba5d8a14ab99c`
   - `chore: advance oldest-year archive completion`
 
 > همیشه HEAD جدید دوباره خوانده شود. از SHAهای این فایل برای کار روی نسخهٔ قدیمی استفاده نشود.
@@ -115,8 +113,8 @@ commitهای مهم:
 - minimum اجباری چندثانیه‌ای برای splash وجود ندارد.
 - `dismissStartup()` مستقیم startup را مخفی می‌کند.
 - fallback پنج‌ثانیه‌ای فقط برای جلوگیری از گیرکردن دائمی است.
-- اگر bundled catalog موجود باشد، Home زود paint می‌شود و network refresh بعداً انجام می‌شود.
-- اگر bundled catalog نباشد، startup تا remote attempt/fallback می‌ماند.
+- bundled/local catalog اکنون از اولین render قابل استفاده است و Home می‌تواند قبل از remote refresh محتوا نشان دهد.
+- network refresh بعداً با مسیر cache/remote فعلی انجام می‌شود.
 
 Regression قدیمی که نباید برگردد:
 
@@ -238,28 +236,52 @@ commit مهم:
 
 ---
 
-## 9) catalog Content واقعاً خالی نیست — تأیید شده
+## 9) catalog Content واقعاً خالی نیست — تأیید مجدد 2026-08-15
 
-در audit آخر Content repo شامل این ساختارها بود:
+Content HEAD هنگام بازبینی: `f22694cb8b714b2b47f0bd9f7edba5d8a14ab99c`.
 
-- `catalog-index.json` حدود 7.9 MB
-- `catalog.json` حدود 43.3 MB
-- `catalog-items/`
-- `catalog-stable/`
-- `catalog-manifest.json`
-- `persian-title-cache.json`
-- `tmdb-cache.json`
-- sync reports/state
+در همین HEAD:
 
-Content tree بررسی‌شده: `08a4797d9442685b3c82de2acbbcfaafa3a2890f`.
+- `catalog-index.json` حدود 7.9 MB و دارای item واقعی است.
+- `catalog.json` حدود 43.6 MB است.
+- `catalog-items/` و `catalog-stable/` وجود دارند.
+- `catalog-manifest.json` معتبر است.
 
-بنابراین پیام APK قدیمی `فهرست محتوا خالی است` نباید مساوی «فایل Content خالی شده» فرض شود.
+پس صفحات صفرنتیجه و skeleton گزارش‌شده از Content خالی نبودند؛ علت در bootstrap اپ Mobile بود.
 
-Mobile functional commit مرتبط:
+---
 
-- `7bf7ee5b8a48c04d742389f36114e29625739c86` — `fix: keep catalog visible while remote refresh loads`
+## 10) Cold-start / نصب تازه و catalog خالی — اصلاح‌شده در Mobile
 
-اگر کاربر هنوز در APK نصب‌شده empty catalog می‌بیند، اول مشخص شود APK قبل از این commit است یا نه. برای اثبات runtime جدید ممکن است **APK جدید لازم باشد، ولی فقط با درخواست صریح کاربر ساخته شود.**
+گزارش کاربر:
+
+- Home فقط skeleton نشان می‌داد.
+- «همه فیلم‌ها» و «همه سریال‌ها» صفر نتیجه داشتند.
+- دسته‌بندی UI بالا می‌آمد ولی catalog به UI نمی‌رسید.
+
+علت ریشه‌ای در HEAD قبلی Mobile:
+
+- `getBundledContent()` عمداً `unavailableLocalPayload()` با `items: []` برمی‌گرداند.
+- در `loadContent(preferCache=true)` اگر نصب تازه cache نداشت، دوباره همان payload خالی برمی‌گشت.
+- در شروع اولیه App، `loadContent(initialLoad)` با `initialLoad=true` اجرا می‌شود؛ بنابراین قبل از تکمیل دانلود چندمگابایتی remote هیچ catalog قابل نمایش وجود نداشت.
+- fallback پنج‌ثانیه‌ای Splash می‌توانست پوشش startup را بردارد در حالی که remote هنوز در حال دانلود/timeout بود؛ نتیجه همان skeleton و صفرنتیجهٔ گزارش‌شده بود.
+
+اصلاح عملکردی:
+
+- `1366f2839b3f1a28c2bb83da2f5609ac686fa69a` — `fix: keep cold-start catalog visible`
+- فایل: `src/contentService.ts`
+- فقط دو خط تغییر کرد:
+  - `getBundledContent()` اکنون `normalizedLocalPayload()` را برمی‌گرداند.
+  - مسیر `preferCache` در نبود cache نیز `normalizedLocalPayload()` را برمی‌گرداند.
+- catalog کوچک داخلی فوراً قابل نمایش است و remote/cache architecture موجود بعداً آن را با catalog کامل جایگزین می‌کند.
+- remote mirror validation، manifest، cache v3، stable detail recovery، Player، RTL، image cache و Performance تغییر نکردند.
+
+Regression ممنوع:
+
+- cold-start دوباره نباید در نبود cache به `items: []` برگردد.
+- برای جلوگیری از نمایش catalog محلی، `getBundledContent()` یا fallback بدون-cache دوباره به `unavailableLocalPayload()` برگردانده نشود.
+
+برای مشاهدهٔ این اصلاح در گوشی، APK نصب‌شده باید شامل commit جدید باشد؛ **APK جدید لازم است، ولی فقط با دستور صریح کاربر ساخته شود.**
 
 ---
 
@@ -369,25 +391,24 @@ Mobile functional commit مرتبط:
 - بنابراین workflowها بی‌دلیل اجرا نشوند.
 - sync historically ساعتی بوده و workflowهای catalog/TMDB/APK جدا هستند.
 - APK فقط وقتی کاربر صریحاً گفت ساخته شود.
-- در آخرین audit **هیچ Action و هیچ APK اجرا/ساخته نشد.**
+- در این اصلاح **هیچ Action، Sync یا APK اجرا/ساخته نشد.**
 
 ---
 
 # آخرین نتیجهٔ کاری این چت
 
-در audit آخر، بدون تغییر executable code، موارد زیر از روی HEAD بررسی شدند:
+آخرین گزارش واقعی کاربر این بود که Home فقط skeleton دارد و صفحات «همه فیلم‌ها/همه سریال‌ها» صفر نتیجه‌اند.
 
-1. stale detail recovery → موجود و درست.
-2. Performance interaction paths → اصلاحات اصلی موجود.
-3. startup/splash → minimum اجباری حذف شده.
-4. poster rails → clipping fix موجود.
-5. RTL rails → معماری reverse/right-start موجود.
-6. IMDb unknown title fallback → Mobile دیگر فارسی مصنوعی نمی‌سازد.
-7. Next Episode → overlay/countdown و انتقال قسمت موجود.
-8. image caching/fallback → معماری progressive/cache موجود.
-9. Content catalog → فایل‌ها و detail/stable structure واقعاً موجود و catalog خالی نیست.
+Audit روی HEAD واقعی نشان داد:
 
-در آن audit هیچ executable file تغییر نکرد و هیچ Action/APK اجرا نشد. تنها کار بعدی این مرحله، ثبت همین وضعیت در `PROJECT-STATE.md` بود.
+1. Content خالی نیست و index حدود 7.9 MB با item واقعی دارد.
+2. مشکل از Mobile cold-start بود.
+3. دو fallback نصب تازه در `src/contentService.ts` هنوز `items: []` می‌دادند.
+4. commit عملکردی `1366f2839b3f1a28c2bb83da2f5609ac686fa69a` فقط همین دو نقطه را به `normalizedLocalPayload()` تغییر داد.
+5. diff عملکردی دقیقاً 2 addition + 2 deletion است؛ هیچ معماری سالم قبلی بازنویسی نشد.
+6. هیچ Action/Sync/APK اجرا نشد.
+
+مرحلهٔ بعد برای تست روی گوشی: فقط در صورت درخواست صریح کاربر APK جدید از Mobile HEAD جدید ساخته شود.
 
 ---
 
