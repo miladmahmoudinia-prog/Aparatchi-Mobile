@@ -8,26 +8,55 @@ const block = (startMarker, endMarker) => {
   return source.slice(start, end);
 };
 
+const requireMarkers = (name, text, markers) => {
+  for (const marker of markers) {
+    if (!text.includes(marker)) throw new Error(`${name} marker missing: ${marker}`);
+  }
+};
+
+const rejectMarkers = (name, text, markers) => {
+  for (const marker of markers) {
+    if (text.includes(marker)) throw new Error(`${name} still contains unwanted positioning marker: ${marker}`);
+  }
+};
+
+// Horizontal Android lists are kept in a deterministic right-start position by
+// reversing only the small displayed array and starting at its final index.
+// This avoids broad native direction/inverted behavior that previously caused
+// edge cards to disappear or rails to open in the middle.
 const people = block('function PeopleSection', 'const HorizontalCatalog');
-if (!people.includes('data={people}')) throw new Error('People rail does not use logical order.');
-if (!people.includes('styles.mediaRailRtl')) throw new Error('People rail is not RTL.');
-if (people.includes('scrollToEnd') || people.includes('.reverse()')) throw new Error('People rail still forces physical scrolling/reversal.');
+requireMarkers('People rail', people, [
+  'const displayedPeople = useMemo(() => [...people].reverse(), [people]);',
+  'data={displayedPeople}',
+  'initialScrollIndex={displayedPeople.length - 1}',
+  'getItemLayout=',
+  'removeClippedSubviews={false}',
+]);
+rejectMarkers('People rail', people, ['scrollToEnd', 'inverted={true}']);
 
 const stars = block('function HomeStarsSectionBase', 'const HomeStarsSection');
-for (const marker of ['data={resolvedPeople}', 'data={works}', 'styles.mediaRailRtl']) {
-  if (!stars.includes(marker)) throw new Error(`Stars rail marker missing: ${marker}`);
-}
-if (stars.includes('scrollToEnd') || stars.includes('displayedPeople') || stars.includes('displayedWorks')) {
-  throw new Error('Stars section still uses reverse/scroll-to-end positioning.');
-}
+requireMarkers('Stars people rail', stars, [
+  'const displayedPeople = useMemo(() => [...resolvedPeople].reverse(), [resolvedPeople]);',
+  'data={displayedPeople}',
+  'initialScrollIndex={displayedPeople.length - 1}',
+]);
+requireMarkers('Stars works rail', stars, [
+  'const displayedWorks = useMemo(() => [...works].reverse(), [works]);',
+  'data={displayedWorks}',
+  'initialScrollIndex={displayedWorks.length - 1}',
+]);
+rejectMarkers('Stars rails', stars, ['scrollToEnd', 'inverted={true}']);
 
 const related = block('function RelatedTitlesSection', 'function DetailModal');
-if (!related.includes('data={related}')) throw new Error('Related rail does not use logical order.');
-if (!related.includes('style={styles.mediaRailRtl}')) throw new Error('Related rail is not RTL.');
-if (related.includes('scrollToEnd') || related.includes('.reverse()')) throw new Error('Related rail still forces scroll/reversal.');
+requireMarkers('Related rail', related, [
+  'const displayedRelated = useMemo(() => [...related].reverse(), [related]);',
+  'data={displayedRelated}',
+  'initialScrollIndex={displayedRelated.length - 1}',
+  'getItemLayout=',
+]);
+rejectMarkers('Related rail', related, ['scrollToEnd', 'inverted={true}']);
 
 for (const marker of [
-  "mediaRailRtl: { direction: 'rtl' }",
   "relatedTitleCard: { width: 126, alignItems: 'center' }",
   "relatedTitleName: { ...rtlText, width: '100%', color: COLORS.text, fontSize: 10.5, fontWeight: '800', textAlign: 'center'",
   "posterName: { ...rtlText, color: COLORS.text",
@@ -37,7 +66,7 @@ for (const marker of [
 }
 
 console.log(JSON.stringify({
-  mediaRails: 'rtl-logical-order',
+  mediaRails: 'reverse-data-right-start',
   forcedScrollToEnd: false,
   invertedFlatList: false,
   captionsCentered: true,
