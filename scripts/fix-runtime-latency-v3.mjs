@@ -6,7 +6,9 @@ const write = (path, content) => fs.writeFile(path, content, 'utf8');
 const replaceOnce = (source, before, after, label) => {
   const count = source.split(before).length - 1;
   if (count !== 1) throw new Error(`${label}: expected exactly one match, found ${count}`);
-  return source.replace(before, after);
+  // Use a function replacement so source-code sequences such as $`, $& and $'
+  // are copied literally instead of being interpreted by String.replace().
+  return source.replace(before, () => after);
 };
 
 let app = await read('App.tsx');
