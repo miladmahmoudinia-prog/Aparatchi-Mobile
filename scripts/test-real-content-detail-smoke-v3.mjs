@@ -24,6 +24,25 @@ const fetchJson = async (relative) => {
   throw lastError || new Error(`Could not fetch ${relative}`);
 };
 
+const fetchDetailWithStableRecovery = async (summary) => {
+  try {
+    return { detail: await fetchJson(summary.detailPath), recovered: false };
+  } catch {
+    const match = String(summary.detailPath || '').match(/(?:^|\/)([a-f0-9]{12})-[a-f0-9]{12}\.json$/i);
+    if (!match) throw new Error(`Cannot derive stable identity from ${summary.detailPath}`);
+    const pointerPath = `catalog-stable/${match[1].toLowerCase()}.json`;
+    const pointer = await fetchJson(pointerPath);
+    if (String(pointer?.id) !== String(summary.id) || String(pointer?.type) !== String(summary.type)) {
+      throw new Error(`Stable pointer identity mismatch for ${summary.id}`);
+    }
+    const currentPath = String(pointer?.detailPath || '');
+    if (!/^catalog-items\/[a-f0-9]{12}-[a-f0-9]{12}\.json$/i.test(currentPath)) {
+      throw new Error(`Invalid stable pointer target for ${summary.id}: ${currentPath}`);
+    }
+    return { detail: await fetchJson(currentPath), recovered: true, pointerPath, currentPath };
+  }
+};
+
 const fileUsable = (file) => {
   const url = String(file?.url || '');
   const mode = String(file?.mode || 'download');
@@ -44,9 +63,11 @@ const samples = [
 const results = [];
 for (const sample of samples) {
   const summary = byId.get(sample.id);
-  if (!summary) throw new Error(`${sample.label} is missing from current catalog-index.json`);
+  if (!summary) throw new Error(`${sample.label} is missing from catalog-index.json`);
   if (!summary.detailPath) throw new Error(`${sample.label} has no detailPath`);
-  const detail = await fetchJson(summary.detailPath);
+
+  const resolved = await fetchDetailWithStableRecovery(summary);
+  const detail = resolved.detail;
   if (String(detail.id) !== sample.id) throw new Error(`${sample.label} detail ID mismatch`);
   const sections = Array.isArray(detail.downloads) ? detail.downloads : [];
   const usableFiles = sections.flatMap((section) => section.files || []).filter(fileUsable);
@@ -60,14 +81,16 @@ for (const sample of samples) {
     throw new Error(`${sample.label} expected >=${sample.minEpisodes} usable episodes, got ${usableEpisodes.size}`);
   }
   if (sample.type === 'movie' && usableFiles.length < sample.minFiles) {
-    throw new Error(`${sample.label} has no usable movie media in current detail shard`);
+    throw new Error(`${sample.label} has no usable movie media in resolved detail shard`);
   }
   results.push({
     label: sample.label,
-    detailPath: summary.detailPath,
+    staleDetailPath: summary.detailPath,
+    recoveredThroughStablePointer: resolved.recovered,
+    currentDetailPath: resolved.currentPath || summary.detailPath,
     usableFiles: usableFiles.length,
     usableEpisodes: usableEpisodes.size,
   });
 }
 
-console.log(JSON.stringify({ realCurrentContent: true, results }, null, 2));
+console.log(JSON.stringify({ realCurrentContent: true, stableRecoverySupported: true, results }, null, 2));
