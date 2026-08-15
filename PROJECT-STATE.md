@@ -7,12 +7,64 @@
 - Content: `miladmahmoudinia-prog/Aparatchi-Content`
 - Branch: `main`
 
-## checkpoint — 2026-08-15
-- آخرین commit عملکردی Mobile: `265545d9e41d3a702a6f9472ab931c1b55d91b02` — `perf: show movie actions without detail wait [skip ci]`
-- Content media/bootstrap commit: `af95c3f14a570fe1f9d5641b32d1e0b021d493ef` — `perf: expose movie media in lightweight catalog [skip ci]`
-- Workflow تأیید Mobile: `Fix fast startup media v5`, run `31905613920`؛ TypeScript و regressionهای Startup/Home/Detail/Performance/RTL/Poster/Operator/Metadata همگی سبز شدند.
-- Workflow تأیید Content: `Fix fast movie media v2`, run `31905568534` سبز شد؛ movie media summary و bootstrap واقعی rebuild و منتشر شدند.
+## checkpoint — 2026-08-16
+- آخرین commit عملکردی Mobile: `a6d07d05bcd89f9a307eca1beeff8b3079a1e5aa` — `fix: make startup refresh catalog truth before reveal [skip ci]`
+- آخرین commit عملکردی Content برای catalog/bootstrap: `6b9213319fafaccad65ca953d452b7398368c227` — `fix: make bootstrap a complete navigation catalog [skip ci]`
+- آخرین guard سازگاری Content: `55ee5235ec7a38a8661946a437f6af1c7bba2c2a`؛ workflowهای قدیمی دیگر bootstrap کامل را به sample 1.5MB برنمی‌گردانند.
+- Workflow تأیید Mobile: `Fix truthful startup cache v6`, run `31909685745`.
+- Workflow تأیید Content نهایی: `Fix fast movie media v2`, run `31909834507`.
+- معیار این milestone فقط سبز بودن تست نیست: روی `catalog.json` واقعی، ۱۸۰ فیلم دوبلهٔ واقعی در منبع و client/bootstrap هر سه حفظ شده‌اند، `dubbedMoviesLost=0` و هیچ URL قابل‌استفاده‌ای بین source/detail/summary حذف نشده است.
 - APK توسط ChatGPT ساخته نشد.
+
+---
+
+# milestone Catalog truth + 5s startup — 2026-08-16
+
+## گزارش واقعی دستگاه
+- دستهٔ دوبله در اپ به حدود ۱۱ عنوان سقوط کرده بود.
+- تعداد زیادی عنوان از دید کاربر پخش/دانلود نداشتند.
+- Home روی داده/کش قدیمی مثل «بدنام»، «کلاغ» و موارد مشابه می‌ماند.
+- درخواست کاربر: loading اولیه ۵ ثانیه باشد تا دادهٔ واقعی قبل از reveal فرصت بارگذاری داشته باشد.
+
+## ریشه‌های اثبات‌شده
+1. `catalog-bootstrap.json` قبلی عمداً فقط sample ردیف‌های Home/دسته‌ها را حمل می‌کرد؛ diagnostic واقعی نشان داد full client دارای ۱۸۰ فیلم دوبله است ولی bootstrap فقط ۸ فیلم دوبله داشت. Mobile همان bootstrap ناقص را موقتاً به‌عنوان `content.items` سراسری استفاده می‌کرد، پس دسته‌ها می‌توانستند ۸ تا حدود ۱۲ آیتم نشان دهند.
+2. `manifestMatchesCachedContent` در Mobile حتی با `clientRevision` جدید، اگر `catalogVersion` و `catalogUpdatedAt` برابر بودند cache قدیمی را معتبر می‌دانست. بنابراین client artifact قدیمی/ناقص می‌توانست عملاً ماندگار شود.
+3. startup در milestone قبلی بعد از ۲ ثانیه یا بلافاصله بعد از هر محتوای cache/bootstrap بسته می‌شد و full catalog فقط پس‌زمینه می‌آمد.
+4. Manifest CDN می‌توانست از GitHub Raw عقب‌تر باشد و در مسیر sequential اول برنده شود.
+
+## اصلاح Content
+Content artifact commit: `6b9213319fafaccad65ca953d452b7398368c227`
+- bootstrap دیگر sample دسته‌ها نیست؛ هر ۳۷۰۶ عنوان client-visible را برای navigation/search/category حمل می‌کند.
+- آیتم‌های Home همچنان rich هستند؛ بقیه compact navigation metadata + `detailPath` دارند تا bootstrap زیر full index بماند.
+- اندازهٔ تأییدشده: bootstrap = `3928462` bytes؛ full client index = `11846093` bytes.
+- `scripts/fix-fast-movie-media-v2.mjs` rerun-safe شد و guardهای قدیمی 1.5MB به معیار کامل بودن navigation + سقف 5MB تغییر کردند تا workflow قبلی این اصلاح را پس نزند.
+
+## اصلاح Mobile
+Mobile commit: `a6d07d05bcd89f9a307eca1beeff8b3079a1e5aa`
+- startup حداقل ۵۰۰۰ms نمایش داده می‌شود و fallback نیز ۵۰۰۰ms است.
+- full catalog fetch هم‌زمان با bootstrap شروع می‌شود و دیگر پشت await bootstrap نمی‌ماند.
+- وقتی manifest دارای `clientRevision` است، فقط تطابق دقیق همان revision cache را معتبر می‌کند؛ version/updatedAt دیگر mismatch را پنهان نمی‌کنند.
+- برای manifest، GitHub Raw به‌عنوان truth قبل از CDN امتحان می‌شود و failover آن ۱۸۰۰ms bounded است.
+
+## تأیید واقعی داده — نه صرفاً سبز شدن تست
+آخرین diagnostic روی catalog واقعی در run `31909834507`:
+- `sourceMoviesWithNormalMedia = 3336`
+- `clientIndexMoviesWithImmediateMedia = 3539`
+- `sourceMediaTitlesMissingFromClient = 0`
+- `sourceUrlsLostFromClientDetailTitles = 0`
+- `sourceUrlsLostFromClientSummaryTitles = 0`
+- `sourceDubbedMovies = 180`
+- `clientDubbedMoviesByTruth = 180`
+- `bootstrapDubbedCategoryMovies = 180`
+- `dubbedMoviesLost = 0`
+- bootstrap items = full index items = `3706`
+- categoryKeys خام `dubbed` در bootstrap و index هر دو `200` هستند؛ truth تشخیصیِ فیلم دوبله ۱۸۰ است. اختلاف ۲۰ مورد مربوط به semantics خام categoryKey است، نه حذف دوبله.
+
+## Workflowها
+- Mobile `Fix truthful startup cache v6`, run `31909685745`: typecheck + startup exact 5s + clientRevision-authoritative cache + regressions مرتبط.
+- Content `Fix fast movie media v2`, run `31909834507`: rebuild واقعی + exact navigation/category equality + diagnostic صفر برای media/url/dubbed loss.
+- یک run میانی به‌خاطر guard قدیمی 1.5MB شکست خورد؛ guard اصلاح شد و run نهایی بالا success شد. این شکست محصول نبود و هیچ artifact خراب commit نشد.
+- APK ساخته نشد.
 
 ---
 
