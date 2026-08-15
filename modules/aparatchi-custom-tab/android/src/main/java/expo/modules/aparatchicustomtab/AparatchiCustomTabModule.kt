@@ -103,11 +103,27 @@ class AparatchiCustomTabModule : Module() {
                     .setSendToExternalDefaultHandlerEnabled(false)
                     .build()
 
-                  // A real session is the important part here: AndroidX guarantees
-                  // the intent is sent back to the exact Custom Tabs component that
-                  // owns this session, instead of re-resolving the URL through the
-                  // system "Open with" chooser or an app-link handler.
-                  customTabsIntent.intent.setPackage(browserPackage)
+                  // Keep a real browser-backed Custom Tab so Upera receives a
+                  // normal browser context, but pin the launch to one concrete
+                  // browser activity as well as its package. Some Android builds
+                  // (Dual Apps / cloned Chrome / cross-profile resolvers) still
+                  // show an "Open with" chooser when only setPackage() is used.
+                  val launchIntent = customTabsIntent.intent.apply {
+                    data = uri
+                    setPackage(browserPackage)
+                  }
+                  val browserActivity = packageManager
+                    .queryIntentActivities(launchIntent, PackageManager.MATCH_DEFAULT_ONLY)
+                    .mapNotNull { it.activityInfo }
+                    .firstOrNull { it.packageName == browserPackage }
+                    ?: throw IllegalStateException(
+                      "No browser activity found for the selected Custom Tabs package.",
+                    )
+
+                  launchIntent.component = ComponentName(
+                    browserActivity.packageName,
+                    browserActivity.name,
+                  )
                   customTabsIntent.launchUrl(activity, uri)
 
                   settled = true
@@ -116,6 +132,7 @@ class AparatchiCustomTabModule : Module() {
                     mapOf(
                       "opened" to true,
                       "browserPackage" to browserPackage,
+                      "browserActivity" to browserActivity.name,
                       "explicitComponent" to true,
                       "sessionBound" to true,
                     ),
