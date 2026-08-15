@@ -35,9 +35,19 @@ jobs:
           node-version: '22'
           cache: npm
       - name: Patch detail hydration recovery
+        shell: bash
         run: |
-          node scripts/patch-detail-hydration-recovery-v3.mjs
-          node scripts/patch-stable-detail-fallback-v4.mjs
+          set -euo pipefail
+          if grep -q "loadContent(preferCache = false, forceRemote = false)" src/contentService.ts; then
+            echo "Base v3 hydration recovery already present on main."
+          else
+            node scripts/patch-detail-hydration-recovery-v3.mjs
+          fi
+          if grep -q "catalog-stable/.*identityMatch" src/contentService.ts; then
+            echo "Stable-pointer v4 fallback already present on main."
+          else
+            node scripts/patch-stable-detail-fallback-v4.mjs
+          fi
       - name: Install dependencies
         run: npm ci
       - name: Type-check application
