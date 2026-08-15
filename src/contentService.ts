@@ -1496,7 +1496,7 @@ const unavailableLocalPayload = (): CatalogPayload => ({
 });
 
 export const getBundledContent = (): LoadedContent => ({
-  ...unavailableLocalPayload(),
+  ...normalizedLocalPayload(),
   source: 'local',
 });
 
@@ -1652,7 +1652,7 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
     const cached = await readCachedContent();
     if (cached) return { ...cached, source: 'cache' };
     return {
-      ...unavailableLocalPayload(),
+      ...normalizedLocalPayload(),
       source: 'local',
     };
   }
