@@ -39,10 +39,10 @@ const LOCAL_PAYLOAD: CatalogPayload = {
 };
 
 const REMOTE_CACHE_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v2-cache.json`
+  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v3-cache.json`
   : '';
 const REMOTE_CACHE_META_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v2-cache-meta.json`
+  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v3-cache-meta.json`
   : '';
 
 type RemoteCacheMetadata = {
@@ -1638,7 +1638,7 @@ const writeCachedContent = async (
   }
 };
 
-export async function loadContent(preferCache = false): Promise<LoadedContent> {
+export async function loadContent(preferCache = false, forceRemote = false): Promise<LoadedContent> {
   const remoteUrl = (REMOTE_CONTENT_INDEX_URL || REMOTE_CONTENT_URL).trim();
   if (!remoteUrl) {
     return {
@@ -1663,7 +1663,7 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
 
   try {
     manifest = await fetchRemoteManifest();
-    if (manifest && cached && manifestMatchesCachedContent(manifest, cached)) {
+    if (!forceRemote && manifest && cached && manifestMatchesCachedContent(manifest, cached)) {
       cacheMetadata = {
         ...cacheMetadata,
         manifestRevision: manifest.clientRevision || manifest.revision,
@@ -1676,7 +1676,7 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
   } catch {
     // A temporary manifest/CDN error must not trigger another multi-megabyte
     // download. Keep the last valid catalog and retry the tiny check later.
-    if (cached) return { ...cached, source: 'cache' };
+    if (cached && !forceRemote) return { ...cached, source: 'cache' };
   }
 
   try {
@@ -1684,8 +1684,8 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
       Accept: 'application/json',
       'Cache-Control': 'no-cache',
     };
-    if (cacheMetadata.etag) requestHeaders['If-None-Match'] = cacheMetadata.etag;
-    if (cacheMetadata.lastModified) requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
+    if (!forceRemote && cacheMetadata.etag) requestHeaders['If-None-Match'] = cacheMetadata.etag;
+    if (!forceRemote && cacheMetadata.lastModified) requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
 
     const catalogRevision = manifest?.clientRevision || manifest?.revision || '';
     let response: Awaited<ReturnType<typeof fetch>> | null = null;
@@ -1694,9 +1694,12 @@ export async function loadContent(preferCache = false): Promise<LoadedContent> {
     for (const candidate of remoteRepositoryUrlCandidates(remoteUrl)) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 60_000);
-      const catalogRequestUrl = catalogRevision
+      const catalogBaseRequestUrl = catalogRevision
         ? `${candidate}${candidate.includes('?') ? '&' : '?'}revision=${encodeURIComponent(catalogRevision.slice(0, 24))}`
         : candidate;
+      const catalogRequestUrl = forceRemote
+        ? `${catalogBaseRequestUrl}${catalogBaseRequestUrl.includes('?') ? '&' : '?'}_aparatchi_force=${Date.now()}`
+        : catalogBaseRequestUrl;
       try {
         const nextResponse = await fetch(catalogRequestUrl, {
           headers: requestHeaders,
@@ -1818,26 +1821,54 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
     const url = detailUrlFor(detailPath);
     if (!url) return null;
 
-    for (const candidate of remoteRepositoryUrlCandidates(url)) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10_000);
-        const response = await fetch(`${candidate}${candidate.includes('?') ? '&' : '?'}v=${encodeURIComponent(detailPath)}`, {
-          headers: { Accept: 'application/json', 'Cache-Control': 'public, max-age=31536000, immutable' },
-          signal: controller.signal,
-        }).finally(() => clearTimeout(timeout));
-        if (!response.ok) continue;
-        const raw = await response.text();
-        const parsed = parseDetail(JSON.parse(raw));
-        if (!parsed) continue;
-        detailMemoryCache.set(memoryKey, parsed);
-        if (cacheUri) void FileSystem.writeAsStringAsync(cacheUri, raw).catch(() => undefined);
-        return parsed;
-      } catch {
-        // Try the next public mirror before giving up on this title.
-      }
-    }
-    return null;
+    const candidates = remoteRepositoryUrlCandidates(url);
+    if (!candidates.length) return null;
+
+    // Detail shards are small. Start CDN and Raw together and keep the first
+    // valid response. Sequential 10-second mirror timeouts made a healthy title
+    // look link-less whenever the first mirror was slow or temporarily stale.
+    const controllers = candidates.map(() => new AbortController());
+    const firstValid = await new Promise<{ parsed: CatalogItem; raw: string } | null>((resolve) => {
+      let remaining = candidates.length;
+      let settled = false;
+
+      candidates.forEach((candidate, index) => {
+        const controller = controllers[index];
+        const timeout = setTimeout(() => controller.abort(), 6_000);
+        void (async () => {
+          try {
+            const separator = candidate.includes('?') ? '&' : '?';
+            const response = await fetch(
+              `${candidate}${separator}v=${encodeURIComponent(detailPath)}`,
+              {
+                headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+                signal: controller.signal,
+              },
+            );
+            if (!response.ok) return;
+            const raw = await response.text();
+            const parsed = parseDetail(JSON.parse(raw));
+            if (!parsed || settled) return;
+            settled = true;
+            controllers.forEach((other, otherIndex) => {
+              if (otherIndex !== index) other.abort();
+            });
+            resolve({ parsed, raw });
+          } catch {
+            // Another mirror may still succeed.
+          } finally {
+            clearTimeout(timeout);
+            remaining -= 1;
+            if (!remaining && !settled) resolve(null);
+          }
+        })();
+      });
+    });
+
+    if (!firstValid) return null;
+    detailMemoryCache.set(memoryKey, firstValid.parsed);
+    if (cacheUri) void FileSystem.writeAsStringAsync(cacheUri, firstValid.raw).catch(() => undefined);
+    return firstValid.parsed;
   })().finally(() => detailRequestCache.delete(memoryKey));
 
   detailRequestCache.set(memoryKey, request);

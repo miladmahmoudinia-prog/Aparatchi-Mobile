@@ -7757,19 +7757,41 @@ function AppContent() {
 
     let cancelled = false;
     void (async () => {
-      let fullItem = await loadCatalogItemDetail(summary);
+      let activeSummary = summary;
+      let fullItem = await loadCatalogItemDetail(activeSummary);
+
       if (!fullItem && !cancelled) {
-        await new Promise((resolve) => setTimeout(resolve, 650));
-        fullItem = await loadCatalogItemDetail(summary);
+        // A cached lightweight index can outlive a content-addressed detail shard.
+        // Force one direct index refresh (bypassing manifest/cache short-circuits),
+        // then retry using the refreshed detailPath for the same title.
+        const refreshed = await loadContent(false, true);
+        if (cancelled) return;
+        const refreshedSummary = refreshed.items.find((candidate) =>
+          candidate.type === summary.type && String(candidate.id) === String(summary.id),
+        );
+        if (refreshedSummary) {
+          setContent(refreshed);
+          activeSummary = refreshedSummary;
+          setSelectedItem((current) => {
+            if (!current) return current;
+            if (current.type !== summary.type || String(current.id) !== String(summary.id)) return current;
+            return refreshedSummary;
+          });
+          fullItem = await loadCatalogItemDetail(activeSummary);
+        }
       }
-      if (cancelled) return;
+
+      if (!fullItem && !cancelled) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        fullItem = await loadCatalogItemDetail(activeSummary);
+      }
+      if (cancelled || !fullItem) return;
+
       setSelectedItem((current) => {
         if (!current) return current;
-        if (current.type !== summary.type || String(current.id) !== String(summary.id)) return current;
-        if (current.detailPath !== summary.detailPath) return current;
-        // Never leave a title behind an endless spinner. A later reopen retries
-        // the immutable detail shard, while the summary remains usable now.
-        return fullItem || { ...current, detailLoaded: true };
+        if (current.type !== activeSummary.type || String(current.id) !== String(activeSummary.id)) return current;
+        if (current.detailPath !== activeSummary.detailPath) return current;
+        return fullItem;
       });
     })().catch(() => undefined);
 
