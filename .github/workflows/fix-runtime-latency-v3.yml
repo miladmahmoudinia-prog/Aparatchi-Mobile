@@ -37,11 +37,17 @@ jobs:
       - name: Apply runtime latency repair
         run: node scripts/fix-runtime-latency-v3.mjs
 
-      - name: Inspect patched source around syntax-sensitive blocks
+      - name: Inspect patched source boundaries
         shell: bash
         run: |
-          nl -ba App.tsx | sed -n '5360,5465p'
-          nl -ba App.tsx | sed -n '5630,5755p'
+          echo '--- imports ---'
+          grep -n '^import ' App.tsx | head -80 || true
+          echo '--- key functions ---'
+          grep -n -E '^(function ExactEpisodeArtwork|function SeriesEpisodeShowcase|function DetailModal|function PersonProfileModal|export default function App|const exactEpisodeThumbnailCache)' App.tsx || true
+          echo '--- around first unexpected duplicate area ---'
+          nl -ba App.tsx | sed -n '5280,5385p'
+          echo '--- total lines ---'
+          wc -l App.tsx
 
       - name: Install dependencies
         run: npm ci
