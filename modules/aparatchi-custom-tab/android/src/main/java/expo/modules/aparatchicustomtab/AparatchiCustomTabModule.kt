@@ -4,8 +4,10 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.browser.customtabs.CustomTabsClient
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.browser.customtabs.CustomTabsService
+import androidx.browser.customtabs.CustomTabsServiceConnection
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -31,9 +33,11 @@ class AparatchiCustomTabModule : Module() {
       activity.runOnUiThread {
         try {
           val packageManager = context.packageManager
-          val serviceIntent = Intent(CustomTabsService.ACTION_CUSTOM_TABS_CONNECTION)
           val customTabPackages = packageManager
-            .queryIntentServices(serviceIntent, PackageManager.MATCH_ALL)
+            .queryIntentServices(
+              Intent(CustomTabsService.ACTION_CUSTOM_TABS_CONNECTION),
+              PackageManager.MATCH_ALL,
+            )
             .mapNotNull { it.serviceInfo?.packageName }
             .distinct()
 
@@ -43,59 +47,118 @@ class AparatchiCustomTabModule : Module() {
           )?.activityInfo?.packageName
             ?.takeUnless { it == "android" }
 
-          val preferredPackages = listOfNotNull(
-            defaultBrowserPackage,
-            "com.android.chrome",
-            "com.google.android.apps.chrome",
-            "org.chromium.chrome",
-          ) + customTabPackages
+          val preferredPackages = (
+            listOfNotNull(
+              defaultBrowserPackage,
+              "com.android.chrome",
+              "com.google.android.apps.chrome",
+              "org.chromium.chrome",
+            ) + customTabPackages
+          ).distinct()
 
-          val browserPackage = preferredPackages.firstOrNull { it in customTabPackages }
+          val browserPackage = CustomTabsClient.getPackageName(
+            context,
+            preferredPackages,
+            false,
+          )
           if (browserPackage == null) {
             promise.reject("NO_CUSTOM_TAB", "No Custom Tabs capable browser is installed.", null)
             return@runOnUiThread
           }
 
-          val customTabsIntent = CustomTabsIntent.Builder()
-            .setShowTitle(false)
-            .setUrlBarHidingEnabled(true)
-            .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
-            .build()
+          var settled = false
+          var bound = false
+          lateinit var connection: CustomTabsServiceConnection
 
-          customTabsIntent.intent.data = uri
-          customTabsIntent.intent.setPackage(browserPackage)
+          fun unbindQuietly() {
+            if (!bound) return
+            bound = false
+            runCatching { context.unbindService(connection) }
+          }
 
-          // Some Android skins expose the same browser twice (for example a cloned
-          // Chrome profile) and can still surface the Resolver even when a package
-          // is supplied. Resolve the concrete activity inside that package and pin
-          // the Custom Tab intent to that exact component.
-          val resolved = packageManager.resolveActivity(
-            customTabsIntent.intent,
-            PackageManager.MATCH_DEFAULT_ONLY,
-          )
-          val activityInfo = resolved?.activityInfo
-          if (activityInfo != null && activityInfo.packageName == browserPackage) {
-            customTabsIntent.intent.component = ComponentName(activityInfo.packageName, activityInfo.name)
-          } else {
-            val concrete = packageManager
-              .queryIntentActivities(customTabsIntent.intent, PackageManager.MATCH_DEFAULT_ONLY)
-              .firstOrNull { it.activityInfo?.packageName == browserPackage }
-              ?.activityInfo
-            if (concrete != null) {
-              customTabsIntent.intent.component = ComponentName(concrete.packageName, concrete.name)
+          fun rejectOnce(code: String, message: String, error: Throwable? = null) {
+            if (settled) return
+            settled = true
+            unbindQuietly()
+            promise.reject(code, message, error)
+          }
+
+          connection = object : CustomTabsServiceConnection() {
+            override fun onCustomTabsServiceConnected(
+              name: ComponentName,
+              client: CustomTabsClient,
+            ) {
+              activity.runOnUiThread {
+                if (settled) return@runOnUiThread
+                try {
+                  client.warmup(0L)
+                  val session = client.newSession(null)
+                    ?: throw IllegalStateException("Could not create Custom Tabs session.")
+
+                  val customTabsIntent = CustomTabsIntent.Builder()
+                    .setSession(session)
+                    .setShowTitle(false)
+                    .setUrlBarHidingEnabled(true)
+                    .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
+                    .setSendToExternalDefaultHandlerEnabled(false)
+                    .build()
+
+                  // A real session is the important part here: AndroidX guarantees
+                  // the intent is sent back to the exact Custom Tabs component that
+                  // owns this session, instead of re-resolving the URL through the
+                  // system "Open with" chooser or an app-link handler.
+                  customTabsIntent.intent.setPackage(browserPackage)
+                  customTabsIntent.launchUrl(activity, uri)
+
+                  settled = true
+                  unbindQuietly()
+                  promise.resolve(
+                    mapOf(
+                      "opened" to true,
+                      "browserPackage" to browserPackage,
+                      "explicitComponent" to true,
+                      "sessionBound" to true,
+                    ),
+                  )
+                } catch (error: Throwable) {
+                  rejectOnce(
+                    "CUSTOM_TAB_OPEN_FAILED",
+                    error.message ?: "Could not open Custom Tab.",
+                    error,
+                  )
+                }
+              }
+            }
+
+            override fun onServiceDisconnected(name: ComponentName) {
+              activity.runOnUiThread {
+                if (!settled) {
+                  rejectOnce(
+                    "CUSTOM_TAB_DISCONNECTED",
+                    "Custom Tabs browser disconnected before playback opened.",
+                  )
+                }
+              }
             }
           }
 
-          customTabsIntent.launchUrl(activity, uri)
-          promise.resolve(
-            mapOf(
-              "opened" to true,
-              "browserPackage" to browserPackage,
-              "explicitComponent" to (customTabsIntent.intent.component != null),
-            ),
+          bound = CustomTabsClient.bindCustomTabsServicePreservePriority(
+            context,
+            browserPackage,
+            connection,
           )
+          if (!bound) {
+            rejectOnce(
+              "CUSTOM_TAB_BIND_FAILED",
+              "Could not bind to the selected Custom Tabs browser.",
+            )
+          }
         } catch (error: Throwable) {
-          promise.reject("CUSTOM_TAB_OPEN_FAILED", error.message ?: "Could not open Custom Tab.", error)
+          promise.reject(
+            "CUSTOM_TAB_OPEN_FAILED",
+            error.message ?: "Could not open Custom Tab.",
+            error,
+          )
         }
       }
     }

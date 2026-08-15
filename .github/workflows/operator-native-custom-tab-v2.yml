@@ -5,20 +5,19 @@ on:
     branches: [main]
     paths:
       - 'modules/aparatchi-custom-tab/**'
-      - 'scripts/patch-operator-native-custom-tab-v2.mjs'
       - 'scripts/test-operator-native-custom-tab-v2.mjs'
       - '.github/workflows/operator-native-custom-tab-v2.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: aparatchi-mobile-operator-native-custom-tab-v2
   cancel-in-progress: true
 
 jobs:
-  patch-and-verify:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -26,7 +25,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: main
-          fetch-depth: 20
+          fetch-depth: 1
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -39,9 +38,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Patch operator browser path
-        run: node scripts/patch-operator-native-custom-tab-v2.mjs
 
       - name: Install dependencies
         run: npm ci
@@ -64,30 +60,3 @@ jobs:
           ./gradlew app:compileReleaseKotlin
         env:
           NODE_ENV: production
-
-      - name: Commit verified operator patch
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Expo prebuild can rewrite tracked project metadata even though those
-          # changes are not part of this fix. Restore every tracked prebuild
-          # side-effect and keep only the already verified App.tsx patch.
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-            if [ "$file" != "App.tsx" ]; then
-              git restore -- "$file"
-            fi
-          done < <(git diff --name-only)
-
-          if git diff --quiet -- App.tsx; then
-            echo "No App.tsx changes to commit."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add App.tsx
-          git commit -m "fix: open operator playback with explicit native custom tab"
-          git pull --rebase origin main
-          git push origin HEAD:main
