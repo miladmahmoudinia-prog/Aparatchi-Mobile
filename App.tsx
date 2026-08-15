@@ -3406,7 +3406,7 @@ const HomeScreen = memo(function HomeScreen({
         maxToRenderPerBatch={3}
         updateCellsBatchingPeriod={40}
         windowSize={5}
-        removeClippedSubviews
+        removeClippedSubviews={false}
         keyboardShouldPersistTaps="always"
         onScrollEndDrag={rememberVisibleOffset}
         onMomentumScrollEnd={rememberVisibleOffset}

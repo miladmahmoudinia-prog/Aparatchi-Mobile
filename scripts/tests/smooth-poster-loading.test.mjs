@@ -22,3 +22,16 @@ test('main horizontal catalog keeps Android edge posters mounted without duplica
   assert.ok(block.includes('initialNumToRender={4}'));
   assert.ok(block.includes('maxToRenderPerBatch={4}'));
 });
+
+
+test('home vertical list keeps nested poster rails attached while scrolling', () => {
+  const start = source.indexOf('const HomeScreen = memo(function HomeScreen');
+  const end = source.indexOf('type CategoryCardConfig', start);
+  const block = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.ok(block.includes('removeClippedSubviews={false}'));
+  assert.ok(block.includes('initialNumToRender={4}'));
+  assert.ok(block.includes('maxToRenderPerBatch={3}'));
+  assert.ok(block.includes('windowSize={5}'));
+  assert.ok(!block.includes('Image.prefetch('));
+});
