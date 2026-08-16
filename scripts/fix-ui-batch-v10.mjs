@@ -32,12 +32,14 @@ replaceOnce(
   'truthful language badge',
 );
 
-source = source.replace(
-  /const episodeShowcaseLabel = \(item: CatalogItem, group: DownloadSection, quran: boolean\) => \{[\s\S]*?\n\};\n\nconst /,
-  `const episodeShowcaseLabel = (_item: CatalogItem, group: DownloadSection, quran: boolean) => {\n  const noun = quran ? 'جزء' : 'قسمت';\n  return \`${'${noun} ${toPersianDigits(Number(group.episodeNumber || 0))}'}\`;\n};\n\nconst `,
-);
-if (!source.includes("const episodeShowcaseLabel = (_item: CatalogItem")) {
-  throw new Error('episode showcase label patch failed');
+const newEpisodeLabelHelper = `const episodeShowcaseLabel = (_item: CatalogItem, group: DownloadSection, quran: boolean) => {\n  const noun = quran ? 'جزء' : 'قسمت';\n  return \`${'${noun} ${toPersianDigits(Number(group.episodeNumber || 0))}'}\`;\n};`;
+if (!source.includes(newEpisodeLabelHelper)) {
+  const startMarker = 'const episodeShowcaseLabel = (item: CatalogItem, group: DownloadSection, quran: boolean) => {';
+  const nextMarker = '\n\nfunction ExactEpisodeArtwork';
+  const start = source.indexOf(startMarker);
+  const end = start >= 0 ? source.indexOf(nextMarker, start) : -1;
+  if (start < 0 || end < 0) throw new Error('episode showcase helper boundaries not found');
+  source = source.slice(0, start) + newEpisodeLabelHelper + source.slice(end);
 }
 
 replaceOnce(
