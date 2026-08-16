@@ -1935,44 +1935,23 @@ const resolveStableDetailPath = async (summary: CatalogItem, fallbackPath: strin
   const stableUrl = detailUrlFor(stablePath);
   if (!stableUrl) return fallbackPath;
 
-  // Start Raw and CDN pointer reads together. Give the source-of-truth Raw URL
-  // a short head start, then accept the first valid cache-busted mirror. This
-  // keeps stale-pointer protection without making every first detail open wait
-  // through sequential multi-second network timeouts.
+  // The stable pointer decides which immutable detail shard is truthful. A stale
+  // CDN pointer can legitimately reference an older shard that still exists, so
+  // "first valid wins" is not safe here. Prefer GitHub Raw source truth with a
+  // bounded wait, and consult mirrors only when Raw is unavailable.
   const candidates = remoteRepositoryUrlCandidates(stableUrl);
   const rawCandidates = candidates.filter((candidate) => /raw\.githubusercontent\.com/i.test(candidate));
   const mirrorCandidates = candidates.filter((candidate) => !/raw\.githubusercontent\.com/i.test(candidate));
-  const rawPromise = firstValidStableDetailPath(rawCandidates, summary);
-  const mirrorPromise = firstValidStableDetailPath(mirrorCandidates, summary);
+  const boundedStablePointerPath = async (list: string[], timeoutMs: number) => {
+    if (!list.length) return null;
+    return await Promise.race([
+      firstValidStableDetailPath(list, summary),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+  };
 
-  const preferredRaw = await Promise.race([
-    rawPromise,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), 450)),
-  ]);
-  if (preferredRaw) {
-    stableDetailPointerCache.set(identity, { path: preferredRaw, expiresAt: Date.now() + 5 * 60_000 });
-    return preferredRaw;
-  }
-
-  const currentPath = await new Promise<string | null>((resolve) => {
-    let pending = 2;
-    let settled = false;
-    const accept = (path: string | null) => {
-      if (settled) return;
-      if (path) {
-        settled = true;
-        resolve(path);
-        return;
-      }
-      pending -= 1;
-      if (pending <= 0) {
-        settled = true;
-        resolve(null);
-      }
-    };
-    void rawPromise.then(accept);
-    void mirrorPromise.then(accept);
-  });
+  const rawPointerPath = await boundedStablePointerPath(rawCandidates, 1800);
+  const currentPath = rawPointerPath || await boundedStablePointerPath(mirrorCandidates, 1800);
 
   if (currentPath) {
     stableDetailPointerCache.set(identity, { path: currentPath, expiresAt: Date.now() + 5 * 60_000 });
