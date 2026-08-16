@@ -526,7 +526,7 @@ const itemPosterBadges = (item: CatalogItem) => {
     if (languages.includes('dubbed') && languages.includes('subtitled')) {
       badges.push({ id: 'language', label: 'دوبله + زیرنویس', kind: 'language' });
     } else if (languages.includes('dubbed')) {
-      badges.push({ id: 'language', label: 'دوبله', kind: 'language' });
+      badges.push({ id: 'language', label: 'دوبله فارسی', kind: 'language' });
     } else if (languages.includes('subtitled')) {
       badges.push({ id: 'language', label: 'زیرنویس', kind: 'language' });
     }
@@ -901,7 +901,7 @@ const languageSectionsForFiles = (
       id: `${idPrefix}-${language}`,
       title: languageTitle(language),
       subtitle: `${languageFiles.length} کیفیت دانلود مستقیم`,
-      badge: language === 'dubbed' ? 'دوبله' : 'زیرنویس',
+      badge: language === 'dubbed' ? 'دوبله فارسی' : 'زیرنویس',
       language,
       files: languageFiles,
     }];
@@ -5026,7 +5026,7 @@ function DownloadGroup({
         </View>
         <View style={styles.downloadGroupBadge}>
           <Text style={styles.downloadGroupBadgeText}>
-            {group.badge || (group.language === 'dubbed' ? 'دوبله' : group.language === 'subtitled' ? 'زیرنویس' : 'دریافت')}
+            {group.language === 'dubbed' ? 'دوبله فارسی' : group.badge || (group.language === 'subtitled' ? 'زیرنویس' : 'دریافت')}
           </Text>
         </View>
         <Ionicons name={open ? 'chevron-up' : 'chevron-down'} color={COLORS.gold} size={19} />
@@ -9117,8 +9117,8 @@ const styles = StyleSheet.create({
   posterAccessStack: { position: 'absolute', top: 8, right: 8, alignItems: 'flex-end', gap: 4, maxWidth: '88%' },
   posterAccess: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.92)' },
   posterAccessText: { color: '#fff', fontSize: 8, fontWeight: '900' },
-  posterOperatorAccess: { backgroundColor: 'rgba(20,22,27,0.94)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.82)' },
-  posterOperatorAccessText: { color: COLORS.gold },
+  posterOperatorAccess: { backgroundColor: 'rgba(0,153,204,0.96)', borderWidth: 1, borderColor: 'rgba(116,231,255,0.96)' },
+  posterOperatorAccessText: { color: '#FFFFFF' },
   posterEpisodeBadge: { position: 'absolute', bottom: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
   posterEpisodeText: { color: COLORS.text, fontSize: 8, fontWeight: '900' },
   posterRating: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.82)' },
