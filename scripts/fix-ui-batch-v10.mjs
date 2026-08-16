@@ -51,22 +51,14 @@ replaceOnce(
   'remove episode secondary source title',
 );
 
-replaceOnce(
-`                ) : (
-                  <View style={styles.detailPreparing}>
-                    <ActivityIndicator color={COLORS.gold} size="small" />
-                    <Text style={styles.detailPreparingText}>در حال آماده‌کردن پخش و قسمت‌ها…</Text>
-                  </View>
-                )}`,
-`                ) : (
-                  <View style={styles.detailActions}>
-                    <Pressable onPress={() => void shareCatalogItem(item)} style={styles.detailSecondaryButton}>
-                      <Ionicons name="share-social-outline" color={COLORS.text} size={20} />
-                    </Pressable>
-                  </View>
-                )}`,
-  'silent detail hydration',
-);
+if (source.includes('در حال آماده‌کردن پخش و قسمت‌ها…')) {
+  const before = source;
+  source = source.replace(
+    /\) : \(\s*<View style=\{styles\.detailPreparing\}>\s*<ActivityIndicator[^>]*\/>\s*<Text style=\{styles\.detailPreparingText\}>در حال آماده‌کردن پخش و قسمت‌ها…<\/Text>\s*<\/View>\s*\)\}/,
+    ') : null}',
+  );
+  if (source === before) throw new Error('silent detail hydration regex did not match');
+}
 
 await fs.writeFile(appPath, source, 'utf8');
 console.log('Applied UI batch v10');
