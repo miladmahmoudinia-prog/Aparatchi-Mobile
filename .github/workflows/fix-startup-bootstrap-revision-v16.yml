@@ -1,0 +1,81 @@
+name: Fix startup bootstrap replacement v16
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-startup-bootstrap-revision-v16.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Start from latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Patch only startup bootstrap revision marker
+        run: python3 .github/patch-startup-bootstrap-revision-v16.py
+
+      - name: Verify startup and navigation regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('App.tsx').read_text(encoding='utf-8')
+          required = [
+              'const STARTUP_MIN_VISIBLE_MS = 5000;',
+              'const startupFallbackContentRef = useRef<LoadedContent | null>(null);',
+              'startupFallbackTimer = setTimeout(() => {',
+              '`startup-bootstrap:${loadedContentRevision(visibleFallback)}`',
+              "freshContent.source === 'remote' && applyContent(freshContent)",
+              'const detailHistoryRef = useRef<CatalogItem[]>([]);',
+              'if (state.selectedItem) { closeOrBackDetail(); return true; }',
+              'onOpenRelated={openNestedDetail}',
+          ]
+          for value in required:
+              assert value in text, value
+          assert 'contentRevisionRef.current = loadedContentRevision(visibleFallback);' not in text
+          print('startup bootstrap replacement guard: ok')
+          PY
+          if [ "$(git diff --name-only)" != "App.tsx" ]; then
+            echo 'Unexpected modified file' >&2
+            git diff --name-only >&2
+            exit 1
+          fi
+          git diff --check
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Commit only App.tsx
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx
+          if [ "$(git diff --cached --name-only)" != "App.tsx" ]; then
+            echo 'Unexpected staged file' >&2
+            exit 1
+          fi
+          git commit -m "fix: let full catalog replace startup bootstrap [skip ci]"
+          git push origin HEAD:main
