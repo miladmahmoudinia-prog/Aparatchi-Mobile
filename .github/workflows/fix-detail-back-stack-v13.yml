@@ -1,0 +1,200 @@
+name: Fix detail back stack v13
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-detail-back-stack-v13.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Patch detail navigation only
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('App.tsx')
+          text = path.read_text(encoding='utf-8')
+
+          old = "  const homeScrollOffsetRef = useRef(0);\n  const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);"
+          new = "  const homeScrollOffsetRef = useRef(0);\n  const detailHistoryRef = useRef<CatalogItem[]>([]);\n  const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);"
+          if text.count(old) != 1:
+              raise SystemExit(f'detail history ref anchor mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          marker = "  useEffect(() => {\n    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {"
+          helpers = """  const openRootDetail = useCallback((nextItem: CatalogItem) => {
+    detailHistoryRef.current = [];
+    setSelectedItem(nextItem);
+  }, []);
+
+  const openNestedDetail = useCallback((nextItem: CatalogItem) => {
+    const current = navigationStateRef.current.selectedItem;
+    if (current && String(current.id) !== String(nextItem.id)) {
+      detailHistoryRef.current = [...detailHistoryRef.current.slice(-19), current];
+    }
+    setSelectedItem(nextItem);
+  }, []);
+
+  const closeOrBackDetail = useCallback(() => {
+    const previous = detailHistoryRef.current.pop() || null;
+    setSelectedItem(previous);
+  }, []);
+
+""" + marker
+          if text.count(marker) != 1:
+              raise SystemExit(f'BackHandler anchor mismatch: {text.count(marker)}')
+          text = text.replace(marker, helpers, 1)
+
+          old = "      if (state.selectedItem) { setSelectedItem(null); return true; }"
+          new = "      if (state.selectedItem) { closeOrBackDetail(); return true; }"
+          if text.count(old) != 1:
+              raise SystemExit(f'hardware detail back mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = "        onClose={() => setSelectedItem(null)}"
+          new = "        onClose={closeOrBackDetail}"
+          if text.count(old) != 1:
+              raise SystemExit(f'DetailModal close mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = "        onOpenRelated={setSelectedItem}"
+          new = "        onOpenRelated={openNestedDetail}"
+          if text.count(old) != 1:
+              raise SystemExit(f'related navigation mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          root_count = text.count('onOpen={setSelectedItem}')
+          if root_count != 4:
+              raise SystemExit(f'root detail open count mismatch: {root_count}')
+          text = text.replace('onOpen={setSelectedItem}', 'onOpen={openRootDetail}')
+
+          old = """        onOpenItem={(nextItem) => {
+          setSelectedPerson(null);
+          setSelectedItem(nextItem);
+        }}"""
+          new = """        onOpenItem={(nextItem) => {
+          setSelectedPerson(null);
+          openNestedDetail(nextItem);
+        }}"""
+          if text.count(old) != 1:
+              raise SystemExit(f'person work detail navigation mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = """    if (linkedItem) {
+      setSelectedPerson(null);
+      setSelectedItem(linkedItem);
+      navigateToTab('home');
+"""
+          new = """    if (linkedItem) {
+      setSelectedPerson(null);
+      openRootDetail(linkedItem);
+      navigateToTab('home');
+"""
+          if text.count(old) != 1:
+              raise SystemExit(f'deep link root detail mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = """  const openWatchHistoryRecord = (record: WatchHistoryRecord) => {
+    if (record.completed) {
+      const item = content?.items.find((candidate) => candidate.id === record.itemId);
+      if (item) {
+        setSelectedItem(item);
+        return;
+      }
+    }
+"""
+          new = """  const openWatchHistoryRecord = (record: WatchHistoryRecord) => {
+    if (record.completed) {
+      const item = content?.items.find((candidate) => candidate.id === record.itemId);
+      if (item) {
+        openRootDetail(item);
+        return;
+      }
+    }
+"""
+          if text.count(old) != 1:
+              raise SystemExit(f'watch-history root detail mismatch: {text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+
+      - name: Verify navigation regression scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check <(sed 's/^/ /' App.tsx) >/dev/null 2>&1 || true
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('App.tsx').read_text(encoding='utf-8')
+          required = [
+              'const detailHistoryRef = useRef<CatalogItem[]>([]);',
+              'const openRootDetail = useCallback((nextItem: CatalogItem) => {',
+              'const openNestedDetail = useCallback((nextItem: CatalogItem) => {',
+              'const closeOrBackDetail = useCallback(() => {',
+              'if (state.selectedItem) { closeOrBackDetail(); return true; }',
+              'onClose={closeOrBackDetail}',
+              'onOpenRelated={openNestedDetail}',
+          ]
+          for value in required:
+              assert value in text, value
+          assert text.count('onOpen={openRootDetail}') == 4
+          assert 'onOpenRelated={setSelectedItem}' not in text
+
+          # Validate the intended stack semantics independently of UI rendering:
+          history = []
+          current = 'katiusha'
+          history.append(current); current = 'related-1'
+          previous = history.pop() if history else None; current = previous
+          assert current == 'katiusha'
+          previous = history.pop() if history else None; current = previous
+          assert current is None
+
+          history = []
+          current = 'pain-hustlers'
+          history.append(current); current = 'goodfellas'
+          assert history.pop() == 'pain-hustlers'
+          print('detail stack regression semantics: ok')
+          PY
+          if git diff --name-only | grep -v '^App.tsx$' | grep -q .; then
+            echo 'Unexpected modified file:' >&2
+            git diff --name-only >&2
+            exit 1
+          fi
+          git diff --check
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Commit only App.tsx
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx
+          if [ "$(git diff --cached --name-only)" != "App.tsx" ]; then
+            echo 'Unexpected staged file' >&2
+            git diff --cached --name-only >&2
+            exit 1
+          fi
+          git commit -m "fix: preserve nested detail back history [skip ci]"
+          git push origin HEAD:main
