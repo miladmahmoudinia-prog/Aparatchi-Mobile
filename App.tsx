@@ -7389,6 +7389,7 @@ function AppContent() {
   const [downloadsReturnItem, setDownloadsReturnItem] = useState<CatalogItem | null>(null);
   const [downloadsReturnTab, setDownloadsReturnTab] = useState<MainTab>('home');
   const homeScrollOffsetRef = useRef(0);
+  const detailHistoryRef = useRef<CatalogItem[]>([]);
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
   const startupStartedAtRef = useRef(Date.now());
@@ -7676,6 +7677,24 @@ function AppContent() {
   }, []);
 
 
+  const openRootDetail = useCallback((nextItem: CatalogItem) => {
+    detailHistoryRef.current = [];
+    setSelectedItem(nextItem);
+  }, []);
+
+  const openNestedDetail = useCallback((nextItem: CatalogItem) => {
+    const current = navigationStateRef.current.selectedItem;
+    if (current && String(current.id) !== String(nextItem.id)) {
+      detailHistoryRef.current = [...detailHistoryRef.current.slice(-19), current];
+    }
+    setSelectedItem(nextItem);
+  }, []);
+
+  const closeOrBackDetail = useCallback(() => {
+    const previous = detailHistoryRef.current.pop() || null;
+    setSelectedItem(previous);
+  }, []);
+
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       const state = navigationStateRef.current;
@@ -7686,7 +7705,7 @@ function AppContent() {
       if (state.operatorGateRequest) { setOperatorGateRequest(null); return true; }
       if (state.selectedPerson) { setSelectedPerson(null); return true; }
       if (state.videoRequest) { setVideoRequest(null); return true; }
-      if (state.selectedItem) { setSelectedItem(null); return true; }
+      if (state.selectedItem) { closeOrBackDetail(); return true; }
       if (state.activeTab === 'search' && collectionBrowserBackHandler?.()) return true;
 
       if (state.activeTab === 'downloads' && state.downloadsReturnItem) {
@@ -7778,7 +7797,7 @@ function AppContent() {
 
     if (linkedItem) {
       setSelectedPerson(null);
-      setSelectedItem(linkedItem);
+      openRootDetail(linkedItem);
       navigateToTab('home');
     } else {
       Alert.alert(
@@ -8090,7 +8109,7 @@ function AppContent() {
     if (record.completed) {
       const item = content?.items.find((candidate) => candidate.id === record.itemId);
       if (item) {
-        setSelectedItem(item);
+        openRootDetail(item);
         return;
       }
     }
@@ -8614,7 +8633,7 @@ function AppContent() {
             imdbTop100={content.imdbTop100}
             featuredPeople={content.featuredPeople || []}
             onReloadContent={reloadHomeContent}
-            onOpen={setSelectedItem}
+            onOpen={openRootDetail}
             onBrowse={openCatalogFilter}
             onMenu={openMainMenu}
             initialScrollOffset={homeScrollOffsetRef.current}
@@ -8629,7 +8648,7 @@ function AppContent() {
             pointerEvents={activeTab === 'categories' ? 'auto' : 'none'}
             style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}
           >
-            <CategoriesScreen catalog={content.items} peopleWorks={content.peopleWorks} onBrowse={openCatalogFilter} onOpen={setSelectedItem} isActive={activeTab === 'categories'} />
+            <CategoriesScreen catalog={content.items} peopleWorks={content.peopleWorks} onBrowse={openCatalogFilter} onOpen={openRootDetail} isActive={activeTab === 'categories'} />
           </View>
         ) : null}
         {activeTab === 'search' ? (
@@ -8637,7 +8656,7 @@ function AppContent() {
             <SearchScreen
               catalog={content.items}
               peopleWorks={content.peopleWorks}
-              onOpen={setSelectedItem}
+              onOpen={openRootDetail}
               initialFilter={searchFilter}
             />
           </View>
@@ -8648,7 +8667,7 @@ function AppContent() {
               catalog={content.items}
               favorites={favorites}
               watchHistory={watchHistory}
-              onOpen={setSelectedItem}
+              onOpen={openRootDetail}
               onOpenHistory={openWatchHistoryRecord}
               onRemoveHistory={removeWatchHistory}
               onClearHistory={confirmClearWatchHistory}
@@ -8704,7 +8723,7 @@ function AppContent() {
         item={selectedItem}
         catalog={content.items}
         visible={Boolean(selectedItem)}
-        onClose={() => setSelectedItem(null)}
+        onClose={closeOrBackDetail}
         favorite={selectedItem ? favorites.includes(selectedItem.id) : false}
         onFavorite={() => selectedItem && toggleFavorite(selectedItem.id)}
         episodeAlertEnabled={Boolean(
@@ -8717,7 +8736,7 @@ function AppContent() {
         onStream={openStreamInsideApp}
         onDownload={startDownloadInsideApp}
         onOperatorOpen={openOperatorAccess}
-        onOpenRelated={setSelectedItem}
+        onOpenRelated={openNestedDetail}
         onOpenPerson={setSelectedPerson}
         onBrowse={openCatalogFilter}
         vpnActive={vpnActive}
@@ -8731,7 +8750,7 @@ function AppContent() {
         onClose={() => setSelectedPerson(null)}
         onOpenItem={(nextItem) => {
           setSelectedPerson(null);
-          setSelectedItem(nextItem);
+          openNestedDetail(nextItem);
         }}
       />
       {videoRequest ? (
