@@ -8,7 +8,10 @@ assert.doesNotMatch(app, /item\.detailLoaded !== true && item\.availableLanguage
 assert.match(app, /const episodeShowcaseLabel = \(_item: CatalogItem, group: DownloadSection, quran: boolean\)[\s\S]*return `\$\{noun\} \$\{toPersianDigits\(Number\(group\.episodeNumber \|\| 0\)\)\}`;/, 'episode showcase is number-only');
 assert.doesNotMatch(app, /cleanMediaLabel\(group\.subtitle\) \|\|\s*`\$\{toPersianDigits\(languageGroups/, 'episode accordion must not show source subtitle/code');
 assert.doesNotMatch(app, /در حال آماده‌کردن پخش و قسمت‌ها/, 'detail hydration should be silent instead of blocking-looking loader');
-assert.match(app, /const exactEpisodeArtworkFor[\s\S]*assets\\\/media\\\/episodes/, 'episode cards only accept exact generated episode frames');
+assert.ok(
+  app.includes('const exactEpisodeArtworkFor =') && app.includes('assets\\/media\\/episodes\\/'),
+  'episode cards only accept exact generated episode frames',
+);
 
 console.log(JSON.stringify({
   dubbedOnlyBadgeSurvivesDetail: true,
