@@ -48,10 +48,10 @@ jobs:
           node scripts/test-visible-media-startup-v7.mjs
           node scripts/test-startup-projectionist.mjs
           node scripts/test-neutral-foreign-media-ui.mjs
-          node scripts/test-home-detail-regression.mjs
+          node scripts/test-home-detail-render-v2.mjs
           node scripts/test-runtime-latency-v3.mjs
-          node scripts/test-operator-playback.mjs
-          node scripts/test-metadata-empty-state.mjs
+          node scripts/test-stable-detail-fallback-v4.mjs
+          node scripts/test-operator-in-app-browser.mjs
 
       - name: Commit only validated Mobile source changes
         shell: bash
