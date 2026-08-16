@@ -7,6 +7,7 @@ on:
     paths:
       - 'scripts/fix-truthful-detail-pointer-v8.mjs'
       - 'scripts/test-truthful-detail-pointer-v8.mjs'
+      - 'scripts/test-runtime-latency-v3.mjs'
       - '.github/workflows/fix-truthful-detail-pointer-v8.yml'
   workflow_dispatch:
 
