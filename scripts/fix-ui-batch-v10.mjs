@@ -52,19 +52,19 @@ replaceOnce(
 );
 
 replaceOnce(
-`              ) : (
-                <View style={styles.detailPreparing}>
-                  <ActivityIndicator size="small" color={COLORS.gold} />
-                  <Text style={styles.detailPreparingText}>در حال آماده‌کردن پخش و قسمت‌ها…</Text>
-                </View>
-              )}`,
-`              ) : (
-                <View style={styles.detailActionsRow}>
-                  <Pressable style={styles.shareActionButton} onPress={onShare}>
-                    <Ionicons name="share-social-outline" size={22} color="#fff" />
-                  </Pressable>
-                </View>
-              )}`,
+`                ) : (
+                  <View style={styles.detailPreparing}>
+                    <ActivityIndicator color={COLORS.gold} size="small" />
+                    <Text style={styles.detailPreparingText}>در حال آماده‌کردن پخش و قسمت‌ها…</Text>
+                  </View>
+                )}`,
+`                ) : (
+                  <View style={styles.detailActions}>
+                    <Pressable onPress={() => void shareCatalogItem(item)} style={styles.detailSecondaryButton}>
+                      <Ionicons name="share-social-outline" color={COLORS.text} size={20} />
+                    </Pressable>
+                  </View>
+                )}`,
   'silent detail hydration',
 );
 
