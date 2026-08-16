@@ -5,7 +5,7 @@ const app = await fs.readFile('App.tsx', 'utf8');
 
 assert.match(app, /void reloadContent\(false\);/, 'bundled first install starts the real refresh immediately');
 assert.doesNotMatch(app, /initialRefreshTimer = setTimeout\(reloadContentWhenIdle, 650\);/, 'first install is no longer gated behind InteractionManager');
-assert.match(app, /startupFallbackTimer = setTimeout\(dismissStartup, 2000\);/, 'anti-stuck startup fallback is bounded to two seconds');
+assert.match(app, /startupFallbackTimer = setTimeout\(dismissStartup, 10000\);/, 'broken-network emergency escape stays bounded while fresh startup truth gets priority');
 
 const detailStart = app.indexOf('function DetailModal({');
 const detailEnd = app.indexOf('function PersonProfileModal({', detailStart);
@@ -18,10 +18,10 @@ assert.doesNotMatch(detail, /const hasPlayableStream = detailBodyReady \?/, 'pla
 
 const loadingStart = detail.indexOf('{!detailBodyReady ? (');
 const loadedStart = detail.indexOf(') : (', loadingStart);
-assert.ok(loadingStart >= 0 && loadedStart > loadingStart, 'loading detail branch exists');
+assert.ok(loadingStart >= 0 && loadedStart > loadingStart, 'pre-hydration detail branch exists');
 const loadingBranch = detail.slice(loadingStart, loadedStart + 5);
 assert.match(loadingBranch, /item\.type === 'movie' && \(hasPlayableStream \|\| primaryOperatorPlayFile \|\| hasDownloads\)/,
-  'loading detail branch renders immediate movie actions when compact media exists');
+  'pre-hydration detail branch renders immediate movie actions when compact media exists');
 assert.match(loadingBranch, /setDownloadSheetOpen\(true\)/, 'immediate movie download button opens the normal download sheet');
 assert.match(loadingBranch, /onStream\(item\)/, 'immediate movie play button uses the normal player path');
 
@@ -33,7 +33,7 @@ assert.doesNotMatch(reconcile, /prepared\.filter\(\(file\) => !conflictedUrls\.h
 
 console.log(JSON.stringify({
   startupIdleGateRemoved: true,
-  emergencyFallbackMs: 2000,
+  emergencyFallbackMs: 10000,
   immediateMovieActions: true,
   neutralConflictFallback: true,
 }, null, 2));
