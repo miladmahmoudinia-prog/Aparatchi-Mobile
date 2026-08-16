@@ -1510,46 +1510,33 @@ export const getBundledContent = (): LoadedContent => ({
 export async function loadBootstrapContent(): Promise<LoadedContent | null> {
   const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();
   if (!remoteUrl) return null;
-  const candidates = remoteRepositoryUrlCandidates(remoteUrl);
+  const candidates = [...remoteRepositoryUrlCandidates(remoteUrl)].sort((a, b) =>
+    Number(/raw\.githubusercontent\.com/i.test(b)) - Number(/raw\.githubusercontent\.com/i.test(a))
+  );
   if (!candidates.length) return null;
 
-  const controllers = candidates.map(() => new AbortController());
-  return await new Promise<LoadedContent | null>((resolve) => {
-    let remaining = candidates.length;
-    let settled = false;
-    const finishEmpty = () => {
-      remaining -= 1;
-      if (!settled && remaining <= 0) {
-        settled = true;
-        resolve(null);
-      }
-    };
-
-    candidates.forEach((candidate, index) => {
-      const controller = controllers[index];
-      const timeout = setTimeout(() => controller.abort(), 12_000);
-      const separator = candidate.includes('?') ? '&' : '?';
-      fetch(`${candidate}${separator}_aparatchi_bootstrap=${Math.floor(Date.now() / 300_000)}`, {
+  // Bootstrap decides what the user sees when the five-second cover disappears.
+  // Prefer GitHub Raw source truth and use CDN only as bounded failover; racing
+  // mirrors allowed an older jsDelivr object to win even while Raw was current.
+  for (const candidate of candidates) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3200);
+    const separator = candidate.includes('?') ? '&' : '?';
+    try {
+      const response = await fetch(candidate + separator + '_aparatchi_bootstrap=' + Date.now(), {
         headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
         signal: controller.signal,
-      })
-        .then(async (response) => {
-          if (!response.ok) throw new Error(`Bootstrap HTTP ${response.status}`);
-          const parsed = parsePayload(JSON.parse(await response.text()));
-          if (!parsed || parsed.items.length === 0 || settled) return;
-          settled = true;
-          controllers.forEach((other, otherIndex) => {
-            if (otherIndex !== index) other.abort();
-          });
-          resolve({ ...parsed, source: 'remote' });
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          clearTimeout(timeout);
-          if (!settled) finishEmpty();
-        });
-    });
-  });
+      });
+      if (!response.ok) continue;
+      const parsed = parsePayload(JSON.parse(await response.text()));
+      if (parsed?.items.length) return { ...parsed, source: 'remote' };
+    } catch {
+      // Try the next mirror.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return null;
 }
 
 const readCachedContent = async (): Promise<CatalogPayload | null> => {
@@ -1760,7 +1747,10 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
     let staleFallbackCatalog: CatalogCandidateResult | null = null;
     let lastCatalogError: unknown = null;
 
-    for (const candidate of remoteRepositoryUrlCandidates(remoteUrl)) {
+    const catalogCandidates = [...remoteRepositoryUrlCandidates(remoteUrl)].sort((a, b) =>
+      Number(/raw\.githubusercontent\.com/i.test(b)) - Number(/raw\.githubusercontent\.com/i.test(a))
+    );
+    for (const candidate of catalogCandidates) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 60_000);
       const catalogBaseRequestUrl = catalogRevision

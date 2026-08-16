@@ -5791,7 +5791,7 @@ function DetailModal({
                 <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
                 {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile || hasDownloads) ? (
                   <View style={styles.detailActions}>
-                    {!vpnActive && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
+                    {(hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
                     {hasDownloads ? (
                       <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
                         <Ionicons name="download-outline" color={COLORS.gold} size={19} />
@@ -5810,7 +5810,7 @@ function DetailModal({
             ) : (
               <>
             <View style={styles.detailActions}>
-              {item.type === 'movie' && !vpnActive && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
+              {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
               {item.type === 'movie' && hasDownloads ? (
                 <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
                   <Ionicons name="download-outline" color={COLORS.gold} size={19} />
@@ -7561,6 +7561,27 @@ function AppContent() {
       // the loading state visible until the remote attempt actually settles;
       // this prevents the brief false "catalog is empty" screen at startup.
       const firstContent = await loadContent(initialLoad);
+
+      // On an online cold start, a persisted catalog is only a fallback. Never
+      // commit it behind the five-second cover and then reveal stale Home rows.
+      // Resolve the current Raw-first bootstrap first; the complete index starts
+      // at the same time and replaces bootstrap as soon as it is ready.
+      if (initialLoad && online && firstContent.source !== 'remote') {
+        const freshContentPromise = loadContent(false);
+        const bootstrapContent = await loadBootstrapContent();
+        const currentBootstrapApplied = Boolean(bootstrapContent && applyContent(bootstrapContent));
+
+        if (!currentBootstrapApplied) applyContent(firstContent);
+        dismissStartup();
+
+        void freshContentPromise
+          .then((freshContent) => {
+            if (freshContent.source !== 'local') applyContent(freshContent);
+          })
+          .catch(() => undefined);
+        return;
+      }
+
       const firstApplied = applyContent(firstContent);
 
       if (firstApplied) {
@@ -7645,7 +7666,10 @@ function AppContent() {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
     }
-    startupFallbackTimer = setTimeout(dismissStartup, 5000);
+    // Five seconds is the normal minimum, not permission to reveal stale data.
+    // The Raw-first bootstrap has bounded failover; this ten-second timer is only
+    // an emergency escape for a broken network stack.
+    startupFallbackTimer = setTimeout(dismissStartup, 10000);
 
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
