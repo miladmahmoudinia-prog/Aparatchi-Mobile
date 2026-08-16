@@ -43,7 +43,40 @@ const bootstrapStart = service.indexOf('export async function loadBootstrapConte
 const bootstrapEnd = service.indexOf('\nconst readCachedContent = async', bootstrapStart);
 if (bootstrapStart < 0 || bootstrapEnd < 0) throw new Error('bootstrap loader block not found');
 const bootstrapBlock = service.slice(bootstrapStart, bootstrapEnd);
-const freshBootstrapBlock = `export async function loadBootstrapContent(): Promise<LoadedContent | null> {\n  const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();\n  if (!remoteUrl) return null;\n  const candidates = [...remoteRepositoryUrlCandidates(remoteUrl)].sort((a, b) =>\n    Number(/raw\\.githubusercontent\\.com/i.test(b)) - Number(/raw\\.githubusercontent\\.com/i.test(a))\n  );\n  if (!candidates.length) return null;\n\n  // Bootstrap decides what the user sees when the five-second cover disappears.\n  // Prefer GitHub Raw source truth and use CDN only as bounded failover; racing\n  // mirrors allowed an older jsDelivr object to win even while Raw was current.\n  for (const candidate of candidates) {\n    const controller = new AbortController();\n    const timeout = setTimeout(() => controller.abort(), 3200);\n    const separator = candidate.includes('?') ? '&' : '?';\n    try {\n      const response = await fetch(\\`${'${candidate}'}${'${separator}'}_aparatchi_bootstrap=${'${Date.now()}'}\\`, {\n        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },\n        signal: controller.signal,\n      });\n      if (!response.ok) continue;\n      const parsed = parsePayload(JSON.parse(await response.text()));\n      if (parsed?.items.length) return { ...parsed, source: 'remote' };\n    } catch {\n      // Try the next mirror.\n    } finally {\n      clearTimeout(timeout);\n    }\n  }\n  return null;\n}\n`;
+const freshBootstrapBlock = [
+  'export async function loadBootstrapContent(): Promise<LoadedContent | null> {',
+  '  const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();',
+  '  if (!remoteUrl) return null;',
+  '  const candidates = [...remoteRepositoryUrlCandidates(remoteUrl)].sort((a, b) =>',
+  '    Number(/raw\\.githubusercontent\\.com/i.test(b)) - Number(/raw\\.githubusercontent\\.com/i.test(a))',
+  '  );',
+  '  if (!candidates.length) return null;',
+  '',
+  '  // Bootstrap decides what the user sees when the five-second cover disappears.',
+  '  // Prefer GitHub Raw source truth and use CDN only as bounded failover; racing',
+  '  // mirrors allowed an older jsDelivr object to win even while Raw was current.',
+  '  for (const candidate of candidates) {',
+  '    const controller = new AbortController();',
+  '    const timeout = setTimeout(() => controller.abort(), 3200);',
+  "    const separator = candidate.includes('?') ? '&' : '?';",
+  '    try {',
+  "      const response = await fetch(candidate + separator + '_aparatchi_bootstrap=' + Date.now(), {",
+  "        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },",
+  '        signal: controller.signal,',
+  '      });',
+  '      if (!response.ok) continue;',
+  '      const parsed = parsePayload(JSON.parse(await response.text()));',
+  "      if (parsed?.items.length) return { ...parsed, source: 'remote' };",
+  '    } catch {',
+  '      // Try the next mirror.',
+  '    } finally {',
+  '      clearTimeout(timeout);',
+  '    }',
+  '  }',
+  '  return null;',
+  '}',
+  '',
+].join('\n');
 if (!bootstrapBlock.includes('const candidates = [...remoteRepositoryUrlCandidates(remoteUrl)].sort')) {
   service = service.slice(0, bootstrapStart) + freshBootstrapBlock + service.slice(bootstrapEnd);
 }
