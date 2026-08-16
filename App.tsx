@@ -524,11 +524,11 @@ const itemPosterBadges = (item: CatalogItem) => {
   if (!isIranianItem(item)) {
     const languages = itemLanguages(item);
     if (languages.includes('dubbed') && languages.includes('subtitled')) {
-      badges.push({ id: 'language', label: 'دوبله + زیرنویس', kind: 'language' });
+      badges.push({ id: 'language', label: 'دوبله فارسی + زیرنویس فارسی', kind: 'language' });
     } else if (languages.includes('dubbed')) {
       badges.push({ id: 'language', label: 'دوبله فارسی', kind: 'language' });
     } else if (languages.includes('subtitled')) {
-      badges.push({ id: 'language', label: 'زیرنویس', kind: 'language' });
+      badges.push({ id: 'language', label: 'زیرنویس فارسی', kind: 'language' });
     }
   }
 
@@ -901,7 +901,7 @@ const languageSectionsForFiles = (
       id: `${idPrefix}-${language}`,
       title: languageTitle(language),
       subtitle: `${languageFiles.length} کیفیت دانلود مستقیم`,
-      badge: language === 'dubbed' ? 'دوبله فارسی' : 'زیرنویس',
+      badge: language === 'dubbed' ? 'دوبله فارسی' : 'زیرنویس فارسی',
       language,
       files: languageFiles,
     }];
@@ -5026,7 +5026,7 @@ function DownloadGroup({
         </View>
         <View style={styles.downloadGroupBadge}>
           <Text style={styles.downloadGroupBadgeText}>
-            {group.language === 'dubbed' ? 'دوبله فارسی' : group.badge || (group.language === 'subtitled' ? 'زیرنویس' : 'دریافت')}
+            {group.language === 'dubbed' ? 'دوبله فارسی' : group.language === 'subtitled' ? 'زیرنویس فارسی' : group.badge || 'دریافت'}
           </Text>
         </View>
         <Ionicons name={open ? 'chevron-up' : 'chevron-down'} color={COLORS.gold} size={19} />
