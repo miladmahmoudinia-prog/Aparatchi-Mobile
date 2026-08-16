@@ -35,6 +35,27 @@
 - device samples مثل Yaksha، Toni Kroos، Prophet، Bécassine، DadShah و I Lost My Body در generated client truth پخش+دانلود معتبر دارند؛ فقط یک movie عادی قدیمی بدون action باقی مانده، بقیه no-actionهای شمرده‌شده operator-only هستند.
 - APK در این milestone ساخته نشد؛ Mobile نصب‌شده تا build جدید این دو commit را ندارد.
 
+
+# milestone UI truth + instant movie actions v10 — 2026-08-16
+
+## Mobile
+- functional commit `c8c1ce80e91172c654910335123883d2c7d60c08` — detail actions / episode-label / dubbed-only badge fix.
+- workflow `Fix fast detail and episode UI v10`, run `31936501293`: v10 regression + TypeScript typecheck + startup/detail/media regressions success.
+- dubbed-only badges keep `availableLanguages` authoritative after detail hydration.
+- episode cards display only «قسمت N» (or «جزء N» for Quran); provider subtitle/code strings are not shown.
+- visible detail hydration text was removed; heavier detail hydrates silently.
+
+## Content
+- functional commit `6ba46574bf17c3f1fc191f9abf1f699143f5c66a` — verified titles, immediate bootstrap movie actions, freshness guards and midpoint episode-frame source.
+- workflow `Fix UI truth compact v10b`, run `31936711403`: full Content suite 96/96 success + real diagnostics success.
+- verified `Twisted Metal` display title is `فلز درهم‌تنیده`; no generic guessed Persian-title generator was added.
+- all 3539 media-equipped client movies have immediate lightweight bootstrap media (previously 112); bootstrap 4,803,827 bytes vs client index 12,044,656 bytes.
+- media diagnostics: source/detail/summary URL loss = 0, dubbed loss = 0, source/client/bootstrap dubbed truth = 1415.
+- default ordering remains real add/update freshness, not production year; new episode meaningful updates sort series to the front.
+- episode frame generation probes duration and seeks around the 50% midpoint; UI accepts only exact generated episode artwork, not repeated series poster/backdrop.
+- pre-fix audit had 2970 episode groups and 2970 missing generated artworks because hourly Sync was blocked by stale tests. Live Sync run `31936854471` passed the regression gate and entered real discovery. Historical artwork is backfilled by the bounded hourly artwork lane; do not mark all historical frames complete until a later audit confirms it.
+- APK was not built.
+
 ---
 
 # milestone Catalog truth + 5s startup — 2026-08-16
