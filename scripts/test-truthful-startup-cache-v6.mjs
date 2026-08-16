@@ -7,7 +7,7 @@ const requiredApp = [
   'const STARTUP_MIN_VISIBLE_MS = 5000;',
   'const startupStartedAtRef = useRef(Date.now());',
   'const remaining = STARTUP_MIN_VISIBLE_MS - (Date.now() - startupStartedAtRef.current);',
-  'startupFallbackTimer = setTimeout(dismissStartup, 5000);',
+  'startupFallbackTimer = setTimeout(dismissStartup, 10000);',
   'const freshContentPromise = loadContent(false);',
   'const bootstrapContent = await loadBootstrapContent();',
   'const freshContent = await freshContentPromise;',
@@ -40,6 +40,7 @@ if (!service.includes('setTimeout(() => controller.abort(), 1800)')) {
 
 console.log(JSON.stringify({
   startupWarmupMs: 5000,
+  emergencyEscapeMs: 10000,
   completeCatalogStartsBeforeBootstrapWait: true,
   clientRevisionAuthoritative: true,
   rawManifestPreferredWithBoundedFailover: true,
