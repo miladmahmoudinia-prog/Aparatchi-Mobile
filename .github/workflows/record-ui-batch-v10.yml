@@ -1,0 +1,69 @@
+name: Record UI batch v10 milestone
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/record-ui-batch-v10.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 20
+      - name: Update PROJECT-STATE
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('PROJECT-STATE.md')
+          old = p.read_text(encoding='utf-8')
+          marker = '# milestone UI truth + instant movie actions v10 — 2026-08-16'
+          if marker in old:
+              raise SystemExit(0)
+          insert_at = old.find('\n---\n')
+          if insert_at < 0:
+              insert_at = len(old)
+          block = '''
+
+# milestone UI truth + instant movie actions v10 — 2026-08-16
+
+## Mobile
+- functional commit `c8c1ce80e91172c654910335123883d2c7d60c08` — `fix: make detail actions and episode labels immediate [skip ci]`.
+- workflow `Fix fast detail and episode UI v10`, run `31936501293`: v10 regression + TypeScript typecheck + startup/detail/media regressions all success.
+- dubbed-only badges now keep `availableLanguages` authoritative after detail hydration, so titles such as Muppets Haunted Mansion and Chang Can Dunk do not lose the «دوبله» badge.
+- series episode cards no longer display provider subtitle/code strings; visible episode identity is only «قسمت N» (or «جزء N» for Quran content).
+- the blocking-looking detail hydration message «در حال آماده‌کردن پخش و قسمت‌ها…» was removed; movie actions use compact media immediately while heavier detail hydrates silently.
+
+## Content
+- functional commit `6ba46574bf17c3f1fc191f9abf1f699143f5c66a` — `fix: make fresh ordering actions titles and episode artwork truthful [skip ci]`.
+- workflow `Fix UI truth compact v10b`, run `31936711403`: full Content suite 96/96 success + real catalog diagnostics success.
+- verified title override: `Twisted Metal` -> `فلز درهم‌تنیده`; no generic guessed Persian-title generator was added.
+- all 3539 media-equipped client movies now also have immediate lightweight bootstrap media (previously 112); bootstrap stays bounded at 4,803,827 bytes vs full client index 12,044,656 bytes.
+- real diagnostics after rebuild: source/client/detail/summary URL loss = 0; dubbed loss = 0; source/client/bootstrap dubbed truth = 1415.
+- default client ordering remains real freshness (`meaningfulUpdatedAt` / `firstSeenAt` etc.), not production year; a newly added title or a series with a newly added episode sorts to the front.
+- episode frame generation now probes actual duration and seeks near the 50% midpoint. Existing UI only accepts exact generated `assets/media/episodes/...jpg` artwork, so series poster/backdrop is not reused as a fake episode image.
+- before this repair the real audit found 2970 episode groups and 2970 missing generated episode artworks because hourly Sync was failing in stale pre-sync tests. Those stale tests were repaired; live Sync run `31936854471` passed the full regression gate and entered real new-content discovery, proving the hourly pipeline is unblocked. Artwork backlog is filled by the existing bounded hourly PEOPLE/artwork lane; do not claim all historical frames are already complete until a later audit says so.
+- APK was not built in this milestone.
+'''
+          p.write_text(old[:insert_at] + block + old[insert_at:], encoding='utf-8')
+          PY
+      - name: Commit PROJECT-STATE
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PROJECT-STATE.md
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "docs: record UI truth and instant actions v10 [skip ci]"
+          git pull --rebase --autostash origin main
+          git push origin HEAD:main
