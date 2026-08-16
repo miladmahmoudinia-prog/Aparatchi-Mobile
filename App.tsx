@@ -7645,7 +7645,7 @@ function AppContent() {
       if (fallback?.items.length) {
         const visibleFallback = visibleLoadedContent(fallback);
         if (visibleFallback.items.length) {
-          contentRevisionRef.current = loadedContentRevision(visibleFallback);
+          contentRevisionRef.current = `startup-bootstrap:${loadedContentRevision(visibleFallback)}`;
           contentRef.current = visibleFallback;
           setContent(visibleFallback);
           setContentReady(true);
