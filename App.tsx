@@ -510,7 +510,7 @@ const shareCatalogItem = async (item: CatalogItem) => {
 
 const itemLanguages = (item: CatalogItem): MediaLanguage[] =>
   LANGUAGE_ORDER.filter((language) =>
-    (item.detailLoaded !== true && item.availableLanguages?.includes(language)) ||
+    item.availableLanguages?.includes(language) ||
     (item.downloads || []).some((section) =>
       section.files.some((file) =>
         !isOperatorFile(file) && file.language === language
@@ -5173,8 +5173,7 @@ function EpisodeDownloadGroup({
             {episodeNoun} {toPersianDigits(group.episodeNumber || 0)}
           </Text>
           <Text numberOfLines={1} style={styles.episodeGroupSubtitle}>
-            {cleanMediaLabel(group.subtitle) ||
-              `${toPersianDigits(languageGroups.length + (operatorFiles.length ? 1 : 0))} گزینه پخش یا دریافت`}
+            {`${toPersianDigits(languageGroups.length + (operatorFiles.length ? 1 : 0))} گزینه پخش یا دریافت`}
           </Text>
         </View>
         <View style={styles.episodeNumberBadge}>
@@ -5326,45 +5325,9 @@ function SeriesEpisodeList({
   );
 }
 
-const episodeShowcaseLabel = (item: CatalogItem, group: DownloadSection, quran: boolean) => {
+const episodeShowcaseLabel = (_item: CatalogItem, group: DownloadSection, quran: boolean) => {
   const noun = quran ? 'جزء' : 'قسمت';
-  const episodeNumber = Number(group.episodeNumber || 0);
-  const number = toPersianDigits(episodeNumber);
-  const raw = cleanMediaLabel(group.subtitle || '').trim();
-  if (!raw) return `${noun} ${number}`;
-
-  const normalized = normalizeComparableText(raw)
-    .replace(/[ـ_:|•\-–—]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const seriesNames = [item.nameFa, item.name]
-    .map((value) => normalizeComparableText(String(value || ''))
-      .replace(/[ـ_:|•\-–—]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim())
-    .filter(Boolean);
-  const ordinal = '(?:اول|دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم|دهم|یازدهم|دوازدهم|سیزدهم|چهاردهم|پانزدهم|شانزدهم|هفدهم|هجدهم|نوزدهم|بیستم|بیست\\s*و\\s*(?:یکم|دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم)|سی\\s*و\\s*(?:یکم|دوم|سوم|چهارم|پنجم|ششم|هفتم|هشتم|نهم)|آخر|پایانی|\\d+)';
-  const episodeOnlyPattern = new RegExp(
-    `^(?:(?:قسمت|اپیزود)\\s*${ordinal}|(?:episode|ep|part)\\s*[-:#]*\\s*\\d+)$`,
-    'i',
-  );
-  const bareEpisodeNumberPattern = new RegExp(`^(?:${ordinal}|[۰-۹]+|[٠-٩]+)$`, 'i');
-  const pureEpisode = episodeOnlyPattern.test(normalized);
-  const seasonEpisodeBoilerplate = /^(?:season|فصل)\s*\d+.*(?:episode|ep|قسمت|اپیزود)\s*\d+\s*$/i.test(normalized);
-  const seriesNameBoilerplate = seriesNames.some((name) => {
-    if (!name) return false;
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const prefix = new RegExp(`^${escaped}\\s+`, 'i');
-    const suffix = new RegExp(`\\s+${escaped}$`, 'i');
-    const withoutName = normalized.replace(prefix, '').replace(suffix, '').trim();
-    return withoutName !== normalized && (
-      episodeOnlyPattern.test(withoutName) || bareEpisodeNumberPattern.test(withoutName)
-    );
-  });
-
-  return pureEpisode || seasonEpisodeBoilerplate || seriesNameBoilerplate
-    ? `${noun} ${number}`
-    : `${noun} ${number} - ${raw}`;
+  return `${noun} ${toPersianDigits(Number(group.episodeNumber || 0))}`;
 };
 
 function ExactEpisodeArtwork({
@@ -5800,12 +5763,7 @@ function DetailModal({
                     ) : null}
                     <Pressable onPress={() => void shareCatalogItem(item)} style={styles.detailSecondaryButton}><Ionicons name="share-social-outline" color={COLORS.text} size={20} /></Pressable>
                   </View>
-                ) : (
-                  <View style={styles.detailPreparing}>
-                    <ActivityIndicator color={COLORS.gold} size="small" />
-                    <Text style={styles.detailPreparingText}>در حال آماده‌کردن پخش و قسمت‌ها…</Text>
-                  </View>
-                )}
+                ) : null}
               </>
             ) : (
               <>
