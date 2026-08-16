@@ -7395,6 +7395,7 @@ function AppContent() {
   const startupStartedAtRef = useRef(Date.now());
   const startupDismissedRef = useRef(false);
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startupFallbackContentRef = useRef<LoadedContent | null>(null);
   const vpnCheckSequenceRef = useRef(0);
   const vpnPausingDownloadsRef = useRef(false);
   const activeTabRef = useRef<MainTab>('home');
@@ -7527,7 +7528,10 @@ function AppContent() {
       // This prevents a visible bootstrap -> full-catalog jump after the splash.
       if (initialLoad && online && firstContent.source !== 'remote') {
         const freshContentPromise = loadContent(false);
-        const bootstrapContentPromise = loadBootstrapContent();
+        const bootstrapContentPromise = loadBootstrapContent().then((bootstrapContent) => {
+          if (bootstrapContent?.items.length) startupFallbackContentRef.current = bootstrapContent;
+          return bootstrapContent;
+        });
         let fallbackContent = firstContent;
 
         try {
@@ -7635,7 +7639,21 @@ function AppContent() {
     // Five seconds is the normal minimum, not permission to reveal stale data.
     // The Raw-first bootstrap has bounded failover; this ten-second timer is only
     // an emergency escape for a broken network stack.
-    startupFallbackTimer = setTimeout(dismissStartup, 10000);
+    startupFallbackTimer = setTimeout(() => {
+      if (startupDismissedRef.current) return;
+      const fallback = startupFallbackContentRef.current;
+      if (fallback?.items.length) {
+        const visibleFallback = visibleLoadedContent(fallback);
+        if (visibleFallback.items.length) {
+          contentRevisionRef.current = loadedContentRevision(visibleFallback);
+          contentRef.current = visibleFallback;
+          setContent(visibleFallback);
+          setContentReady(true);
+          setContentResolved(true);
+        }
+      }
+      dismissStartup();
+    }, 10000);
 
     loadDownloadRecords().then(setDownloads);
     loadLibraryState()
