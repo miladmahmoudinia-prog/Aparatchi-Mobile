@@ -20,8 +20,9 @@ jobs:
           ref: main
           fetch-depth: 20
       - name: Prepend verified milestone to PROJECT-STATE
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
           p = Path('PROJECT-STATE.md')
           old = p.read_text(encoding='utf-8')
@@ -31,7 +32,7 @@ jobs:
           insert_at = old.find('\n---\n')
           if insert_at < 0:
               insert_at = len(old)
-          block = r'''
+          block = '''
 
 # milestone Fresh startup + truthful media/language v9 — 2026-08-16
 
@@ -52,6 +53,7 @@ jobs:
 - APK در این milestone ساخته نشد؛ Mobile نصب‌شده تا build جدید این دو commit را ندارد.
 '''
           p.write_text(old[:insert_at] + block + old[insert_at:], encoding='utf-8')
+          PY
       - name: Commit PROJECT-STATE only
         shell: bash
         run: |
