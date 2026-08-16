@@ -7521,23 +7521,30 @@ function AppContent() {
       // this prevents the brief false "catalog is empty" screen at startup.
       const firstContent = await loadContent(initialLoad);
 
-      // On an online cold start, a persisted catalog is only a fallback. Never
-      // commit it behind the five-second cover and then reveal stale Home rows.
-      // Resolve the current Raw-first bootstrap first; the complete index starts
-      // at the same time and replaces bootstrap as soon as it is ready.
+      // On an online cold start, bundled/persisted/bootstrap catalogs are fallback
+      // only. Keep the branded cover up while the current Raw-first full index is
+      // already downloading; normally reveal Home once that full truth is ready.
+      // This prevents a visible bootstrap -> full-catalog jump after the splash.
       if (initialLoad && online && firstContent.source !== 'remote') {
         const freshContentPromise = loadContent(false);
-        const bootstrapContent = await loadBootstrapContent();
-        const currentBootstrapApplied = Boolean(bootstrapContent && applyContent(bootstrapContent));
+        const bootstrapContentPromise = loadBootstrapContent();
+        let fallbackContent = firstContent;
 
-        if (!currentBootstrapApplied) applyContent(firstContent);
+        try {
+          const freshContent = await freshContentPromise;
+          if (freshContent.source === 'remote' && applyContent(freshContent)) {
+            dismissStartup();
+            return;
+          }
+          fallbackContent = freshContent;
+        } catch {
+          // The current full index failed; use the current bootstrap below.
+        }
+
+        const bootstrapContent = await bootstrapContentPromise;
+        const bootstrapApplied = Boolean(bootstrapContent && applyContent(bootstrapContent));
+        if (!bootstrapApplied) applyContent(fallbackContent);
         dismissStartup();
-
-        void freshContentPromise
-          .then((freshContent) => {
-            if (freshContent.source !== 'local') applyContent(freshContent);
-          })
-          .catch(() => undefined);
         return;
       }
 

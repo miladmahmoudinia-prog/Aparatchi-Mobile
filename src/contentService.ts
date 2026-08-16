@@ -859,6 +859,13 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
       item.collectionOrder ?? item.collection_order ?? item.collectionPart ?? item.collection_part,
       0,
     );
+    const summaryDownloads = Array.isArray(item.downloads)
+      ? normalizeDownloads(item.downloads, iranian)
+      : [];
+    const rawSummaryStreamUrl = asString(item.streamUrl);
+    const summaryStreamUrl = rawSummaryStreamUrl && isPlayableUrl(rawSummaryStreamUrl)
+      ? rawSummaryStreamUrl
+      : '';
 
     return {
       id,
@@ -894,6 +901,8 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
         ? { supportedOperators: stringArray(item.supportedOperators ?? item.supported_operators) }
         : {}),
       ...(declaredLanguages.length ? { availableLanguages: declaredLanguages } : {}),
+      ...(summaryDownloads.length ? { downloads: summaryDownloads } : {}),
+      ...(summaryStreamUrl ? { streamUrl: summaryStreamUrl, streamMode: 'video' as const } : {}),
       ...(type === 'series'
         ? {
             episodeCount: asNumber(item.episodeCount ?? item.episode_count, 0),
