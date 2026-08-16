@@ -1,0 +1,77 @@
+name: Fix visible media and fresh startup v7
+# Source verification only. Never builds an APK.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/fix-visible-media-startup-v7.mjs'
+      - 'scripts/test-visible-media-startup-v7.mjs'
+      - '.github/workflows/fix-visible-media-startup-v7.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-visible-media-startup-v7
+  cancel-in-progress: false
+
+jobs:
+  apply-verify-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 30
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply v7 repair
+        run: node scripts/fix-visible-media-startup-v7.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Verify v7 regressions
+        run: |
+          node scripts/test-visible-media-startup-v7.mjs
+          node scripts/test-startup-projectionist.mjs
+          node scripts/test-neutral-foreign-media-ui.mjs
+          node scripts/test-home-detail-regression.mjs
+          node scripts/test-runtime-latency-v3.mjs
+          node scripts/test-operator-playback.mjs
+          node scripts/test-metadata-empty-state.mjs
+
+      - name: Commit only validated Mobile source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx src/contentService.ts scripts/test-startup-projectionist.mjs
+          if git diff --cached --quiet; then
+            echo "Validated Mobile v7 repair is already current."
+            exit 0
+          fi
+          git commit -m "fix: hide stale startup and keep real media actions visible [skip ci]"
+          PUSHED=0
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase --autostash origin main && git push origin HEAD:main; then
+              PUSHED=1
+              break
+            fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((attempt * 2))
+          done
+          [ "$PUSHED" -eq 1 ] || exit 1
