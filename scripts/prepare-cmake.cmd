@@ -38,13 +38,73 @@ if not exist "%TARGET%\bin\cmake.exe" exit /b 36
 if not exist "%TARGET%\bin\ninja.exe" exit /b 37
 echo CMake/Ninja ready: %TARGET%
 
-if not exist "%ANDROID_HOME%\platforms\android-36\android.jar" (
-  echo ERROR: Android platform 36 is missing from %ANDROID_HOME%.
-  exit /b 40
+set "PLATFORM_TARGET=%ANDROID_HOME%\platforms\android-36"
+set "BUILD_TARGET=%ANDROID_HOME%\build-tools\36.0.0"
+
+if not exist "!PLATFORM_TARGET!\android.jar" (
+  set "PLATFORM_SRC="
+  for /d %%U in ("C:\Users\*") do if not defined PLATFORM_SRC if exist "%%~fU\AppData\Local\Android\Sdk\platforms\android-36\android.jar" set "PLATFORM_SRC=%%~fU\AppData\Local\Android\Sdk\platforms\android-36"
+  if not defined PLATFORM_SRC if exist "C:\Android\Sdk\platforms\android-36\android.jar" set "PLATFORM_SRC=C:\Android\Sdk\platforms\android-36"
+  if defined PLATFORM_SRC (
+    echo Reusing Android platform 36 from !PLATFORM_SRC!
+    if not exist "%ANDROID_HOME%\platforms" mkdir "%ANDROID_HOME%\platforms"
+    if exist "!PLATFORM_TARGET!" rmdir /s /q "!PLATFORM_TARGET!" >nul 2>&1
+    mklink /J "!PLATFORM_TARGET!" "!PLATFORM_SRC!" >nul 2>&1
+    if errorlevel 1 (
+      robocopy "!PLATFORM_SRC!" "!PLATFORM_TARGET!" /E /NFL /NDL /NJH /NJS /NP
+      if errorlevel 8 exit /b 40
+    )
+  )
 )
-if not exist "%ANDROID_HOME%\build-tools\36.0.0\aapt2.exe" (
-  echo ERROR: Android build-tools 36.0.0 are missing from %ANDROID_HOME%.
-  exit /b 41
+
+if not exist "!BUILD_TARGET!\aapt2.exe" (
+  set "BUILD_SRC="
+  for /d %%U in ("C:\Users\*") do if not defined BUILD_SRC if exist "%%~fU\AppData\Local\Android\Sdk\build-tools\36.0.0\aapt2.exe" set "BUILD_SRC=%%~fU\AppData\Local\Android\Sdk\build-tools\36.0.0"
+  if not defined BUILD_SRC if exist "C:\Android\Sdk\build-tools\36.0.0\aapt2.exe" set "BUILD_SRC=C:\Android\Sdk\build-tools\36.0.0"
+  if defined BUILD_SRC (
+    echo Reusing Android build-tools 36.0.0 from !BUILD_SRC!
+    if not exist "%ANDROID_HOME%\build-tools" mkdir "%ANDROID_HOME%\build-tools"
+    if exist "!BUILD_TARGET!" rmdir /s /q "!BUILD_TARGET!" >nul 2>&1
+    mklink /J "!BUILD_TARGET!" "!BUILD_SRC!" >nul 2>&1
+    if errorlevel 1 (
+      robocopy "!BUILD_SRC!" "!BUILD_TARGET!" /E /NFL /NDL /NJH /NJS /NP
+      if errorlevel 8 exit /b 41
+    )
+  )
+)
+
+if not exist "!PLATFORM_TARGET!\android.jar" goto install_sdk
+if not exist "!BUILD_TARGET!\aapt2.exe" goto install_sdk
+goto sdk_ready
+
+:install_sdk
+set "SDKMANAGER=%ANDROID_HOME%\cmdline-tools\latest\bin\sdkmanager.bat"
+if not exist "!SDKMANAGER!" (
+  echo ERROR: sdkmanager.bat is missing from %ANDROID_HOME%.
+  exit /b 42
+)
+if not defined JAVA_HOME (
+  for /d %%J in ("%TOOL_ROOT%\java17\*") do if not defined JAVA_HOME if exist "%%~fJ\bin\java.exe" set "JAVA_HOME=%%~fJ"
+)
+if not defined JAVA_HOME (
+  echo ERROR: Java 17 is unavailable for sdkmanager.
+  exit /b 43
+)
+echo Installing Android platform 36 and build-tools 36.0.0 once...
+call "!SDKMANAGER!" --sdk_root="%ANDROID_HOME%" "platforms;android-36" "build-tools;36.0.0"
+if errorlevel 1 (
+  echo ERROR: sdkmanager could not install Android 36 packages.
+  exit /b 44
+)
+
+:sdk_ready
+if not exist "!PLATFORM_TARGET!\android.jar" (
+  echo ERROR: Android platform 36 is still missing after bootstrap.
+  exit /b 45
+)
+if not exist "!BUILD_TARGET!\aapt2.exe" (
+  echo ERROR: Android build-tools 36.0.0 are still missing after bootstrap.
+  exit /b 46
 )
 echo Android platform 36 and build-tools 36.0.0 are ready.
 endlocal
