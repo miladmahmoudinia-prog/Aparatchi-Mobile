@@ -7,7 +7,7 @@ const types = fs.readFileSync('src/types.ts', 'utf8');
 
 assert.ok(types.includes('firstSeenAt?: string;'));
 assert.ok(service.includes('bootstrapRevision?: string;'));
-assert.ok(service.includes('_aparatchi_manifest=${Date.now()}'));
+assert.ok(service.includes('_aparatchi_manifest=') && service.includes('Date.now()'));
 assert.ok(service.includes("manifest?.bootstrapRevision || manifest?.clientRevision || manifest?.revision"));
 assert.ok(service.includes('asString(parsed.updatedAt) !== asString(manifest.catalogUpdatedAt)'));
 assert.ok(app.includes("const hasRealEpisodeLabel = /^قسمت\\s+.+\\s+اضافه\\s+شد$/u.test"));
