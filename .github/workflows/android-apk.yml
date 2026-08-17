@@ -28,6 +28,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "22"
+          package-manager-cache: false
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -38,6 +39,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
+          cmdline-tools-version: "12266719"
           log-accepted-android-sdk-licenses: "false"
 
       # The Windows runner service account blocks PowerShell scripts by policy,
