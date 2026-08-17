@@ -14,60 +14,77 @@ jobs:
   bootstrap:
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 45
+    env:
+      TOOL_ROOT: C:/actions-runner/tools
+      ANDROID_HOME: C:/actions-runner/android-sdk
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Install exact Android NDK once
-        shell: powershell
+        shell: cmd
         run: |
-          $ErrorActionPreference = 'Stop'
-          $ver = '27.1.12297006'
-          $toolRoot = 'C:\actions-runner\tools'
-          $downloads = Join-Path $toolRoot 'downloads'
-          $zip = Join-Path $downloads 'android-ndk-r27b-windows.zip'
-          $src = Join-Path $toolRoot 'android-ndk-r27b'
-          $sdk = 'C:\actions-runner\android-sdk'
-          $target = Join-Path $sdk "ndk\$ver"
-          $expectedSize = 781495902
-          $expectedSha1 = '3bb7efc850cd0af7707854b7e0d5c3b6a7153703'
-          $url = 'https://redirector.gvt1.com/edgedl/android/repository/android-ndk-r27b-windows.zip'
+          @echo off
+          setlocal EnableDelayedExpansion
+          set "VER=27.1.12297006"
+          set "SRC=%TOOL_ROOT%\android-ndk-r27b"
+          set "ZIP=%TOOL_ROOT%\downloads\android-ndk-r27b-windows.zip"
+          set "TARGET=%ANDROID_HOME%\ndk\%VER%"
+          set "EXPECTED_SIZE=781495902"
+          set "SHA1=3bb7efc850cd0af7707854b7e0d5c3b6a7153703"
+          set "URL=https://redirector.gvt1.com/edgedl/android/repository/android-ndk-r27b-windows.zip"
 
-          if (-not (Test-Path (Join-Path $src 'source.properties'))) {
-            New-Item -ItemType Directory -Force -Path $downloads | Out-Null
-            if (Test-Path $zip) {
-              $len = (Get-Item $zip).Length
-              if ($len -gt $expectedSize) { Remove-Item -Force $zip }
-            }
-            if (-not (Test-Path $zip)) { New-Item -ItemType File -Path $zip | Out-Null }
-            Write-Host 'Downloading Android NDK r27b once. This file is kept for all later APK builds.'
-            & curl.exe -fL -C - --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 7200 -o $zip $url
-            if ($LASTEXITCODE -ne 0) { throw 'NDK download failed.' }
-            $size = (Get-Item $zip).Length
-            if ($size -ne $expectedSize) { throw "NDK size mismatch: $size" }
-            $sha1 = (Get-FileHash -Algorithm SHA1 $zip).Hash.ToLowerInvariant()
-            if ($sha1 -ne $expectedSha1) { throw "NDK SHA1 mismatch: $sha1" }
-            if (Test-Path $src) { Remove-Item -Recurse -Force $src }
-            & tar.exe -xf $zip -C $toolRoot
-            if ($LASTEXITCODE -ne 0) { throw 'NDK extraction failed.' }
-          }
+          if exist "!SRC!\source.properties" goto ndk_ready
+          if not exist "%TOOL_ROOT%\downloads" mkdir "%TOOL_ROOT%\downloads"
 
-          if (-not (Test-Path (Join-Path $src 'source.properties'))) { throw 'NDK source.properties is missing after extraction.' }
-          New-Item -ItemType Directory -Force -Path (Join-Path $sdk 'ndk') | Out-Null
-          if (Test-Path $target) { Remove-Item -Recurse -Force $target }
-          New-Item -ItemType Junction -Path $target -Target $src | Out-Null
-          if (-not (Test-Path (Join-Path $target 'build\cmake\android.toolchain.cmake'))) { throw 'NDK junction verification failed.' }
-          Write-Host "Persistent NDK ready at $target"
+          if exist "!ZIP!" (
+            for %%F in ("!ZIP!") do set "CURRENT_SIZE=%%~zF"
+            if "!CURRENT_SIZE!"=="!EXPECTED_SIZE!" (
+              certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1
+              if errorlevel 1 del /q "!ZIP!"
+            ) else if !CURRENT_SIZE! GTR !EXPECTED_SIZE! (
+              del /q "!ZIP!"
+            )
+          )
+
+          if not exist "!ZIP!" type nul > "!ZIP!"
+          echo Downloading Android NDK r27b once from the working Google CDN route...
+          curl.exe -fL -C - --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 7200 -o "!ZIP!" "!URL!" || exit /b 11
+
+          for %%F in ("!ZIP!") do set "CURRENT_SIZE=%%~zF"
+          if not "!CURRENT_SIZE!"=="!EXPECTED_SIZE!" (
+            echo ERROR: NDK size mismatch. Got !CURRENT_SIZE!, expected !EXPECTED_SIZE!.
+            exit /b 12
+          )
+          certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1 || (
+            echo ERROR: NDK checksum mismatch.
+            exit /b 13
+          )
+
+          if exist "!SRC!" rmdir /s /q "!SRC!"
+          tar.exe -xf "!ZIP!" -C "%TOOL_ROOT%" || exit /b 14
+          if not exist "!SRC!\source.properties" exit /b 15
+
+          :ndk_ready
+          if not exist "%ANDROID_HOME%\ndk" mkdir "%ANDROID_HOME%\ndk"
+          if exist "!TARGET!\source.properties" goto target_ready
+          if exist "!TARGET!" rmdir "!TARGET!" >nul 2>&1
+          mklink /J "!TARGET!" "!SRC!" >nul 2>&1 || (
+            robocopy "!SRC!" "!TARGET!" /E /NFL /NDL /NJH /NJS /NP
+            if errorlevel 8 exit /b 16
+          )
+
+          :target_ready
+          if not exist "!TARGET!\build\cmake\android.toolchain.cmake" exit /b 17
+          echo Persistent NDK ready: !TARGET!
+          endlocal
 
       - name: Launch normal APK workflow
-        shell: powershell
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: cmd
         run: |
-          $ErrorActionPreference = 'Stop'
-          $headers = @{
-            Authorization = "Bearer $($env:GH_TOKEN)"
-            Accept = 'application/vnd.github+json'
-            'X-GitHub-Api-Version' = '2022-11-28'
-            'User-Agent' = 'Aparatchi-SelfHosted-Runner'
-          }
-          $uri = "https://api.github.com/repos/$($env:GITHUB_REPOSITORY)/actions/workflows/android-apk.yml/dispatches"
-          Invoke-RestMethod -Method Post -Uri $uri -Headers $headers -ContentType 'application/json' -Body '{"ref":"main"}'
-          Write-Host 'Normal Build Android APK workflow dispatched.'
+          @echo off
+          curl.exe -fL -X POST ^
+            -H "Accept: application/vnd.github+json" ^
+            -H "Authorization: Bearer %GH_TOKEN%" ^
+            -H "X-GitHub-Api-Version: 2022-11-28" ^
+            "https://api.github.com/repos/%GITHUB_REPOSITORY%/actions/workflows/android-apk.yml/dispatches" ^
+            -d "{\"ref\":\"main\"}" || exit /b 20
+          echo Normal Build Android APK workflow dispatched.
