@@ -5,6 +5,9 @@ set "TARGET=%ANDROID_HOME%\ndk\%VER%"
 set "SRC="
 set "ZIP=%TOOL_ROOT%\downloads\android-ndk-r27b-windows.zip"
 set "SHA1=3bb7efc850cd0af7707854b7e0d5c3b6a7153703"
+set "EXPECTED_SIZE=781495902"
+set "PRIMARY_URL=https://redirector.gvt1.com/edgedl/android/repository/android-ndk-r27b-windows.zip"
+set "FALLBACK_URL=https://dl.google.com/android/repository/android-ndk-r27b-windows.zip"
 
 if exist "%TARGET%\source.properties" set "SRC=%TARGET%"
 if not defined SRC for /d %%U in ("C:\Users\*") do if not defined SRC if exist "%%~fU\AppData\Local\Android\Sdk\ndk\%VER%\source.properties" set "SRC=%%~fU\AppData\Local\Android\Sdk\ndk\%VER%"
@@ -16,45 +19,46 @@ if not defined SRC if exist "%TOOL_ROOT%\android-ndk-r27b\source.properties" set
 
 if not defined SRC (
   if not exist "%TOOL_ROOT%\downloads" mkdir "%TOOL_ROOT%\downloads"
-  if exist "!ZIP!" (
-    certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1
-    if errorlevel 1 del /q "!ZIP!"
-  )
 
-  if not exist "!ZIP!" if defined GH_TOKEN (
-    echo NDK r27b is not local. Restoring the one-time Aparatchi GitHub cache...
-    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "scripts\fetch-ndk-cache.ps1" -OutFile "!ZIP!"
-    if errorlevel 1 (
-      echo GitHub NDK cache is not ready yet; trying Google as fallback.
-      if exist "!ZIP!" del /q "!ZIP!"
+  if exist "!ZIP!" (
+    for %%F in ("!ZIP!") do set "CURRENT_SIZE=%%~zF"
+    if "!CURRENT_SIZE!"=="!EXPECTED_SIZE!" (
+      certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1
+      if errorlevel 1 del /q "!ZIP!"
+    ) else if !CURRENT_SIZE! GTR !EXPECTED_SIZE! (
+      del /q "!ZIP!"
     )
   )
 
-  if exist "!ZIP!" (
-    certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1 || exit /b 12
-    if exist "%TOOL_ROOT%\android-ndk-r27b" rmdir /s /q "%TOOL_ROOT%\android-ndk-r27b"
-    tar.exe -xf "!ZIP!" -C "%TOOL_ROOT%" || exit /b 13
-    if exist "%TOOL_ROOT%\android-ndk-r27b\source.properties" set "SRC=%TOOL_ROOT%\android-ndk-r27b"
+  if not exist "!ZIP!" (
+    type nul > "!ZIP!"
   )
+
+  echo NDK r27b is not local. Downloading once from the working Google CDN route...
+  curl.exe -fL -C - --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 7200 -o "!ZIP!" "!PRIMARY_URL!"
+  if errorlevel 1 (
+    echo Primary Google CDN route failed. Trying dl.google.com fallback...
+    del /q "!ZIP!" >nul 2>&1
+    curl.exe -fL --retry 4 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 7200 -o "!ZIP!" "!FALLBACK_URL!" || exit /b 11
+  )
+
+  for %%F in ("!ZIP!") do set "CURRENT_SIZE=%%~zF"
+  if not "!CURRENT_SIZE!"=="!EXPECTED_SIZE!" (
+    echo ERROR: NDK download size mismatch. Got !CURRENT_SIZE!, expected !EXPECTED_SIZE!.
+    exit /b 12
+  )
+  certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1 || (
+    echo ERROR: NDK checksum mismatch.
+    exit /b 13
+  )
+
+  if exist "%TOOL_ROOT%\android-ndk-r27b" rmdir /s /q "%TOOL_ROOT%\android-ndk-r27b"
+  tar.exe -xf "!ZIP!" -C "%TOOL_ROOT%" || exit /b 14
+  if exist "%TOOL_ROOT%\android-ndk-r27b\source.properties" set "SRC=%TOOL_ROOT%\android-ndk-r27b"
 )
 
 if not defined SRC (
-  echo GitHub cache unavailable. Checking official Google NDK download as fallback...
-  curl.exe -fsIL --connect-timeout 10 --max-time 25 "https://dl.google.com/android/repository/android-ndk-r27b-windows.zip" >nul 2>&1
-  if not errorlevel 1 (
-    if not exist "%TOOL_ROOT%\downloads" mkdir "%TOOL_ROOT%\downloads"
-    if exist "!ZIP!" del /q "!ZIP!"
-    curl.exe -fL --retry 3 --retry-delay 5 --connect-timeout 15 --max-time 1800 -o "!ZIP!" "https://dl.google.com/android/repository/android-ndk-r27b-windows.zip" || exit /b 11
-    certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1 || exit /b 12
-    if exist "%TOOL_ROOT%\android-ndk-r27b" rmdir /s /q "%TOOL_ROOT%\android-ndk-r27b"
-    tar.exe -xf "!ZIP!" -C "%TOOL_ROOT%" || exit /b 13
-    if exist "%TOOL_ROOT%\android-ndk-r27b\source.properties" set "SRC=%TOOL_ROOT%\android-ndk-r27b"
-  )
-)
-
-if not defined SRC (
-  echo ERROR: NDK %VER% is missing. The private GitHub cache has not been seeded yet and Google is unreachable.
-  echo Stopping before npm and Gradle to avoid another long failed build.
+  echo ERROR: NDK %VER% could not be prepared.
   exit /b 20
 )
 findstr /I /C:"Pkg.Revision = %VER%" "!SRC!\source.properties" >nul 2>&1 || exit /b 21
