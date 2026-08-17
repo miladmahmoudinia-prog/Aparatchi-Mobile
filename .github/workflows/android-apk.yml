@@ -38,15 +38,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Reuse the Android SDK copied into the runner directory so the Windows
-      # service account can access it without touching a user-profile folder.
-      - name: Verify local Android SDK
+      # The copied SDK root is accessible to the Windows service account. Do not
+      # require platform/build-tools to exist up front: Gradle can resolve missing
+      # SDK packages during the command-line build when accepted licenses exist.
+      - name: Verify local Android SDK root
         shell: cmd
         run: |
           if not exist "%ANDROID_HOME%" (echo Android SDK folder not found: %ANDROID_HOME% & exit /b 1)
-          if not exist "%ANDROID_HOME%\platforms" (echo Android SDK platforms folder is missing & exit /b 1)
-          if not exist "%ANDROID_HOME%\build-tools" (echo Android SDK build-tools folder is missing & exit /b 1)
           echo Using Android SDK: %ANDROID_HOME%
+          if exist "%ANDROID_HOME%\licenses" (echo Accepted Android SDK licenses folder found) else (echo Android SDK licenses folder is not present; Gradle will report if it is required)
 
       # The Windows runner service account blocks PowerShell scripts by policy,
       # so all command steps intentionally use cmd.
