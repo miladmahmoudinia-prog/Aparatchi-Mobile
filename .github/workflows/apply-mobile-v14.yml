@@ -31,6 +31,17 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      - name: Mark runner start
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "aparatchi-mobile-bot"
+          git config user.email "actions@users.noreply.github.com"
+          printf 'started=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > mobile-v15-started.log
+          git add mobile-v15-started.log
+          git commit -m 'chore: mark mobile v15 runner start [skip ci]'
+          git push origin HEAD:main
+
       - name: Apply and statically verify consolidated mobile fixes
         id: source
         shell: bash
