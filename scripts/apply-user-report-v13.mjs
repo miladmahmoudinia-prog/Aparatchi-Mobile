@@ -5,6 +5,11 @@ const replaceOnce = (source, before, after, label) => {
   if (count !== 1) throw new Error(`${label}: expected exactly one match, found ${count}`);
   return source.replace(before, after);
 };
+const replaceAllCount = (source, before, after, expected, label) => {
+  const count = source.split(before).length - 1;
+  if (count !== expected) throw new Error(`${label}: expected ${expected} matches, found ${count}`);
+  return source.split(before).join(after);
+};
 
 let app = await fs.readFile('App.tsx', 'utf8');
 
@@ -29,17 +34,12 @@ app = replaceOnce(
   'disable removed Indian series filter',
 );
 
-app = replaceOnce(
+app = replaceAllCount(
   app,
   `  'korean-movies', 'korean-series', 'indian-movies', 'indian-series',\n  'anime-movies', 'anime-series', 'animation-movies', 'animation-series',`,
   `  'korean-movies', 'korean-series', 'indian-movies',\n  'anime-movies', 'anime-series', 'animation-movies', 'animation-series',`,
-  'remove Indian series from server category filters',
-);
-app = replaceOnce(
-  app,
-  `  'korean-movies', 'korean-series', 'indian-movies', 'indian-series',\n  'anime-movies', 'anime-series', 'animation-movies', 'animation-series',`,
-  `  'korean-movies', 'korean-series', 'indian-movies',\n  'anime-movies', 'anime-series', 'animation-movies', 'animation-series',`,
-  'remove Indian series from strict filters',
+  2,
+  'remove Indian series from server and strict filters',
 );
 
 app = replaceOnce(
