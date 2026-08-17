@@ -23,6 +23,7 @@ jobs:
         shell: cmd
         run: |
           @echo off
+          rem Keep this tiny launcher separate so APK workflow fixes can retrigger cleanly.
           curl.exe -fL -X POST ^
             -H "Accept: application/vnd.github+json" ^
             -H "Authorization: Bearer %GH_TOKEN%" ^
