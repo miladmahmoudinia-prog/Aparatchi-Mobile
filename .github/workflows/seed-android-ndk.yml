@@ -1,0 +1,47 @@
+name: Seed Android NDK Cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/seed-android-ndk.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  seed:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download official Android NDK r27b
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://dl.google.com/android/repository/android-ndk-r27b-windows.zip'
+          $file = 'android-ndk-r27b-windows.zip'
+          curl.exe -fL --retry 5 --retry-delay 5 --connect-timeout 20 -o $file $url
+          if ($LASTEXITCODE -ne 0) { throw 'Official NDK download failed.' }
+          $sha1 = (Get-FileHash -Algorithm SHA1 $file).Hash.ToLowerInvariant()
+          if ($sha1 -ne '3bb7efc850cd0af7707854b7e0d5c3b6a7153703') {
+            throw "Unexpected NDK SHA1: $sha1"
+          }
+          Write-Host "Official NDK verified: $sha1"
+
+      - name: Publish persistent NDK cache release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'android-toolchain-cache'
+          $asset = 'android-ndk-r27b-windows.zip'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $asset --clobber
+          } else {
+            gh release create $tag $asset --target $env:GITHUB_SHA --title 'Aparatchi Android Toolchain Cache' --notes 'Persistent Windows Android NDK cache for the self-hosted APK runner.'
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing NDK cache failed.' }
+          Write-Host 'Persistent NDK cache is ready.'
