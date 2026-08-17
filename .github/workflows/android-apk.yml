@@ -22,6 +22,24 @@ jobs:
       JAVA_HOME: C:/actions-runner/_work/_tool/Java_Temurin-Hotspot_jdk/17.0.20-8/x64
 
     steps:
+      # The runner service has a much smaller PATH than the interactive Windows
+      # account. Discover already-installed tools and expose them to later steps.
+      - name: Activate local toolchain
+        shell: cmd
+        run: |
+          @echo off
+          setlocal EnableDelayedExpansion
+          set "FOUND_GIT="
+          for %%G in ("C:\Program Files\Git\cmd\git.exe" "C:\Program Files\Git\bin\git.exe" "C:\Program Files (x86)\Git\cmd\git.exe" "C:\Program Files (x86)\Git\bin\git.exe") do if not defined FOUND_GIT if exist "%%~G" set "FOUND_GIT=%%~G"
+          if not defined FOUND_GIT for /d %%U in ("C:\Users\*") do for /d %%D in ("%%~fU\AppData\Local\GitHubDesktop\app-*") do if not defined FOUND_GIT if exist "%%~fD\resources\app\git\cmd\git.exe" set "FOUND_GIT=%%~fD\resources\app\git\cmd\git.exe"
+          if not defined FOUND_GIT (echo Git executable was not found in the normal Windows or GitHub Desktop locations & exit /b 1)
+          for %%D in ("!FOUND_GIT!") do echo %%~dpD>>"%GITHUB_PATH%"
+          echo Found Git: !FOUND_GIT!
+          if exist "C:\Program Files\nodejs\node.exe" echo C:\Program Files\nodejs>>"%GITHUB_PATH%"
+          for /d %%D in ("C:\actions-runner\_work\_tool\node\22.*") do if exist "%%~fD\x64\node.exe" echo %%~fD\x64>>"%GITHUB_PATH%"
+          if exist "%JAVA_HOME%\bin\java.exe" echo %JAVA_HOME%\bin>>"%GITHUB_PATH%"
+          endlocal
+
       # Do not use actions/checkout on this self-hosted runner. codeload.github.com
       # repeatedly rate-limited action ZIP downloads with HTTP 429. Git itself is
       # already installed on the machine, so sync the requested commit directly.
@@ -35,15 +53,6 @@ jobs:
           git fetch --force --no-tags --prune --depth=1 "https://x-access-token:%GH_TOKEN%@github.com/%GITHUB_REPOSITORY%.git" "%GITHUB_SHA%" || git fetch --force --no-tags --prune --depth=20 "https://x-access-token:%GH_TOKEN%@github.com/%GITHUB_REPOSITORY%.git" "%GITHUB_REF_NAME%"
           git reset --hard %GITHUB_SHA% || git reset --hard FETCH_HEAD
           git clean -ffdx
-
-      # Reuse software already present on the PC/tool cache. This removes the
-      # actions/setup-node and actions/setup-java downloads completely.
-      - name: Activate local toolchain
-        shell: cmd
-        run: |
-          if exist "C:\Program Files\nodejs\node.exe" echo C:\Program Files\nodejs>>"%GITHUB_PATH%"
-          for /d %%D in ("C:\actions-runner\_work\_tool\node\22.*") do if exist "%%~fD\x64\node.exe" echo %%~fD\x64>>"%GITHUB_PATH%"
-          if exist "%JAVA_HOME%\bin\java.exe" echo %JAVA_HOME%\bin>>"%GITHUB_PATH%"
 
       - name: Verify local build tools
         shell: cmd
