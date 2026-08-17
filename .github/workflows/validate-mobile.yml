@@ -29,9 +29,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        shell: powershell
+        shell: cmd
         run: npm ci --include=dev
 
       - name: Type-check application
-        shell: powershell
+        shell: cmd
         run: npm run typecheck
