@@ -1,3 +1,4 @@
+# One-shot self-hosted validation for the current guarded App.tsx patch.
 name: Apply startup and detail stabilization
 
 on:
