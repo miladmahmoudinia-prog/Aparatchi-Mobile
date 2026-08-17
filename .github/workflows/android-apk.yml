@@ -79,7 +79,9 @@ jobs:
       - name: Resolve application version
         id: app_version
         shell: bash
-        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create Android project
         run: npx expo prebuild --platform android
