@@ -1,0 +1,88 @@
+name: Apply consolidated mobile fixes v14
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-mobile-v14.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-user-report-v12
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout mobile repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 40
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Apply verify and type-check consolidated mobile fixes
+        id: verify
+        shell: bash
+        run: |
+          set +e
+          : > mobile-v14-status.log
+          python - <<'PY' >> mobile-v14-status.log 2>&1
+          from pathlib import Path
+          path = Path('scripts/apply-user-report-v12.mjs')
+          text = path.read_text()
+          old = "  1,\n  'detail firstSeenAt normalization',"
+          new = "  2,\n  'detail firstSeenAt normalization',"
+          if old in text:
+              path.write_text(text.replace(old, new, 1))
+          elif new not in text:
+              raise SystemExit('v12 helper guard not found')
+          PY
+          STATUS=$?
+          if [ "$STATUS" -eq 0 ]; then node scripts/apply-user-report-v12.mjs >> mobile-v14-status.log 2>&1; STATUS=$?; fi
+          if [ "$STATUS" -eq 0 ]; then node scripts/apply-user-report-v13.mjs >> mobile-v14-status.log 2>&1; STATUS=$?; fi
+          if [ "$STATUS" -eq 0 ]; then node scripts/verify-user-report-v12.mjs >> mobile-v14-status.log 2>&1; STATUS=$?; fi
+          if [ "$STATUS" -eq 0 ]; then node scripts/verify-user-report-v13.mjs >> mobile-v14-status.log 2>&1; STATUS=$?; fi
+          if [ "$STATUS" -eq 0 ]; then npm install --ignore-scripts --no-audit --no-fund >> mobile-v14-status.log 2>&1; STATUS=$?; fi
+          if [ "$STATUS" -eq 0 ]; then npx tsc --noEmit >> mobile-v14-status.log 2>&1; STATUS=$?; fi
+          echo "FINAL_STATUS=$STATUS" >> mobile-v14-status.log
+          cat mobile-v14-status.log
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Commit result or diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "aparatchi-mobile-bot"
+          git config user.email "actions@users.noreply.github.com"
+          STATUS='${{ steps.verify.outputs.status }}'
+          if [ "$STATUS" = '0' ]; then
+            git add App.tsx src/contentService.ts src/types.ts mobile-v14-status.log
+            MESSAGE='fix: consolidated startup detail navigation and regional mobile fixes v14 [skip ci]'
+          else
+            git add mobile-v14-status.log
+            MESSAGE='chore: capture mobile v14 apply failure [skip ci]'
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m "$MESSAGE"
+            for attempt in 1 2 3 4 5; do
+              if git pull --rebase origin main && git push origin HEAD:main; then
+                break
+              fi
+              git rebase --abort >/dev/null 2>&1 || true
+              sleep $((attempt * 2))
+            done
+          fi
+          if [ "$STATUS" != '0' ]; then
+            echo '::error::Consolidated mobile verification failed; diagnostic was committed.'
+            exit 1
+          fi
