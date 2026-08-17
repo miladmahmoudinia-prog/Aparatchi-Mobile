@@ -1,3 +1,4 @@
+# Re-trigger after the workflow is present on main; this supersedes any older pending v12-v13 mobile pass.
 name: Apply consolidated mobile fixes v14
 
 on:
