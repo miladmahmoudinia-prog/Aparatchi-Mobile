@@ -19,6 +19,8 @@ jobs:
 
     env:
       EXPO_NO_TELEMETRY: "1"
+      ANDROID_HOME: "C:\Users\miladm2\AppData\Local\Android\Sdk"
+      ANDROID_SDK_ROOT: "C:\Users\miladm2\AppData\Local\Android\Sdk"
 
     steps:
       - name: Checkout project
@@ -36,12 +38,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          # Current Windows command-line tools listed by Android Developers.
-          cmdline-tools-version: "15859902"
-          log-accepted-android-sdk-licenses: "false"
+      # Reuse the Android SDK already installed on this Windows machine instead
+      # of downloading command-line tools from dl.google.com on every build.
+      - name: Verify local Android SDK
+        shell: cmd
+        run: |
+          if not exist "%ANDROID_HOME%" (echo Android SDK folder not found: %ANDROID_HOME% & exit /b 1)
+          if not exist "%ANDROID_HOME%\platforms" (echo Android SDK platforms folder is missing & exit /b 1)
+          if not exist "%ANDROID_HOME%\build-tools" (echo Android SDK build-tools folder is missing & exit /b 1)
+          echo Using Android SDK: %ANDROID_HOME%
 
       # The Windows runner service account blocks PowerShell scripts by policy,
       # so all command steps intentionally use cmd.
@@ -63,6 +68,10 @@ jobs:
         run: npx expo prebuild --platform android --non-interactive
         env:
           NODE_ENV: production
+
+      - name: Point Gradle to local Android SDK
+        shell: cmd
+        run: echo sdk.dir=C:/Users/miladm2/AppData/Local/Android/Sdk>android\local.properties
 
       - name: Build release APK
         shell: cmd
