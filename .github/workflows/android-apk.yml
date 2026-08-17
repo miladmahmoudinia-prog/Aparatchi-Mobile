@@ -20,6 +20,7 @@ jobs:
       ANDROID_HOME: C:/actions-runner/android-sdk
       ANDROID_SDK_ROOT: C:/actions-runner/android-sdk
       TOOL_ROOT: C:/actions-runner/tools
+      BUILD_ROOT: C:/a
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -96,22 +97,41 @@ jobs:
         shell: cmd
         run: call scripts\prepare-cmake.cmd
 
+      - name: Create short Windows build workspace
+        shell: cmd
+        run: |
+          @echo off
+          if exist "%BUILD_ROOT%" rmdir /s /q "%BUILD_ROOT%"
+          mkdir "%BUILD_ROOT%" || exit /b 1
+          robocopy "%GITHUB_WORKSPACE%" "%BUILD_ROOT%" /MIR /XD .git /NFL /NDL /NJH /NJS /NP
+          if errorlevel 8 exit /b 1
+          if not exist "%BUILD_ROOT%\package.json" exit /b 1
+          echo Building from short path: %BUILD_ROOT%
+
       - name: Install dependencies
         shell: cmd
-        run: npm install --include=dev
+        run: |
+          cd /d "%BUILD_ROOT%" || exit /b 1
+          npm install --include=dev
 
       - name: Type-check application
         shell: cmd
-        run: npm run typecheck
+        run: |
+          cd /d "%BUILD_ROOT%" || exit /b 1
+          npm run typecheck
 
       - name: Resolve application version
         id: app_version
         shell: cmd
-        run: for /f "delims=" %%V in ('node -p "require('./package.json').version"') do echo version=%%V>>"%GITHUB_OUTPUT%"
+        run: |
+          cd /d "%BUILD_ROOT%" || exit /b 1
+          for /f "delims=" %%V in ('node -p "require('./package.json').version"') do echo version=%%V>>"%GITHUB_OUTPUT%"
 
       - name: Create Android project
         shell: cmd
-        run: npx expo prebuild --platform android
+        run: |
+          cd /d "%BUILD_ROOT%" || exit /b 1
+          npx expo prebuild --platform android
         env:
           NODE_ENV: production
           CI: "1"
@@ -120,37 +140,38 @@ jobs:
         shell: cmd
         run: |
           @echo off
-          >android\aparatchi-mirrors.init.gradle echo def addRepos = { h -^>
-          >>android\aparatchi-mirrors.init.gradle echo h.maven { url = uri('https://maven.aliyun.com/repository/google') }
-          >>android\aparatchi-mirrors.init.gradle echo h.maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
-          >>android\aparatchi-mirrors.init.gradle echo h.maven { url = uri('https://maven.aliyun.com/repository/public') }
-          >>android\aparatchi-mirrors.init.gradle echo h.google()
-          >>android\aparatchi-mirrors.init.gradle echo h.mavenCentral()
-          >>android\aparatchi-mirrors.init.gradle echo h.gradlePluginPortal()
-          >>android\aparatchi-mirrors.init.gradle echo }
-          >>android\aparatchi-mirrors.init.gradle echo settingsEvaluated { s -^>
-          >>android\aparatchi-mirrors.init.gradle echo addRepos(s.pluginManagement.repositories)
-          >>android\aparatchi-mirrors.init.gradle echo try { addRepos(s.dependencyResolutionManagement.repositories) } catch (ignored) {}
-          >>android\aparatchi-mirrors.init.gradle echo }
-          >>android\aparatchi-mirrors.init.gradle echo gradle.beforeProject { p -^>
-          >>android\aparatchi-mirrors.init.gradle echo addRepos(p.buildscript.repositories)
-          >>android\aparatchi-mirrors.init.gradle echo addRepos(p.repositories)
-          >>android\aparatchi-mirrors.init.gradle echo }
+          >"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo def addRepos = { h -^>
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo h.maven { url = uri('https://maven.aliyun.com/repository/google') }
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo h.maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo h.maven { url = uri('https://maven.aliyun.com/repository/public') }
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo h.google()
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo h.mavenCentral()
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo h.gradlePluginPortal()
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo }
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo settingsEvaluated { s -^>
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo addRepos(s.pluginManagement.repositories)
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo try { addRepos(s.dependencyResolutionManagement.repositories) } catch (ignored) {}
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo }
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo gradle.beforeProject { p -^>
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo addRepos(p.buildscript.repositories)
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo addRepos(p.repositories)
+          >>"%BUILD_ROOT%\android\aparatchi-mirrors.init.gradle" echo }
 
       - name: Point Gradle to persistent Android SDK
         shell: cmd
-        run: echo sdk.dir=C:/actions-runner/android-sdk>android\local.properties
+        run: echo sdk.dir=C:/actions-runner/android-sdk>"%BUILD_ROOT%\android\local.properties"
 
       - name: Build release APK
         shell: cmd
-        working-directory: android
-        run: gradlew.bat -I aparatchi-mirrors.init.gradle app:assembleRelease --no-daemon
+        run: |
+          cd /d "%BUILD_ROOT%\android" || exit /b 1
+          gradlew.bat -I aparatchi-mirrors.init.gradle app:assembleRelease --no-daemon
         env:
           NODE_ENV: production
 
       - name: Prepare APK for release
         shell: cmd
-        run: copy /Y "android\app\build\outputs\apk\release\app-release.apk" "Aparatchi-Android-Release.apk"
+        run: copy /Y "%BUILD_ROOT%\android\app\build\outputs\apk\release\app-release.apk" "%GITHUB_WORKSPACE%\Aparatchi-Android-Release.apk"
 
       - name: Publish APK to GitHub Releases
         shell: cmd
