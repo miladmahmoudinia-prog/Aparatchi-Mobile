@@ -1,0 +1,37 @@
+name: Validate Mobile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 20
+
+    env:
+      EXPO_NO_TELEMETRY: "1"
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        shell: powershell
+        run: npm ci --include=dev
+
+      - name: Type-check application
+        shell: powershell
+        run: npm run typecheck
