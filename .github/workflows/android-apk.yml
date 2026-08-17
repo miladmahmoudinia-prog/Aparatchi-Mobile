@@ -107,6 +107,7 @@ jobs:
           if errorlevel 8 exit /b 1
           if not exist "%BUILD_ROOT%\package.json" exit /b 1
           echo Building from short path: %BUILD_ROOT%
+          exit /b 0
 
       - name: Install dependencies
         shell: cmd
