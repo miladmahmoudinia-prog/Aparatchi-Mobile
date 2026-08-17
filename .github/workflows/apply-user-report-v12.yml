@@ -1,4 +1,4 @@
-name: Apply user report v12 mobile fixes
+name: Apply user report v12-v13 mobile fixes
 
 on:
   push:
@@ -6,6 +6,8 @@ on:
     paths:
       - 'scripts/apply-user-report-v12.mjs'
       - 'scripts/verify-user-report-v12.mjs'
+      - 'scripts/apply-user-report-v13.mjs'
+      - 'scripts/verify-user-report-v13.mjs'
       - '.github/workflows/apply-user-report-v12.yml'
   workflow_dispatch:
 
@@ -33,8 +35,20 @@ jobs:
 
       - name: Apply audited mobile fixes
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-user-report-v12.mjs')
+          text = path.read_text()
+          old = "  1,\n  'detail firstSeenAt normalization',"
+          new = "  2,\n  'detail firstSeenAt normalization',"
+          if old not in text:
+              raise SystemExit('v12 helper guard not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
           node scripts/apply-user-report-v12.mjs
+          node scripts/apply-user-report-v13.mjs
           node scripts/verify-user-report-v12.mjs
+          node scripts/verify-user-report-v13.mjs
 
       - name: Install JS dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
@@ -53,7 +67,7 @@ jobs:
             echo "No source changes to commit."
             exit 0
           fi
-          git commit -m "fix: current startup stateful navigation and detail preview v12"
+          git commit -m "fix: current startup navigation regional categories and detail preview v13"
           for attempt in 1 2 3 4 5; do
             if git pull --rebase origin main && git push origin HEAD:main; then
               exit 0
@@ -61,5 +75,5 @@ jobs:
             git rebase --abort >/dev/null 2>&1 || true
             sleep $((attempt * 2))
           done
-          echo "::error::Could not push v12 mobile fixes after 5 attempts."
+          echo "::error::Could not push audited mobile fixes after 5 attempts."
           exit 1
