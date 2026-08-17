@@ -20,6 +20,7 @@ jobs:
       ANDROID_HOME: C:/actions-runner/android-sdk
       ANDROID_SDK_ROOT: C:/actions-runner/android-sdk
       TOOL_ROOT: C:/actions-runner/tools
+      GH_TOKEN: ${{ github.token }}
 
     steps:
       - name: Activate persistent runner tools
@@ -66,7 +67,6 @@ jobs:
       - name: Sync project with local Git
         shell: cmd
         env:
-          GH_TOKEN: ${{ github.token }}
           GIT_TERMINAL_PROMPT: "0"
         run: |
           if not exist ".git" git init .
