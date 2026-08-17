@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/bootstrap-ndk-and-build.yml
+      - scripts/bootstrap-android-sdk.cmd
 
 permissions:
   actions: write
