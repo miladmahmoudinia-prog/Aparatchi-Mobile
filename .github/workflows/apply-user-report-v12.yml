@@ -36,6 +36,18 @@ jobs:
 
       - name: Apply audited mobile fixes
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-user-report-v12.mjs')
+          text = path.read_text()
+          old = "  1,\n  'detail firstSeenAt normalization',"
+          new = "  2,\n  'detail firstSeenAt normalization',"
+          if old in text:
+              text = text.replace(old, new, 1)
+              path.write_text(text)
+          elif new not in text:
+              raise SystemExit('v12 helper guard not found')
+          PY
           node scripts/apply-user-report-v12.mjs
           node scripts/apply-user-report-v13.mjs
           node scripts/verify-user-report-v12.mjs
