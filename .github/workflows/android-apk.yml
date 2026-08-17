@@ -22,82 +22,47 @@ jobs:
       TOOL_ROOT: C:/actions-runner/tools
 
     steps:
-      # Keep the Windows service runner self-contained. If Git, Node 22 or Java 17
-      # are not visible to the service account, install portable copies once under
-      # C:\actions-runner\tools and reuse them on every later build.
-      - name: Bootstrap local build toolchain
+      - name: Activate persistent runner tools
         shell: cmd
         run: |
           @echo off
           setlocal EnableDelayedExpansion
           if not exist "%TOOL_ROOT%" mkdir "%TOOL_ROOT%"
 
-          rem ---- Git ----
-          set "FOUND_GIT="
-          for %%G in ("C:\Program Files\Git\cmd\git.exe" "C:\Program Files\Git\bin\git.exe" "C:\Program Files (x86)\Git\cmd\git.exe" "C:\Program Files (x86)\Git\bin\git.exe" "%TOOL_ROOT%\mingit\cmd\git.exe") do if not defined FOUND_GIT if exist "%%~G" set "FOUND_GIT=%%~G"
-          if not defined FOUND_GIT for /d %%U in ("C:\Users\*") do if not defined FOUND_GIT if exist "%%~fU\AppData\Local\Programs\Git\cmd\git.exe" set "FOUND_GIT=%%~fU\AppData\Local\Programs\Git\cmd\git.exe"
-          if not defined FOUND_GIT for /d %%U in ("C:\Users\*") do for /d %%D in ("%%~fU\AppData\Local\GitHubDesktop\app-*") do if not defined FOUND_GIT if exist "%%~fD\resources\app\git\cmd\git.exe" set "FOUND_GIT=%%~fD\resources\app\git\cmd\git.exe"
-          if not defined FOUND_GIT (
-            echo Git is not installed for the runner service. Bootstrapping portable MinGit once...
-            where curl.exe >nul 2>&1 || (echo curl.exe is required on this Windows runner & exit /b 1)
-            where tar.exe >nul 2>&1 || (echo tar.exe is required on this Windows runner & exit /b 1)
-            if exist "%RUNNER_TEMP%\mingit.zip" del /q "%RUNNER_TEMP%\mingit.zip"
+          set "GIT_EXE=%TOOL_ROOT%\mingit\cmd\git.exe"
+          if not exist "!GIT_EXE!" (
+            echo Installing portable MinGit once...
             curl.exe -fL --retry 4 --retry-delay 3 -o "%RUNNER_TEMP%\mingit.zip" "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.4/MinGit-2.55.0.4-64-bit.zip" || exit /b 1
             if exist "%TOOL_ROOT%\mingit" rmdir /s /q "%TOOL_ROOT%\mingit"
             mkdir "%TOOL_ROOT%\mingit" || exit /b 1
             tar.exe -xf "%RUNNER_TEMP%\mingit.zip" -C "%TOOL_ROOT%\mingit" || exit /b 1
-            set "FOUND_GIT=%TOOL_ROOT%\mingit\cmd\git.exe"
           )
-          if not exist "!FOUND_GIT!" (echo Git bootstrap failed & exit /b 1)
-          for %%D in ("!FOUND_GIT!") do echo %%~dpD>>"%GITHUB_PATH%"
-          echo Git ready: !FOUND_GIT!
+          echo %TOOL_ROOT%\mingit\cmd>>"%GITHUB_PATH%"
 
-          rem ---- Node 22 ----
-          set "NODE_DIR="
-          if exist "C:\Program Files\nodejs\node.exe" set "NODE_DIR=C:\Program Files\nodejs"
-          if not defined NODE_DIR for /d %%D in ("C:\actions-runner\_work\_tool\node\22.*") do if exist "%%~fD\x64\node.exe" set "NODE_DIR=%%~fD\x64"
-          if not defined NODE_DIR for /d %%U in ("C:\Users\*") do if not defined NODE_DIR if exist "%%~fU\AppData\Local\Programs\nodejs\node.exe" set "NODE_DIR=%%~fU\AppData\Local\Programs\nodejs"
-          if not defined NODE_DIR if exist "%TOOL_ROOT%\node-v22.23.2-win-x64\node.exe" set "NODE_DIR=%TOOL_ROOT%\node-v22.23.2-win-x64"
-          if not defined NODE_DIR (
-            echo Node 22 is not visible to the runner service. Bootstrapping portable Node once...
-            where curl.exe >nul 2>&1 || exit /b 1
-            where tar.exe >nul 2>&1 || exit /b 1
-            if exist "%RUNNER_TEMP%\node22.zip" del /q "%RUNNER_TEMP%\node22.zip"
+          set "NODE_DIR=C:\actions-runner\_work\_tool\node\22.23.2\x64"
+          if not exist "!NODE_DIR!\node.exe" set "NODE_DIR=%TOOL_ROOT%\node-v22.23.2-win-x64"
+          if not exist "!NODE_DIR!\node.exe" (
+            echo Installing portable Node 22 once...
             curl.exe -fL --retry 4 --retry-delay 3 -o "%RUNNER_TEMP%\node22.zip" "https://nodejs.org/dist/v22.23.2/node-v22.23.2-win-x64.zip" || exit /b 1
-            if exist "%TOOL_ROOT%\node-v22.23.2-win-x64" rmdir /s /q "%TOOL_ROOT%\node-v22.23.2-win-x64"
             tar.exe -xf "%RUNNER_TEMP%\node22.zip" -C "%TOOL_ROOT%" || exit /b 1
-            set "NODE_DIR=%TOOL_ROOT%\node-v22.23.2-win-x64"
           )
-          if not exist "!NODE_DIR!\node.exe" (echo Node bootstrap failed & exit /b 1)
           echo !NODE_DIR!>>"%GITHUB_PATH%"
-          echo Node ready: !NODE_DIR!\node.exe
 
-          rem ---- Java 17 ----
           set "JAVA_DIR="
-          for /d %%D in ("C:\Program Files\Eclipse Adoptium\jdk-17*") do if not defined JAVA_DIR if exist "%%~fD\bin\java.exe" set "JAVA_DIR=%%~fD"
-          if not defined JAVA_DIR for /d %%D in ("C:\Program Files\Java\jdk-17*") do if not defined JAVA_DIR if exist "%%~fD\bin\java.exe" set "JAVA_DIR=%%~fD"
-          if not defined JAVA_DIR for /d %%D in ("C:\actions-runner\_work\_tool\Java_Temurin-Hotspot_jdk\17*\x64") do if not defined JAVA_DIR if exist "%%~fD\bin\java.exe" set "JAVA_DIR=%%~fD"
-          if not defined JAVA_DIR for /d %%D in ("%TOOL_ROOT%\java17\*") do if not defined JAVA_DIR if exist "%%~fD\bin\java.exe" set "JAVA_DIR=%%~fD"
+          for /d %%D in ("%TOOL_ROOT%\java17\*") do if not defined JAVA_DIR if exist "%%~fD\bin\java.exe" set "JAVA_DIR=%%~fD"
           if not defined JAVA_DIR (
-            echo Java 17 is not visible to the runner service. Bootstrapping portable Temurin once...
-            where curl.exe >nul 2>&1 || exit /b 1
-            where tar.exe >nul 2>&1 || exit /b 1
-            if exist "%RUNNER_TEMP%\java17.zip" del /q "%RUNNER_TEMP%\java17.zip"
+            echo Installing portable Java 17 once...
             curl.exe -fL --retry 4 --retry-delay 3 -o "%RUNNER_TEMP%\java17.zip" "https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk" || exit /b 1
             if exist "%TOOL_ROOT%\java17" rmdir /s /q "%TOOL_ROOT%\java17"
             mkdir "%TOOL_ROOT%\java17" || exit /b 1
             tar.exe -xf "%RUNNER_TEMP%\java17.zip" -C "%TOOL_ROOT%\java17" || exit /b 1
             for /d %%D in ("%TOOL_ROOT%\java17\*") do if not defined JAVA_DIR if exist "%%~fD\bin\java.exe" set "JAVA_DIR=%%~fD"
           )
-          if not defined JAVA_DIR (echo Java 17 bootstrap failed & exit /b 1)
-          if not exist "!JAVA_DIR!\bin\java.exe" (echo Java 17 bootstrap failed & exit /b 1)
+          if not defined JAVA_DIR exit /b 1
           echo !JAVA_DIR!\bin>>"%GITHUB_PATH%"
           echo JAVA_HOME=!JAVA_DIR!>>"%GITHUB_ENV%"
-          echo Java ready: !JAVA_DIR!\bin\java.exe
           endlocal
 
-      # Avoid actions/checkout and all action ZIP downloads. Use the portable/local
-      # Git executable directly against the private repository.
       - name: Sync project with local Git
         shell: cmd
         env:
@@ -106,25 +71,26 @@ jobs:
         run: |
           if not exist ".git" git init .
           git config core.longpaths true
-          git fetch --force --no-tags --prune --depth=1 "https://x-access-token:%GH_TOKEN%@github.com/%GITHUB_REPOSITORY%.git" "%GITHUB_SHA%" || git fetch --force --no-tags --prune --depth=20 "https://x-access-token:%GH_TOKEN%@github.com/%GITHUB_REPOSITORY%.git" "%GITHUB_REF_NAME%"
-          git reset --hard %GITHUB_SHA% || git reset --hard FETCH_HEAD
+          git fetch --force --no-tags --prune --depth=1 "https://x-access-token:%GH_TOKEN%@github.com/%GITHUB_REPOSITORY%.git" "%GITHUB_SHA%" || exit /b 1
+          git reset --hard %GITHUB_SHA% || exit /b 1
           git clean -ffdx
 
-      - name: Verify local build tools
+      - name: Verify base toolchain
         shell: cmd
         run: |
-          where git || exit /b 1
           git --version || exit /b 1
-          where node || exit /b 1
           node --version || exit /b 1
-          where npm || exit /b 1
           npm --version || exit /b 1
-          if not defined JAVA_HOME (echo JAVA_HOME is not set & exit /b 1)
-          if not exist "%JAVA_HOME%\bin\java.exe" (echo Java 17 not found at %JAVA_HOME% & exit /b 1)
           "%JAVA_HOME%\bin\java.exe" -version || exit /b 1
-          if not exist "%ANDROID_HOME%" (echo Android SDK folder not found: %ANDROID_HOME% & exit /b 1)
-          echo Using Android SDK: %ANDROID_HOME%
-          if exist "%ANDROID_HOME%\licenses" (echo Accepted Android SDK licenses folder found) else (echo Android SDK licenses folder is not present & exit /b 1)
+          if not exist "%ANDROID_HOME%\licenses" exit /b 1
+
+      - name: Prepare exact Android NDK
+        shell: cmd
+        run: call scripts\prepare-ndk.cmd
+
+      - name: Prepare CMake and Android SDK packages
+        shell: cmd
+        run: call scripts\prepare-cmake.cmd
 
       - name: Install dependencies
         shell: cmd
@@ -146,33 +112,28 @@ jobs:
           NODE_ENV: production
           CI: "1"
 
-      # Google Maven is intermittently unreachable from the runner's network.
-      # Inject stable mirrors for every Gradle build (including Expo included builds)
-      # while keeping the official repositories as fallbacks. Gradle caches the
-      # resolved artifacts locally, so later APK builds do not redownload them.
       - name: Configure Gradle dependency mirrors
         shell: cmd
         run: |
           @echo off
-          >android\aparatchi-mirrors.init.gradle echo def addAparatchiRepos = { handler -^>
-          >>android\aparatchi-mirrors.init.gradle echo   handler.maven { url = uri('https://maven.aliyun.com/repository/google') }
-          >>android\aparatchi-mirrors.init.gradle echo   handler.maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
-          >>android\aparatchi-mirrors.init.gradle echo   handler.maven { url = uri('https://maven.aliyun.com/repository/public') }
-          >>android\aparatchi-mirrors.init.gradle echo   handler.google()
-          >>android\aparatchi-mirrors.init.gradle echo   handler.mavenCentral()
-          >>android\aparatchi-mirrors.init.gradle echo   handler.gradlePluginPortal()
+          >android\aparatchi-mirrors.init.gradle echo def addRepos = { h -^>
+          >>android\aparatchi-mirrors.init.gradle echo h.maven { url = uri('https://maven.aliyun.com/repository/google') }
+          >>android\aparatchi-mirrors.init.gradle echo h.maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+          >>android\aparatchi-mirrors.init.gradle echo h.maven { url = uri('https://maven.aliyun.com/repository/public') }
+          >>android\aparatchi-mirrors.init.gradle echo h.google()
+          >>android\aparatchi-mirrors.init.gradle echo h.mavenCentral()
+          >>android\aparatchi-mirrors.init.gradle echo h.gradlePluginPortal()
           >>android\aparatchi-mirrors.init.gradle echo }
-          >>android\aparatchi-mirrors.init.gradle echo settingsEvaluated { settings -^>
-          >>android\aparatchi-mirrors.init.gradle echo   addAparatchiRepos(settings.pluginManagement.repositories)
-          >>android\aparatchi-mirrors.init.gradle echo   try { addAparatchiRepos(settings.dependencyResolutionManagement.repositories) } catch (ignored) {}
+          >>android\aparatchi-mirrors.init.gradle echo settingsEvaluated { s -^>
+          >>android\aparatchi-mirrors.init.gradle echo addRepos(s.pluginManagement.repositories)
+          >>android\aparatchi-mirrors.init.gradle echo try { addRepos(s.dependencyResolutionManagement.repositories) } catch (ignored) {}
           >>android\aparatchi-mirrors.init.gradle echo }
-          >>android\aparatchi-mirrors.init.gradle echo gradle.beforeProject { project -^>
-          >>android\aparatchi-mirrors.init.gradle echo   addAparatchiRepos(project.buildscript.repositories)
-          >>android\aparatchi-mirrors.init.gradle echo   addAparatchiRepos(project.repositories)
+          >>android\aparatchi-mirrors.init.gradle echo gradle.beforeProject { p -^>
+          >>android\aparatchi-mirrors.init.gradle echo addRepos(p.buildscript.repositories)
+          >>android\aparatchi-mirrors.init.gradle echo addRepos(p.repositories)
           >>android\aparatchi-mirrors.init.gradle echo }
-          type android\aparatchi-mirrors.init.gradle
 
-      - name: Point Gradle to local Android SDK
+      - name: Point Gradle to persistent Android SDK
         shell: cmd
         run: echo sdk.dir=C:/actions-runner/android-sdk>android\local.properties
 
@@ -187,8 +148,6 @@ jobs:
         shell: cmd
         run: copy /Y "android\app\build\outputs\apk\release\app-release.apk" "Aparatchi-Android-Release.apk"
 
-      # Publish with local Node instead of actions/github-script, so the whole job
-      # remains independent from marketplace action downloads.
       - name: Publish APK to GitHub Releases
         shell: cmd
         env:
