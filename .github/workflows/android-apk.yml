@@ -19,8 +19,8 @@ jobs:
 
     env:
       EXPO_NO_TELEMETRY: "1"
-      ANDROID_HOME: C:/Users/miladm2/AppData/Local/Android/Sdk
-      ANDROID_SDK_ROOT: C:/Users/miladm2/AppData/Local/Android/Sdk
+      ANDROID_HOME: C:/actions-runner/android-sdk
+      ANDROID_SDK_ROOT: C:/actions-runner/android-sdk
 
     steps:
       - name: Checkout project
@@ -38,8 +38,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Reuse the Android SDK already installed on this Windows machine instead
-      # of downloading command-line tools from dl.google.com on every build.
+      # Reuse the Android SDK copied into the runner directory so the Windows
+      # service account can access it without touching a user-profile folder.
       - name: Verify local Android SDK
         shell: cmd
         run: |
@@ -71,7 +71,7 @@ jobs:
 
       - name: Point Gradle to local Android SDK
         shell: cmd
-        run: echo sdk.dir=C:/Users/miladm2/AppData/Local/Android/Sdk>android\local.properties
+        run: echo sdk.dir=C:/actions-runner/android-sdk>android\local.properties
 
       - name: Build release APK
         shell: cmd
