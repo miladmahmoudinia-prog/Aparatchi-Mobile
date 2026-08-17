@@ -3,6 +3,8 @@ setlocal EnableDelayedExpansion
 set "VER=27.1.12297006"
 set "TARGET=%ANDROID_HOME%\ndk\%VER%"
 set "SRC="
+set "ZIP=%TOOL_ROOT%\downloads\android-ndk-r27b-windows.zip"
+set "SHA1=3bb7efc850cd0af7707854b7e0d5c3b6a7153703"
 
 if exist "%TARGET%\source.properties" set "SRC=%TARGET%"
 if not defined SRC for /d %%U in ("C:\Users\*") do if not defined SRC if exist "%%~fU\AppData\Local\Android\Sdk\ndk\%VER%\source.properties" set "SRC=%%~fU\AppData\Local\Android\Sdk\ndk\%VER%"
@@ -13,14 +15,23 @@ if not defined SRC for /d %%E in ("C:\Program Files\Unity\Hub\Editor\*") do if n
 if not defined SRC if exist "%TOOL_ROOT%\android-ndk-r27b\source.properties" set "SRC=%TOOL_ROOT%\android-ndk-r27b"
 
 if not defined SRC (
-  echo NDK r27b is not local. Checking official Google download...
-  curl.exe -fsIL --connect-timeout 10 --max-time 25 "https://dl.google.com/android/repository/android-ndk-r27b-windows.zip" >nul 2>&1
-  if not errorlevel 1 (
-    if not exist "%TOOL_ROOT%\downloads" mkdir "%TOOL_ROOT%\downloads"
-    set "ZIP=%TOOL_ROOT%\downloads\android-ndk-r27b-windows.zip"
-    if exist "!ZIP!" certutil -hashfile "!ZIP!" SHA1 | findstr /I "3bb7efc850cd0af7707854b7e0d5c3b6a7153703" >nul 2>&1 || del /q "!ZIP!"
-    if not exist "!ZIP!" curl.exe -fL --retry 3 --retry-delay 5 --connect-timeout 15 --max-time 1800 -o "!ZIP!" "https://dl.google.com/android/repository/android-ndk-r27b-windows.zip" || exit /b 11
-    certutil -hashfile "!ZIP!" SHA1 | findstr /I "3bb7efc850cd0af7707854b7e0d5c3b6a7153703" >nul 2>&1 || exit /b 12
+  if not exist "%TOOL_ROOT%\downloads" mkdir "%TOOL_ROOT%\downloads"
+  if exist "!ZIP!" (
+    certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1
+    if errorlevel 1 del /q "!ZIP!"
+  )
+
+  if not exist "!ZIP!" if defined GH_TOKEN (
+    echo NDK r27b is not local. Restoring the one-time Aparatchi GitHub cache...
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "scripts\fetch-ndk-cache.ps1" -OutFile "!ZIP!"
+    if errorlevel 1 (
+      echo GitHub NDK cache is not ready yet; trying Google as fallback.
+      if exist "!ZIP!" del /q "!ZIP!"
+    )
+  )
+
+  if exist "!ZIP!" (
+    certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1 || exit /b 12
     if exist "%TOOL_ROOT%\android-ndk-r27b" rmdir /s /q "%TOOL_ROOT%\android-ndk-r27b"
     tar.exe -xf "!ZIP!" -C "%TOOL_ROOT%" || exit /b 13
     if exist "%TOOL_ROOT%\android-ndk-r27b\source.properties" set "SRC=%TOOL_ROOT%\android-ndk-r27b"
@@ -28,8 +39,21 @@ if not defined SRC (
 )
 
 if not defined SRC (
-  echo ERROR: NDK %VER% is missing and Google is unreachable.
-  echo Checked runner SDK, user Android SDKs, C:\Android\Sdk, Unity Hub and runner cache.
+  echo GitHub cache unavailable. Checking official Google NDK download as fallback...
+  curl.exe -fsIL --connect-timeout 10 --max-time 25 "https://dl.google.com/android/repository/android-ndk-r27b-windows.zip" >nul 2>&1
+  if not errorlevel 1 (
+    if not exist "%TOOL_ROOT%\downloads" mkdir "%TOOL_ROOT%\downloads"
+    if exist "!ZIP!" del /q "!ZIP!"
+    curl.exe -fL --retry 3 --retry-delay 5 --connect-timeout 15 --max-time 1800 -o "!ZIP!" "https://dl.google.com/android/repository/android-ndk-r27b-windows.zip" || exit /b 11
+    certutil -hashfile "!ZIP!" SHA1 | findstr /I "!SHA1!" >nul 2>&1 || exit /b 12
+    if exist "%TOOL_ROOT%\android-ndk-r27b" rmdir /s /q "%TOOL_ROOT%\android-ndk-r27b"
+    tar.exe -xf "!ZIP!" -C "%TOOL_ROOT%" || exit /b 13
+    if exist "%TOOL_ROOT%\android-ndk-r27b\source.properties" set "SRC=%TOOL_ROOT%\android-ndk-r27b"
+  )
+)
+
+if not defined SRC (
+  echo ERROR: NDK %VER% is missing. The private GitHub cache has not been seeded yet and Google is unreachable.
   echo Stopping before npm and Gradle to avoid another long failed build.
   exit /b 20
 )
