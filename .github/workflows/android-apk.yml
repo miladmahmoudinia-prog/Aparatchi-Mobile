@@ -88,6 +88,10 @@ jobs:
         shell: cmd
         run: call scripts\prepare-ndk.cmd
 
+      - name: Prepare Android 16 SDK packages
+        shell: cmd
+        run: call scripts\bootstrap-android-sdk.cmd
+
       - name: Prepare CMake and Android SDK packages
         shell: cmd
         run: call scripts\prepare-cmake.cmd
