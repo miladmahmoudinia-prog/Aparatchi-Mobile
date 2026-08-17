@@ -1,0 +1,71 @@
+name: Apply startup and detail stabilization
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/temp-apply-startup-detail.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temp-startup-detail-stabilization
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 15
+    env:
+      EXPO_NO_TELEMETRY: "1"
+
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Apply guarded App patch
+        shell: cmd
+        run: node scripts/temp-patch-startup-detail.mjs
+
+      - name: Install dependencies
+        shell: cmd
+        run: npm ci --include=dev
+
+      - name: Type-check application
+        shell: cmd
+        run: npm run typecheck
+
+      - name: Commit only validated App.tsx
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const expectedAppSha = '4cbaa12e0a16ef1576eac51d90114f2e642737e2';
+            const current = await github.rest.repos.getContent({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: 'App.tsx',
+              ref: 'main',
+            });
+            if (Array.isArray(current.data) || current.data.sha !== expectedAppSha) {
+              throw new Error(`App.tsx changed while validating; expected ${expectedAppSha}, got ${Array.isArray(current.data) ? 'directory' : current.data.sha}`);
+            }
+            const patched = fs.readFileSync('App.tsx', 'utf8');
+            const result = await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: 'App.tsx',
+              branch: 'main',
+              sha: expectedAppSha,
+              message: 'fix: stabilize startup and detail hydration [skip ci]',
+              content: Buffer.from(patched, 'utf8').toString('base64'),
+            });
+            core.notice(`Validated App.tsx committed as ${result.data.commit.sha}`);
