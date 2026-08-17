@@ -141,9 +141,36 @@ jobs:
 
       - name: Create Android project
         shell: cmd
-        run: npx expo prebuild --platform android --non-interactive
+        run: npx expo prebuild --platform android
         env:
           NODE_ENV: production
+          CI: "1"
+
+      # Google Maven is intermittently unreachable from the runner's network.
+      # Inject stable mirrors for every Gradle build (including Expo included builds)
+      # while keeping the official repositories as fallbacks. Gradle caches the
+      # resolved artifacts locally, so later APK builds do not redownload them.
+      - name: Configure Gradle dependency mirrors
+        shell: cmd
+        run: |
+          @echo off
+          >android\aparatchi-mirrors.init.gradle echo def addAparatchiRepos = { handler -^>
+          >>android\aparatchi-mirrors.init.gradle echo   handler.maven { url = uri('https://maven.aliyun.com/repository/google') }
+          >>android\aparatchi-mirrors.init.gradle echo   handler.maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+          >>android\aparatchi-mirrors.init.gradle echo   handler.maven { url = uri('https://maven.aliyun.com/repository/public') }
+          >>android\aparatchi-mirrors.init.gradle echo   handler.google()
+          >>android\aparatchi-mirrors.init.gradle echo   handler.mavenCentral()
+          >>android\aparatchi-mirrors.init.gradle echo   handler.gradlePluginPortal()
+          >>android\aparatchi-mirrors.init.gradle echo }
+          >>android\aparatchi-mirrors.init.gradle echo settingsEvaluated { settings -^>
+          >>android\aparatchi-mirrors.init.gradle echo   addAparatchiRepos(settings.pluginManagement.repositories)
+          >>android\aparatchi-mirrors.init.gradle echo   try { addAparatchiRepos(settings.dependencyResolutionManagement.repositories) } catch (ignored) {}
+          >>android\aparatchi-mirrors.init.gradle echo }
+          >>android\aparatchi-mirrors.init.gradle echo gradle.beforeProject { project -^>
+          >>android\aparatchi-mirrors.init.gradle echo   addAparatchiRepos(project.buildscript.repositories)
+          >>android\aparatchi-mirrors.init.gradle echo   addAparatchiRepos(project.repositories)
+          >>android\aparatchi-mirrors.init.gradle echo }
+          type android\aparatchi-mirrors.init.gradle
 
       - name: Point Gradle to local Android SDK
         shell: cmd
@@ -152,7 +179,7 @@ jobs:
       - name: Build release APK
         shell: cmd
         working-directory: android
-        run: gradlew.bat app:assembleRelease --no-daemon
+        run: gradlew.bat -I aparatchi-mirrors.init.gradle app:assembleRelease --no-daemon
         env:
           NODE_ENV: production
 
