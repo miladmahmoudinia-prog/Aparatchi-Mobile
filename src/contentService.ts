@@ -264,7 +264,9 @@ const correctedCountryMetadata = (
     zh: 'CN',
   };
   const languageCode = languageCountry[originalLanguage];
-  if (languageCode && !codes.includes(languageCode)) codes = [languageCode, ...codes];
+  // Language may fill missing country metadata, but must never override an
+  // explicit provider/TMDB country list (the old behavior created false IR/KR).
+  if (languageCode && !codes.length) codes = [languageCode];
 
   // Known bad legacy match: this American title was incorrectly tagged as Japan.
   if (/wicked for good|شرور برای همیشه/.test(normalizedTitle)) {
@@ -891,7 +893,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
       ...(posterFallback ? { posterFallback } : {}),
       backdrop,
       ...(backdropFallback ? { backdropFallback } : {}),
-      overview: asString(item.overview, 'توضیحی ثبت نشده است.'),
+      overview: asString(item.overview),
       genres: stringArray(item.genres),
       ...(Number.isFinite(rate) ? { rate } : {}),
       access,
@@ -1082,7 +1084,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     ...(posterFallback ? { posterFallback } : {}),
     backdrop,
     ...(backdropFallback ? { backdropFallback } : {}),
-    overview: asString(item.overview, 'توضیحی ثبت نشده است.'),
+    overview: asString(item.overview),
     genres: stringArray(item.genres),
     ...(Number.isFinite(rate) ? { rate } : {}),
     access,

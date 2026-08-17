@@ -241,8 +241,11 @@ const isMissingCatalogOverview = (value?: string | null) => {
 
 const catalogOverviewFor = (item: CatalogItem) => {
   const overview = String(item.overview || '').replace(/\s+/g, ' ').trim();
-  if (!isMissingCatalogOverview(overview)) return overview;
-  return 'خلاصهٔ معتبر این عنوان هنوز در منابع موجود ثبت نشده است. با تکمیل اطلاعات کاتالوگ، این بخش به‌صورت خودکار به‌روزرسانی می‌شود.';
+  // Never flash provider placeholders or raw English copy in a Persian detail
+  // page. The whole Story section stays hidden until a real Persian synopsis
+  // is present, then appears naturally when detail hydration completes.
+  if (!isMissingCatalogOverview(overview) && hasPersianScript(overview)) return overview;
+  return '';
 };
 
 const scheduleTimeValue = (value?: string) => {
@@ -983,12 +986,12 @@ const latestEpisodeTimestamp = (item: CatalogItem) => {
 };
 
 const catalogItemTimestamp = (item: CatalogItem) => {
-  const value =
-    item.updatedAt ||
-    item.sourceUpdatedAt ||
-    item.createdAt ||
-    item.sourceCreatedAt ||
-    '';
+  // Metadata enrichment must not pin an old title at the front. Movies are
+  // ordered by when Aparatchi/source actually discovered them; series may move
+  // forward only for a meaningful episode/content update.
+  const value = item.type === 'series'
+    ? (item.meaningfulUpdatedAt || item.sourceCreatedAt || item.createdAt || '')
+    : (item.sourceCreatedAt || item.createdAt || '');
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : 0;
 };
@@ -1002,23 +1005,19 @@ const isIranianItem = (item: CatalogItem) => {
   const language = String(item.originalLanguage || '').toLowerCase();
   const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
   const primaryCountry = countryCodes[0] || '';
-  // Prefer authoritative language/primary-country metadata over a stale legacy
-  // `ir` flag. Co-productions do not become Iranian only because IR appears
-  // later in the country list.
-  if (language === 'fa' || primaryCountry === 'IR') return true;
-  if (language && language !== 'fa') return false;
-  if (primaryCountry && primaryCountry !== 'IR') return false;
+  // Explicit production-country metadata is stronger than stale language/ir
+  // flags. Language is only a fallback when no country was supplied at all.
+  if (primaryCountry) return primaryCountry === 'IR';
+  if (language) return language === 'fa';
   return Boolean(item.ir);
 };
 
 const hasSpecificCountry = (item: CatalogItem, code: string, originalLanguage: string) => {
   const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
   const language = String(item.originalLanguage || '').toLowerCase();
-  if (language === originalLanguage) return true;
-  // A co-production should not enter a country shelf only because that country
-  // appears somewhere in the production list. The primary country (first
-  // normalized country) is the fallback when original language is inconclusive.
-  return countryCodes[0] === code;
+  const primaryCountry = countryCodes[0] || '';
+  if (primaryCountry) return primaryCountry === code;
+  return language === originalLanguage;
 };
 
 const isKoreanItem = (item: CatalogItem) =>
@@ -1028,7 +1027,9 @@ const INDIAN_LANGUAGES = new Set(['hi', 'ta', 'te', 'ml', 'kn', 'bn', 'mr', 'pa'
 const isIndianItem = (item: CatalogItem) => {
   const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
   const language = String(item.originalLanguage || '').toLowerCase();
-  return INDIAN_LANGUAGES.has(language) || countryCodes[0] === 'IN';
+  const primaryCountry = countryCodes[0] || '';
+  if (primaryCountry) return primaryCountry === 'IN';
+  return INDIAN_LANGUAGES.has(language);
 };
 
 const looksLikeAnimeTitle = (item: CatalogItem) => {
@@ -1270,14 +1271,15 @@ const isDocumentaryItem = (item: CatalogItem) => {
     item.contentKind === 'documentary' ||
     hasCategory(item, 'documentaries')
   );
-  if (knownDocumentary || explicitDocumentary) return true;
-
   const narrative = hasStandaloneTerm(genres, [
     'درام', 'ترسناک', 'وحشت', 'هیجان انگیز', 'اکشن', 'کمدی', 'عاشقانه', 'خانوادگی',
     'جنایی', 'ماجراجویی', 'علمی تخیلی', 'فانتزی',
     'drama', 'horror', 'thriller', 'action', 'comedy', 'romance', 'family', 'crime',
     'adventure', 'science fiction', 'sci-fi', 'fantasy',
   ]);
+  const trustedNarrative = Number(item.tmdbValidationVersion || 0) >= 7 && narrative;
+  if (trustedNarrative) return false;
+  if (knownDocumentary || explicitDocumentary) return true;
   if (narrative) return false;
   return item.genres.some((genre) => /مستند|documentary/i.test(genre));
 };
@@ -1294,8 +1296,10 @@ const isWildlifeDocumentaryItem = (item: CatalogItem) => {
     'wolf', 'wolves', 'bear', 'bears', 'shark', 'sharks', 'whale', 'whales', 'dolphin', 'dolphins',
     'elephant', 'elephants', 'gorilla', 'gorillas', 'penguin', 'penguins',
     'bumblebee', 'bumblebees', 'squirrel', 'squirrels', 'rodent', 'rodents',
+    'snake', 'snakes', 'crocodile', 'crocodiles', 'alligator', 'alligators',
     'پلنگ', 'یوزپلنگ', 'شیرها', 'ببرها', 'گرگ ها', 'خرس ها', 'کوسه', 'نهنگ', 'دلفین', 'فیل ها', 'گوریل', 'پنگوئن',
     'زنبور', 'زنبورها', 'سنجاب', 'سنجاب ها', 'سنجاب‌ها', 'سمور', 'سمورها', 'موش صحرایی', 'جوندگان',
+    'مار', 'مارها', 'تمساح', 'تمساح‌ها', 'کروکودیل', 'کروکودیل‌ها',
   ]);
   if (strong) return true;
   const habitat = hasStandaloneTerm(text, ['طبیعت', 'جنگل', 'اقیانوس', 'دریا', 'ساوانا', 'زیست بوم', 'nature', 'forest', 'ocean', 'sea', 'savanna', 'ecosystem', 'habitat']);
@@ -5757,8 +5761,12 @@ function DetailModal({
                   {(item.countryCodes || []).map((code, index) => ({ code, index })).filter(({ code }) => String(code).toUpperCase() !== 'JP').map(({ code, index }) => <Pressable key={`country-loading-${code}`} onPress={() => browseAndClose(countryFilter(code))}><Text style={styles.detailGenre}>{item.countryLabels?.[index] || countryLabel(code, catalog)}</Text></Pressable>)}
                   {item.genres.map((genre) => <Pressable key={`genre-loading-${genre}`} onPress={() => browseAndClose(genreFilter(genre))}><Text style={styles.detailGenre}>{genre}</Text></Pressable>)}
                 </View>
-                <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text>
-                <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
+                {catalogOverviewFor(item) ? (
+                  <>
+                    <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text>
+                    <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
+                  </>
+                ) : null}
                 {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile || hasDownloads) ? (
                   <View style={styles.detailActions}>
                     {(hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
@@ -5790,7 +5798,12 @@ function DetailModal({
               {item.genres.map((genre) => <Pressable key={genre} onPress={() => browseAndClose(genreFilter(genre))}><Text style={styles.detailGenre}>{genre}</Text></Pressable>)}
             </View>
 
-            <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text><Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
+            {catalogOverviewFor(item) ? (
+              <>
+                <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text>
+                <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
+              </>
+            ) : null}
             <PeopleSection item={item} onOpen={onOpenPerson} />
             <MovieCollectionSection item={item} catalog={catalog} onOpen={onOpenRelated} />
             <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} />
@@ -7362,6 +7375,7 @@ const STARTUP_MIN_VISIBLE_MS = 5000;
 function AppContent() {
   const appInsets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<MainTab>('home');
+  const [categoriesMounted, setCategoriesMounted] = useState(false);
   const [searchFilter, setSearchFilter] = useState<SearchFilter>('all');
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<CatalogPerson | null>(null);
@@ -7381,6 +7395,7 @@ function AppContent() {
   const [contentLoading, setContentLoading] = useState(false);
   const [contentOffline, setContentOffline] = useState(false);
   const [startupVisible, setStartupVisible] = useState(true);
+  const [foregroundRefreshVisible, setForegroundRefreshVisible] = useState(false);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
@@ -7403,6 +7418,7 @@ function AppContent() {
   const startupDismissedRef = useRef(false);
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startupFallbackContentRef = useRef<LoadedContent | null>(null);
+  const backgroundedAtRef = useRef<number | null>(null);
   const vpnCheckSequenceRef = useRef(0);
   const vpnPausingDownloadsRef = useRef(false);
   const activeTabRef = useRef<MainTab>('home');
@@ -7569,7 +7585,22 @@ function AppContent() {
       // First try the fast bundled/persisted catalog. When it is empty, keep
       // the loading state visible until the remote attempt actually settles;
       // this prevents the brief false "catalog is empty" screen at startup.
-      const firstContent = await loadContent(initialLoad);
+      let foregroundBootstrapUsed = false;
+      let firstContent: LoadedContent;
+      if (!initialLoad && force && online) {
+        // A foreground reopen should refresh from the compact current bootstrap
+        // before the large index. This prevents a stale cached Home/IMDb frame
+        // from being visible for several seconds after returning to the app.
+        const bootstrapContent = await loadBootstrapContent();
+        if (bootstrapContent?.items.length) {
+          firstContent = bootstrapContent;
+          foregroundBootstrapUsed = true;
+        } else {
+          firstContent = await loadContent(false);
+        }
+      } else {
+        firstContent = await loadContent(initialLoad);
+      }
 
       // On an online cold start, start the large full index immediately but do
       // not make first paint wait for it. The compact bootstrap is the complete
@@ -7601,32 +7632,20 @@ function AppContent() {
           return;
         }
 
-        // Bootstrap failed: prefer the already-resolved local/persisted catalog
-        // immediately instead of blocking first paint on the large network index.
-        if (applyContent(firstContent)) {
-          dismissStartup();
-          void freshContentPromise
-            .then((freshContent) => {
-              if (freshContent.source === 'remote') applyBackgroundFullContent(freshContent);
-            })
-            .catch(() => undefined);
-          return;
-        }
-
-        // Only a genuinely empty fallback is allowed to wait for the in-flight
-        // full index, because there is otherwise nothing truthful to reveal.
+        // If the compact bootstrap is temporarily unavailable, do not reveal
+        // stale persisted Home while the already-started full remote request is
+        // still capable of succeeding. Only fall back to cache after that remote
+        // attempt actually settles.
         try {
           const freshContent = await freshContentPromise;
-          if (!applyContent(freshContent)) {
-            setContentReady(false);
-            setContentResolved(true);
+          if (freshContent.source === 'remote' && applyContent(freshContent)) {
+            dismissStartup();
+            return;
           }
         } catch {
-          setContentReady(false);
-          setContentResolved(true);
-        } finally {
-          dismissStartup();
+          // Fall through to the persisted emergency fallback below.
         }
+        if (applyContent(firstContent)) dismissStartup();
         return;
       }
 
@@ -7634,6 +7653,16 @@ function AppContent() {
 
       if (firstApplied) {
         dismissStartup();
+        if (foregroundBootstrapUsed) {
+          // Bootstrap is already current and safe to reveal; enrich the same
+          // catalog with the full index without blocking the foreground reopen.
+          void loadContent(false)
+            .then((freshContent) => {
+              if (freshContent.source !== 'local') applyBackgroundFullContent(freshContent);
+            })
+            .catch(() => undefined);
+          return;
+        }
         if (initialLoad && firstContent.source === 'local') {
           // A fresh install used to expose the nine-item emergency catalog while
           // the full index downloaded. Paint the small real Home bootstrap first,
@@ -7760,8 +7789,24 @@ function AppContent() {
 
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        reloadContentWhenIdle();
+        const backgroundedAt = backgroundedAtRef.current;
+        backgroundedAtRef.current = null;
+        const returningFromBackground = Boolean(
+          startupDismissedRef.current &&
+          backgroundedAt &&
+          Date.now() - backgroundedAt >= 2500
+        );
+        if (returningFromBackground) {
+          // Keep stale Home behind the same lightweight cover until the current
+          // bootstrap has been applied. The large index continues in background.
+          setForegroundRefreshVisible(true);
+          void reloadContent(true).finally(() => setForegroundRefreshVisible(false));
+        } else {
+          reloadContentWhenIdle();
+        }
         void refreshVpnState();
+      } else if (state === 'background' || state === 'inactive') {
+        if (backgroundedAtRef.current === null) backgroundedAtRef.current = Date.now();
       }
     });
     const catalogRefreshTimer = setInterval(() => {
@@ -8234,6 +8279,12 @@ function AppContent() {
   }, []);
   const reloadHomeContent = useCallback(() => { void reloadContent(true); }, [content.items.length, dismissStartup]);
   const openMainMenu = useCallback(() => setMenuOpen(true), []);
+
+  useEffect(() => {
+    if (startupVisible || categoriesMounted || !content.items.length) return;
+    const task = InteractionManager.runAfterInteractions(() => setCategoriesMounted(true));
+    return () => task.cancel();
+  }, [categoriesMounted, content.items.length, startupVisible]);
 
   const handleBottomTabChange = useCallback((tab: MainTab) => {
     setSelectedItem(null);
@@ -8746,7 +8797,7 @@ function AppContent() {
             contentOffline={contentOffline}
           />
         </View>
-        {activeTab === 'categories' || (activeTab === 'search' && searchReturnTab === 'categories') ? (
+        {categoriesMounted || activeTab === 'categories' || (activeTab === 'search' && searchReturnTab === 'categories') ? (
           <View
             pointerEvents={activeTab === 'categories' ? 'auto' : 'none'}
             style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}
@@ -8897,7 +8948,7 @@ function AppContent() {
           onClose={() => setOperatorWebRequest(null)}
         />
       ) : null}
-      {startupVisible ? <StartupScreen /> : null}
+      {startupVisible || foregroundRefreshVisible ? <StartupScreen /> : null}
     </View>
   );
 }
