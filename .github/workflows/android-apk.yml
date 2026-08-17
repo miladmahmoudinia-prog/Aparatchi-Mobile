@@ -12,7 +12,10 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Temporary bridge while GitHub-hosted Actions quota is unavailable.
+    # Keep these labels aligned with the registered Windows x64 runner.
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 90
 
     env:
       EXPO_NO_TELEMETRY: "1"
@@ -32,59 +35,123 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: "false"
+
+      # The Windows runner service account blocks PowerShell scripts by policy,
+      # so all command steps intentionally use cmd.
       - name: Install dependencies
+        shell: cmd
         run: npm install --include=dev
 
       - name: Type-check application
+        shell: cmd
         run: npm run typecheck
 
       - name: Resolve application version
         id: app_version
-        shell: bash
-        run: |
-          VERSION="$(node -p "require('./package.json').version")"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        shell: cmd
+        run: for /f "delims=" %%V in ('node -p "require('./package.json').version"') do echo version=%%V>>"%GITHUB_OUTPUT%"
 
       - name: Create Android project
+        shell: cmd
         run: npx expo prebuild --platform android --non-interactive
         env:
           NODE_ENV: production
 
-      - name: Allow Gradle execution
-        run: chmod +x android/gradlew
-
       - name: Build release APK
-        run: cd android && ./gradlew app:assembleRelease
+        shell: cmd
+        working-directory: android
+        run: gradlew.bat app:assembleRelease --no-daemon
         env:
           NODE_ENV: production
 
       - name: Prepare APK for release
-        run: cp android/app/build/outputs/apk/release/app-release.apk Aparatchi-Android-Release.apk
+        shell: cmd
+        run: copy /Y "android\app\build\outputs\apk\release\app-release.apk" "Aparatchi-Android-Release.apk"
 
-      # Releases does not consume the 0.5 GB Actions artifact quota.
+      # Publish directly to Releases so large APKs do not consume Actions artifact storage.
       - name: Publish APK to GitHub Releases
-        shell: bash
+        uses: actions/github-script@v8
         env:
-          GH_TOKEN: ${{ github.token }}
           APP_VERSION: ${{ steps.app_version.outputs.version }}
           RELEASE_TAG: android-latest
           APK_PATH: Aparatchi-Android-Release.apk
-        run: |
-          set -euo pipefail
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
 
-          RELEASE_TITLE="Aparatchi Android v${APP_VERSION}"
-          RELEASE_NOTES="Latest Android APK for Aparatchi v${APP_VERSION}."
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = process.env.RELEASE_TAG;
+            const version = process.env.APP_VERSION;
+            const apkPath = path.resolve(process.env.APK_PATH);
+            const apkName = path.basename(apkPath);
+            const releaseName = `Aparatchi Android v${version}`;
+            const releaseBody = `Latest Android APK for Aparatchi v${version}.`;
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" \
-              --title "$RELEASE_TITLE" \
-              --notes "$RELEASE_NOTES" \
-              --latest
-            gh release upload "$RELEASE_TAG" "$APK_PATH" --clobber
-          else
-            gh release create "$RELEASE_TAG" "$APK_PATH" \
-              --target "$GITHUB_SHA" \
-              --title "$RELEASE_TITLE" \
-              --notes "$RELEASE_NOTES" \
-              --latest
-          fi
+            if (!fs.existsSync(apkPath)) {
+              throw new Error(`APK not found at ${apkPath}`);
+            }
+
+            let release;
+            try {
+              release = (await github.rest.repos.getReleaseByTag({ owner, repo, tag })).data;
+              release = (await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: release.id,
+                name: releaseName,
+                body: releaseBody,
+                draft: false,
+                prerelease: false,
+                make_latest: 'true',
+              })).data;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              release = (await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                target_commitish: context.sha,
+                name: releaseName,
+                body: releaseBody,
+                draft: false,
+                prerelease: false,
+                make_latest: 'true',
+              })).data;
+            }
+
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner,
+              repo,
+              release_id: release.id,
+              per_page: 100,
+            });
+            for (const asset of assets) {
+              if (asset.name === apkName) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner,
+                  repo,
+                  asset_id: asset.id,
+                });
+              }
+            }
+
+            const data = fs.readFileSync(apkPath);
+            await github.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id: release.id,
+              name: apkName,
+              headers: {
+                'content-type': 'application/vnd.android.package-archive',
+                'content-length': data.length,
+              },
+              data,
+            });
+
+            core.notice(`Published ${apkName} to ${tag} (${releaseName}).`);
