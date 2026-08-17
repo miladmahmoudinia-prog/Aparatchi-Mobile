@@ -35,11 +35,46 @@ app = replaceOnce(
   'hide hydrated-detail story block until valid synopsis',
 );
 
-app = replaceRegexOnce(
+app = replaceOnce(
   app,
-  /const catalogItemTimestamp = \(item: CatalogItem\) => \{[\s\S]*?\n\};\n\nconst sortForCatalogFilter/,
-  `const catalogItemTimestamp = (item: CatalogItem) => {\n  // Metadata enrichment must not pin an old title at the front. Movies are\n  // ordered by when Aparatchi/source actually discovered them; series may move\n  // forward only for a meaningful episode/content update.\n  const value = item.type === 'series'\n    ? (item.meaningfulUpdatedAt || item.sourceCreatedAt || item.createdAt || '')\n    : (item.sourceCreatedAt || item.createdAt || '');\n  const timestamp = Date.parse(value);\n  return Number.isFinite(timestamp) ? timestamp : 0;\n};\n\nconst sortForCatalogFilter`,
+  `const catalogItemTimestamp = (item: CatalogItem) => {\n  const value =\n    item.updatedAt ||\n    item.sourceUpdatedAt ||\n    item.createdAt ||\n    item.sourceCreatedAt ||\n    '';\n  const timestamp = Date.parse(value);\n  return Number.isFinite(timestamp) ? timestamp : 0;\n};`,
+  `const catalogItemTimestamp = (item: CatalogItem) => {\n  // Metadata enrichment must not pin an old title at the front. Movies are\n  // ordered by when Aparatchi/source actually discovered them; series may move\n  // forward only for a meaningful episode/content update.\n  const value = item.type === 'series'\n    ? (item.meaningfulUpdatedAt || item.sourceCreatedAt || item.createdAt || '')\n    : (item.sourceCreatedAt || item.createdAt || '');\n  const timestamp = Date.parse(value);\n  return Number.isFinite(timestamp) ? timestamp : 0;\n};`,
   'mobile freshness ordering',
+);
+
+app = replaceOnce(
+  app,
+  `const isIranianItem = (item: CatalogItem) => {\n  const titleText = normalizeComparableText(\`${'${item.nameFa || \'\'}'} ${'${item.name || \'\'}'}\`);\n  if (titleText.includes('the westies') || titleText.includes('وستی ها') || titleText.includes('وستی‌ها')) return false;\n  const language = String(item.originalLanguage || '').toLowerCase();\n  const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());\n  const primaryCountry = countryCodes[0] || '';\n  // Prefer authoritative language/primary-country metadata over a stale legacy\n  // \`ir\` flag. Co-productions do not become Iranian only because IR appears\n  // later in the country list.\n  if (language === 'fa' || primaryCountry === 'IR') return true;\n  if (language && language !== 'fa') return false;\n  if (primaryCountry && primaryCountry !== 'IR') return false;\n  return Boolean(item.ir);\n};`,
+  `const isIranianItem = (item: CatalogItem) => {\n  const titleText = normalizeComparableText(\`${'${item.nameFa || \'\'}'} ${'${item.name || \'\'}'}\`);\n  if (titleText.includes('the westies') || titleText.includes('وستی ها') || titleText.includes('وستی‌ها')) return false;\n  const language = String(item.originalLanguage || '').toLowerCase();\n  const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());\n  const primaryCountry = countryCodes[0] || '';\n  // Explicit production-country metadata is stronger than stale language/ir\n  // flags. Language is only a fallback when no country was supplied at all.\n  if (primaryCountry) return primaryCountry === 'IR';\n  if (language) return language === 'fa';\n  return Boolean(item.ir);\n};`,
+  'Iranian identity country authority',
+);
+
+app = replaceOnce(
+  app,
+  `const hasSpecificCountry = (item: CatalogItem, code: string, originalLanguage: string) => {\n  const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());\n  const language = String(item.originalLanguage || '').toLowerCase();\n  if (language === originalLanguage) return true;\n  // A co-production should not enter a country shelf only because that country\n  // appears somewhere in the production list. The primary country (first\n  // normalized country) is the fallback when original language is inconclusive.\n  return countryCodes[0] === code;\n};`,
+  `const hasSpecificCountry = (item: CatalogItem, code: string, originalLanguage: string) => {\n  const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());\n  const language = String(item.originalLanguage || '').toLowerCase();\n  const primaryCountry = countryCodes[0] || '';\n  if (primaryCountry) return primaryCountry === code;\n  return language === originalLanguage;\n};`,
+  'regional identity country authority',
+);
+
+app = replaceOnce(
+  app,
+  `const isIndianItem = (item: CatalogItem) => {\n  const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());\n  const language = String(item.originalLanguage || '').toLowerCase();\n  return INDIAN_LANGUAGES.has(language) || countryCodes[0] === 'IN';\n};`,
+  `const isIndianItem = (item: CatalogItem) => {\n  const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());\n  const language = String(item.originalLanguage || '').toLowerCase();\n  const primaryCountry = countryCodes[0] || '';\n  if (primaryCountry) return primaryCountry === 'IN';\n  return INDIAN_LANGUAGES.has(language);\n};`,
+  'Indian identity country authority',
+);
+
+app = replaceOnce(
+  app,
+  `  const explicitDocumentary = Boolean(\n    item.isDocumentary === true ||\n    item.contentKind === 'documentary' ||\n    hasCategory(item, 'documentaries')\n  );\n  if (knownDocumentary || explicitDocumentary) return true;\n\n  const narrative = hasStandaloneTerm(genres, [\n    'درام', 'ترسناک', 'وحشت', 'هیجان انگیز', 'اکشن', 'کمدی', 'عاشقانه', 'خانوادگی',\n    'جنایی', 'ماجراجویی', 'علمی تخیلی', 'فانتزی',\n    'drama', 'horror', 'thriller', 'action', 'comedy', 'romance', 'family', 'crime',\n    'adventure', 'science fiction', 'sci-fi', 'fantasy',\n  ]);\n  if (narrative) return false;\n  return item.genres.some((genre) => /مستند|documentary/i.test(genre));`,
+  `  const explicitDocumentary = Boolean(\n    item.isDocumentary === true ||\n    item.contentKind === 'documentary' ||\n    hasCategory(item, 'documentaries')\n  );\n  const narrative = hasStandaloneTerm(genres, [\n    'درام', 'ترسناک', 'وحشت', 'هیجان انگیز', 'اکشن', 'کمدی', 'عاشقانه', 'خانوادگی',\n    'جنایی', 'ماجراجویی', 'علمی تخیلی', 'فانتزی',\n    'drama', 'horror', 'thriller', 'action', 'comedy', 'romance', 'family', 'crime',\n    'adventure', 'science fiction', 'sci-fi', 'fantasy',\n  ]);\n  const trustedNarrative = Number(item.tmdbValidationVersion || 0) >= 7 && narrative;\n  if (trustedNarrative) return false;\n  if (knownDocumentary || explicitDocumentary) return true;\n  if (narrative) return false;\n  return item.genres.some((genre) => /مستند|documentary/i.test(genre));`,
+  'trusted narrative overrides stale documentary flag',
+);
+
+app = replaceOnce(
+  app,
+  `    'bumblebee', 'bumblebees', 'squirrel', 'squirrels', 'rodent', 'rodents',\n    'پلنگ', 'یوزپلنگ', 'شیرها', 'ببرها', 'گرگ ها', 'خرس ها', 'کوسه', 'نهنگ', 'دلفین', 'فیل ها', 'گوریل', 'پنگوئن',\n    'زنبور', 'زنبورها', 'سنجاب', 'سنجاب ها', 'سنجاب‌ها', 'سمور', 'سمورها', 'موش صحرایی', 'جوندگان',`,
+  `    'bumblebee', 'bumblebees', 'squirrel', 'squirrels', 'rodent', 'rodents',\n    'snake', 'snakes', 'crocodile', 'crocodiles', 'alligator', 'alligators',\n    'پلنگ', 'یوزپلنگ', 'شیرها', 'ببرها', 'گرگ ها', 'خرس ها', 'کوسه', 'نهنگ', 'دلفین', 'فیل ها', 'گوریل', 'پنگوئن',\n    'زنبور', 'زنبورها', 'سنجاب', 'سنجاب ها', 'سنجاب‌ها', 'سمور', 'سمورها', 'موش صحرایی', 'جوندگان',\n    'مار', 'مارها', 'تمساح', 'تمساح‌ها', 'کروکودیل', 'کروکودیل‌ها',`,
+  'mobile wildlife snake/crocodile subjects',
 );
 
 app = replaceOnce(
@@ -137,4 +172,6 @@ console.log(JSON.stringify({
   categoriesWarmMounted: true,
   metadataUpdatesDoNotPinOldTitles: true,
   countryNormalizationFixed: true,
+  staleDocumentaryClassificationFixed: true,
+  wildlifeSnakeCrocodileFixed: true,
 }, null, 2));
