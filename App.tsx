@@ -5670,7 +5670,14 @@ function DetailModal({
   // were complete. As soon as the selected detail object is hydrated React
   // renders the real actions/episodes directly; no InteractionManager/scroll
   // event is allowed to gate their visibility.
-  const detailBodyReady = Boolean(item && (!item.detailPath || item.detailLoaded === true));
+  const detailBodyReady = Boolean(
+    item && (
+      !item.detailPath ||
+      item.detailLoaded === true ||
+      Boolean(item.streamUrl) ||
+      (item.downloads?.length || 0) > 0
+    ),
+  );
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
   const [downloadInitialGroup, setDownloadInitialGroup] = useState<string | null>(null);
 
@@ -7516,39 +7523,110 @@ function AppContent() {
       return true;
     };
 
+    // Bootstrap already carries the complete navigation catalog plus compact
+    // actionable media. When the larger index arrives later with the same
+    // catalog identity/order, merge only its supplemental top-level data and
+    // retain the bootstrap item objects so Home/detail do not visibly jump.
+    const applyBackgroundFullContent = (nextContent: LoadedContent) => {
+      const visibleContent = visibleLoadedContent(nextContent);
+      if (!visibleContent.items.length) return false;
+
+      const currentContent = contentRef.current;
+      const sameCatalog =
+        currentContent.items.length === visibleContent.items.length &&
+        currentContent.items.every((currentItem, index) => {
+          const incomingItem = visibleContent.items[index];
+          return Boolean(
+            incomingItem &&
+            currentItem.id === incomingItem.id &&
+            currentItem.type === incomingItem.type
+          );
+        });
+
+      if (!sameCatalog) {
+        // loadedContentRevision intentionally omits the item list. If artifacts
+        // raced and identity/order really changed, force the full truth through.
+        if (loadedContentRevision(nextContent) === contentRevisionRef.current) {
+          contentRevisionRef.current = '';
+        }
+        return applyContent(nextContent);
+      }
+
+      const mergedContent: LoadedContent = {
+        ...visibleContent,
+        items: currentContent.items,
+      };
+      contentRevisionRef.current = loadedContentRevision(nextContent);
+      contentRef.current = mergedContent;
+      startTransition(() => setContent(mergedContent));
+      lastContentLoadRef.current = Date.now();
+      setContentReady(true);
+      setContentResolved(true);
+      return true;
+    };
+
     try {
       // First try the fast bundled/persisted catalog. When it is empty, keep
       // the loading state visible until the remote attempt actually settles;
       // this prevents the brief false "catalog is empty" screen at startup.
       const firstContent = await loadContent(initialLoad);
 
-      // On an online cold start, bundled/persisted/bootstrap catalogs are fallback
-      // only. Keep the branded cover up while the current Raw-first full index is
-      // already downloading; normally reveal Home once that full truth is ready.
-      // This prevents a visible bootstrap -> full-catalog jump after the splash.
+      // On an online cold start, start the large full index immediately but do
+      // not make first paint wait for it. The compact bootstrap is the complete
+      // navigation catalog and is bounded to arrive quickly; the full index then
+      // enriches supplemental data in the background without replacing the same
+      // item list. This keeps the existing five-second startup cover useful.
       if (initialLoad && online && firstContent.source !== 'remote') {
         const freshContentPromise = loadContent(false);
         const bootstrapContentPromise = loadBootstrapContent().then((bootstrapContent) => {
           if (bootstrapContent?.items.length) startupFallbackContentRef.current = bootstrapContent;
           return bootstrapContent;
         });
-        let fallbackContent = firstContent;
 
+        let bootstrapApplied = false;
         try {
-          const freshContent = await freshContentPromise;
-          if (freshContent.source === 'remote' && applyContent(freshContent)) {
-            dismissStartup();
-            return;
-          }
-          fallbackContent = freshContent;
+          const bootstrapContent = await bootstrapContentPromise;
+          bootstrapApplied = Boolean(bootstrapContent && applyContent(bootstrapContent));
         } catch {
-          // The current full index failed; use the current bootstrap below.
+          // The full catalog is already in flight and remains the fallback below.
         }
 
-        const bootstrapContent = await bootstrapContentPromise;
-        const bootstrapApplied = Boolean(bootstrapContent && applyContent(bootstrapContent));
-        if (!bootstrapApplied) applyContent(fallbackContent);
-        dismissStartup();
+        if (bootstrapApplied) {
+          dismissStartup();
+          void freshContentPromise
+            .then((freshContent) => {
+              if (freshContent.source === 'remote') applyBackgroundFullContent(freshContent);
+            })
+            .catch(() => undefined);
+          return;
+        }
+
+        // Bootstrap failed: prefer the already-resolved local/persisted catalog
+        // immediately instead of blocking first paint on the large network index.
+        if (applyContent(firstContent)) {
+          dismissStartup();
+          void freshContentPromise
+            .then((freshContent) => {
+              if (freshContent.source === 'remote') applyBackgroundFullContent(freshContent);
+            })
+            .catch(() => undefined);
+          return;
+        }
+
+        // Only a genuinely empty fallback is allowed to wait for the in-flight
+        // full index, because there is otherwise nothing truthful to reveal.
+        try {
+          const freshContent = await freshContentPromise;
+          if (!applyContent(freshContent)) {
+            setContentReady(false);
+            setContentResolved(true);
+          }
+        } catch {
+          setContentReady(false);
+          setContentResolved(true);
+        } finally {
+          dismissStartup();
+        }
         return;
       }
 
