@@ -12,8 +12,6 @@ concurrency:
 
 jobs:
   build:
-    # Temporary bridge while GitHub-hosted Actions quota is unavailable.
-    # Keep these labels aligned with the registered Windows x64 runner.
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 90
 
@@ -21,35 +19,47 @@ jobs:
       EXPO_NO_TELEMETRY: "1"
       ANDROID_HOME: C:/actions-runner/android-sdk
       ANDROID_SDK_ROOT: C:/actions-runner/android-sdk
+      JAVA_HOME: C:/actions-runner/_work/_tool/Java_Temurin-Hotspot_jdk/17.0.20-8/x64
 
     steps:
-      - name: Checkout project
-        uses: actions/checkout@v6
+      # Do not use actions/checkout on this self-hosted runner. codeload.github.com
+      # repeatedly rate-limited action ZIP downloads with HTTP 429. Git itself is
+      # already installed on the machine, so sync the requested commit directly.
+      - name: Sync project with local Git
+        shell: cmd
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if not exist ".git" git init .
+          git config core.longpaths true
+          git fetch --force --no-tags --prune --depth=1 "https://x-access-token:%GH_TOKEN%@github.com/%GITHUB_REPOSITORY%.git" "%GITHUB_SHA%" || git fetch --force --no-tags --prune --depth=20 "https://x-access-token:%GH_TOKEN%@github.com/%GITHUB_REPOSITORY%.git" "%GITHUB_REF_NAME%"
+          git reset --hard %GITHUB_SHA% || git reset --hard FETCH_HEAD
+          git clean -ffdx
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          package-manager-cache: false
-
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      # The copied SDK root is accessible to the Windows service account. Do not
-      # require platform/build-tools to exist up front: Gradle can resolve missing
-      # SDK packages during the command-line build when accepted licenses exist.
-      - name: Verify local Android SDK root
+      # Reuse software already present on the PC/tool cache. This removes the
+      # actions/setup-node and actions/setup-java downloads completely.
+      - name: Activate local toolchain
         shell: cmd
         run: |
+          if exist "C:\Program Files\nodejs\node.exe" echo C:\Program Files\nodejs>>"%GITHUB_PATH%"
+          for /d %%D in ("C:\actions-runner\_work\_tool\node\22.*") do if exist "%%~fD\x64\node.exe" echo %%~fD\x64>>"%GITHUB_PATH%"
+          if exist "%JAVA_HOME%\bin\java.exe" echo %JAVA_HOME%\bin>>"%GITHUB_PATH%"
+
+      - name: Verify local build tools
+        shell: cmd
+        run: |
+          where git || exit /b 1
+          git --version || exit /b 1
+          where node || exit /b 1
+          node --version || exit /b 1
+          where npm || exit /b 1
+          npm --version || exit /b 1
+          if not exist "%JAVA_HOME%\bin\java.exe" (echo Java 17 not found at %JAVA_HOME% & exit /b 1)
+          "%JAVA_HOME%\bin\java.exe" -version || exit /b 1
           if not exist "%ANDROID_HOME%" (echo Android SDK folder not found: %ANDROID_HOME% & exit /b 1)
           echo Using Android SDK: %ANDROID_HOME%
-          if exist "%ANDROID_HOME%\licenses" (echo Accepted Android SDK licenses folder found) else (echo Android SDK licenses folder is not present; Gradle will report if it is required)
+          if exist "%ANDROID_HOME%\licenses" (echo Accepted Android SDK licenses folder found) else (echo Android SDK licenses folder is not present & exit /b 1)
 
-      # The Windows runner service account blocks PowerShell scripts by policy,
-      # so all command steps intentionally use cmd.
       - name: Install dependencies
         shell: cmd
         run: npm install --include=dev
@@ -84,86 +94,13 @@ jobs:
         shell: cmd
         run: copy /Y "android\app\build\outputs\apk\release\app-release.apk" "Aparatchi-Android-Release.apk"
 
-      # Publish directly to Releases so large APKs do not consume Actions artifact storage.
+      # Publish with the local Node runtime instead of actions/github-script.
+      # This keeps the workflow free of all external `uses:` action downloads.
       - name: Publish APK to GitHub Releases
-        uses: actions/github-script@v8
+        shell: cmd
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           APP_VERSION: ${{ steps.app_version.outputs.version }}
           RELEASE_TAG: android-latest
           APK_PATH: Aparatchi-Android-Release.apk
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const tag = process.env.RELEASE_TAG;
-            const version = process.env.APP_VERSION;
-            const apkPath = path.resolve(process.env.APK_PATH);
-            const apkName = path.basename(apkPath);
-            const releaseName = `Aparatchi Android v${version}`;
-            const releaseBody = `Latest Android APK for Aparatchi v${version}.`;
-
-            if (!fs.existsSync(apkPath)) {
-              throw new Error(`APK not found at ${apkPath}`);
-            }
-
-            let release;
-            try {
-              release = (await github.rest.repos.getReleaseByTag({ owner, repo, tag })).data;
-              release = (await github.rest.repos.updateRelease({
-                owner,
-                repo,
-                release_id: release.id,
-                name: releaseName,
-                body: releaseBody,
-                draft: false,
-                prerelease: false,
-                make_latest: 'true',
-              })).data;
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              release = (await github.rest.repos.createRelease({
-                owner,
-                repo,
-                tag_name: tag,
-                target_commitish: context.sha,
-                name: releaseName,
-                body: releaseBody,
-                draft: false,
-                prerelease: false,
-                make_latest: 'true',
-              })).data;
-            }
-
-            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
-              owner,
-              repo,
-              release_id: release.id,
-              per_page: 100,
-            });
-            for (const asset of assets) {
-              if (asset.name === apkName) {
-                await github.rest.repos.deleteReleaseAsset({
-                  owner,
-                  repo,
-                  asset_id: asset.id,
-                });
-              }
-            }
-
-            const data = fs.readFileSync(apkPath);
-            await github.rest.repos.uploadReleaseAsset({
-              owner,
-              repo,
-              release_id: release.id,
-              name: apkName,
-              headers: {
-                'content-type': 'application/vnd.android.package-archive',
-                'content-length': data.length,
-              },
-              data,
-            });
-
-            core.notice(`Published ${apkName} to ${tag} (${releaseName}).`);
+        run: node scripts/publish-apk-release.mjs
