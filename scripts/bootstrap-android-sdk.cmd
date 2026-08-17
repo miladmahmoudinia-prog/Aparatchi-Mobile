@@ -2,17 +2,24 @@
 setlocal EnableDelayedExpansion
 
 set "PLATFORM_TARGET=%ANDROID_HOME%\platforms\android-36"
-set "BUILD_TARGET=%ANDROID_HOME%\build-tools\36.0.0"
+set "BUILD36_TARGET=%ANDROID_HOME%\build-tools\36.0.0"
+set "BUILD35_TARGET=%ANDROID_HOME%\build-tools\35.0.0"
+
 set "PLATFORM_ZIP=%TOOL_ROOT%\downloads\platform-36_r02.zip"
-set "BUILD_ZIP=%TOOL_ROOT%\downloads\build-tools_r36_windows.zip"
+set "BUILD36_ZIP=%TOOL_ROOT%\downloads\build-tools_r36_windows.zip"
+set "BUILD35_ZIP=%TOOL_ROOT%\downloads\build-tools_r35_windows.zip"
+
 set "PLATFORM_SIZE=65878410"
 set "PLATFORM_SHA1=2c1a80dd4d9f7d0e6dd336ec603d9b5c55a6f576"
-set "BUILD_SIZE=58699878"
-set "BUILD_SHA1=f16ccffd34de8790dede813a6c7d8e2c11a27b50"
-set "PLATFORM_URL=https://redirector.gvt1.com/edgedl/android/repository/platform-36_r02.zip"
-set "BUILD_URL=https://redirector.gvt1.com/edgedl/android/repository/build-tools_r36_windows.zip"
+set "BUILD36_SIZE=58699878"
+set "BUILD36_SHA1=f16ccffd34de8790dede813a6c7d8e2c11a27b50"
+set "BUILD35_SIZE=59878107"
+set "BUILD35_SHA1=af059bb67cf7786f45ee0db85e2d24985df1b4b6"
 
-if exist "%PLATFORM_TARGET%\android.jar" if exist "%BUILD_TARGET%\aapt2.exe" goto sdk_ready
+set "PLATFORM_URL=https://redirector.gvt1.com/edgedl/android/repository/platform-36_r02.zip"
+set "BUILD36_URL=https://redirector.gvt1.com/edgedl/android/repository/build-tools_r36_windows.zip"
+set "BUILD35_URL=https://redirector.gvt1.com/edgedl/android/repository/build-tools_r35_windows.zip"
+
 if not exist "%TOOL_ROOT%\downloads" mkdir "%TOOL_ROOT%\downloads"
 
 if not exist "%PLATFORM_TARGET%\android.jar" call :reuse_platform
@@ -20,9 +27,14 @@ if errorlevel 1 exit /b %errorlevel%
 if not exist "%PLATFORM_TARGET%\android.jar" call :download_platform
 if errorlevel 1 exit /b %errorlevel%
 
-if not exist "%BUILD_TARGET%\aapt2.exe" call :reuse_build_tools
+if not exist "%BUILD36_TARGET%\aapt2.exe" call :reuse_build_tools 36.0.0 "%BUILD36_TARGET%"
 if errorlevel 1 exit /b %errorlevel%
-if not exist "%BUILD_TARGET%\aapt2.exe" call :download_build_tools
+if not exist "%BUILD36_TARGET%\aapt2.exe" call :download_build_tools "%BUILD36_ZIP%" "%BUILD36_SIZE%" "%BUILD36_SHA1%" "%BUILD36_URL%" "36.0.0" "%BUILD36_TARGET%" "extract-build-tools-36"
+if errorlevel 1 exit /b %errorlevel%
+
+if not exist "%BUILD35_TARGET%\aapt2.exe" call :reuse_build_tools 35.0.0 "%BUILD35_TARGET%"
+if errorlevel 1 exit /b %errorlevel%
+if not exist "%BUILD35_TARGET%\aapt2.exe" call :download_build_tools "%BUILD35_ZIP%" "%BUILD35_SIZE%" "%BUILD35_SHA1%" "%BUILD35_URL%" "35.0.0" "%BUILD35_TARGET%" "extract-build-tools-35"
 if errorlevel 1 exit /b %errorlevel%
 
 goto sdk_ready
@@ -37,12 +49,14 @@ call :copy_tree "!PLATFORM_SRC!" "%PLATFORM_TARGET%"
 exit /b !errorlevel!
 
 :reuse_build_tools
+set "REUSE_VERSION=%~1"
+set "REUSE_TARGET=%~2"
 set "BUILD_SRC="
-for /d %%U in ("C:\Users\*") do if not defined BUILD_SRC if exist "%%~fU\AppData\Local\Android\Sdk\build-tools\36.0.0\aapt2.exe" set "BUILD_SRC=%%~fU\AppData\Local\Android\Sdk\build-tools\36.0.0"
-if not defined BUILD_SRC if exist "C:\Android\Sdk\build-tools\36.0.0\aapt2.exe" set "BUILD_SRC=C:\Android\Sdk\build-tools\36.0.0"
+for /d %%U in ("C:\Users\*") do if not defined BUILD_SRC if exist "%%~fU\AppData\Local\Android\Sdk\build-tools\!REUSE_VERSION!\aapt2.exe" set "BUILD_SRC=%%~fU\AppData\Local\Android\Sdk\build-tools\!REUSE_VERSION!"
+if not defined BUILD_SRC if exist "C:\Android\Sdk\build-tools\!REUSE_VERSION!\aapt2.exe" set "BUILD_SRC=C:\Android\Sdk\build-tools\!REUSE_VERSION!"
 if not defined BUILD_SRC exit /b 0
-echo Reusing Android build-tools 36.0.0 from !BUILD_SRC!
-call :copy_tree "!BUILD_SRC!" "%BUILD_TARGET%"
+echo Reusing Android build-tools !REUSE_VERSION! from !BUILD_SRC!
+call :copy_tree "!BUILD_SRC!" "!REUSE_TARGET!"
 exit /b !errorlevel!
 
 :download_platform
@@ -69,26 +83,32 @@ rmdir /s /q "!PLATFORM_TMP!"
 exit /b 0
 
 :download_build_tools
-call :ensure_zip "%BUILD_ZIP%" "%BUILD_SIZE%" "%BUILD_SHA1%" "%BUILD_URL%" "Android Build-Tools 36.0.0"
+set "BT_ZIP=%~1"
+set "BT_SIZE=%~2"
+set "BT_SHA1=%~3"
+set "BT_URL=%~4"
+set "BT_VERSION=%~5"
+set "BT_TARGET=%~6"
+set "BT_TMP=%TOOL_ROOT%\%~7"
+call :ensure_zip "!BT_ZIP!" "!BT_SIZE!" "!BT_SHA1!" "!BT_URL!" "Android Build-Tools !BT_VERSION!"
 if errorlevel 1 exit /b !errorlevel!
-set "BUILD_TMP=%TOOL_ROOT%\extract-build-tools-36"
-if exist "!BUILD_TMP!" rmdir /s /q "!BUILD_TMP!"
-mkdir "!BUILD_TMP!" || exit /b 44
-tar.exe -xf "%BUILD_ZIP%" -C "!BUILD_TMP!" || exit /b 45
-pushd "!BUILD_TMP!" || exit /b 46
+if exist "!BT_TMP!" rmdir /s /q "!BT_TMP!"
+mkdir "!BT_TMP!" || exit /b 44
+tar.exe -xf "!BT_ZIP!" -C "!BT_TMP!" || exit /b 45
+pushd "!BT_TMP!" || exit /b 46
 set "AAPT2_FILE="
 for /f "delims=" %%F in ('dir /s /b aapt2.exe 2^>nul') do if not defined AAPT2_FILE set "AAPT2_FILE=%%F"
 popd
 if not defined AAPT2_FILE (
-  echo ERROR: aapt2.exe was not found after extracting Build-Tools 36.0.0.
-  dir /s /b "!BUILD_TMP!"
+  echo ERROR: aapt2.exe was not found after extracting Build-Tools !BT_VERSION!.
+  dir /s /b "!BT_TMP!"
   exit /b 46
 )
 for %%F in ("!AAPT2_FILE!") do set "BUILD_SRC=%%~dpF"
 if "!BUILD_SRC:~-1!"=="\" set "BUILD_SRC=!BUILD_SRC:~0,-1!"
-call :copy_tree "!BUILD_SRC!" "%BUILD_TARGET%"
+call :copy_tree "!BUILD_SRC!" "!BT_TARGET!"
 if errorlevel 1 exit /b !errorlevel!
-rmdir /s /q "!BUILD_TMP!"
+rmdir /s /q "!BT_TMP!"
 exit /b 0
 
 :ensure_zip
@@ -132,9 +152,13 @@ if not exist "%PLATFORM_TARGET%\android.jar" (
   echo ERROR: Android platform 36 is still missing.
   exit /b 50
 )
-if not exist "%BUILD_TARGET%\aapt2.exe" (
+if not exist "%BUILD36_TARGET%\aapt2.exe" (
   echo ERROR: Android build-tools 36.0.0 are still missing.
   exit /b 51
 )
-echo Android platform 36 and build-tools 36.0.0 are persistent and ready.
+if not exist "%BUILD35_TARGET%\aapt2.exe" (
+  echo ERROR: Android build-tools 35.0.0 are still missing.
+  exit /b 52
+)
+echo Android platform 36 plus build-tools 36.0.0 and 35.0.0 are persistent and ready.
 exit /b 0
