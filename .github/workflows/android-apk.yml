@@ -19,8 +19,8 @@ jobs:
 
     env:
       EXPO_NO_TELEMETRY: "1"
-      ANDROID_HOME: "C:\Users\miladm2\AppData\Local\Android\Sdk"
-      ANDROID_SDK_ROOT: "C:\Users\miladm2\AppData\Local\Android\Sdk"
+      ANDROID_HOME: C:/Users/miladm2/AppData/Local/Android/Sdk
+      ANDROID_SDK_ROOT: C:/Users/miladm2/AppData/Local/Android/Sdk
 
     steps:
       - name: Checkout project
