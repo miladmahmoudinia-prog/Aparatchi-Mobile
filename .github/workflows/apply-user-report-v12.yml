@@ -1,3 +1,4 @@
+# Triggered after the latest APK audit so the pending v12-v13 mobile fixes are applied and type-checked.
 name: Apply user report v12-v13 mobile fixes
 
 on:
@@ -5,7 +6,9 @@ on:
     branches: [main]
     paths:
       - 'scripts/apply-user-report-v12.mjs'
+      - 'scripts/verify-user-report-v12.mjs'
       - 'scripts/apply-user-report-v13.mjs'
+      - 'scripts/verify-user-report-v13.mjs'
       - '.github/workflows/apply-user-report-v12.yml'
   workflow_dispatch:
 
@@ -33,37 +36,10 @@ jobs:
 
       - name: Apply audited mobile fixes
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/apply-user-report-v12.mjs')
-          text = path.read_text()
-          old = "  1,\n  'detail firstSeenAt normalization',"
-          new = "  2,\n  'detail firstSeenAt normalization',"
-          if old in text:
-              text = text.replace(old, new, 1)
-              path.write_text(text)
-          elif new not in text:
-              raise SystemExit('v12 helper guard not found')
-          PY
           node scripts/apply-user-report-v12.mjs
           node scripts/apply-user-report-v13.mjs
-
-      - name: Verify behavioral markers
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -F 'bootstrapRevision?: string;' src/contentService.ts
-          grep -F 'manifest?.bootstrapRevision || manifest?.clientRevision || manifest?.revision' src/contentService.ts
-          grep -F 'scrollToTopSignal={homeScrollTopSignal}' App.tsx
-          grep -F "if (tab === 'home') setHomeScrollTopSignal" App.tsx
-          grep -F "void reloadContent(true, { silent: true });" App.tsx
-          grep -F "case 'indian-series': return false;" App.tsx
-          grep -F 'if (language) return language === originalLanguage;' App.tsx
-          grep -F 'heroSlider: { height: 420' App.tsx
-          if grep -F 'foregroundRefreshVisible' App.tsx; then
-            echo 'foreground full-screen refresh state still exists' >&2
-            exit 1
-          fi
+          node scripts/verify-user-report-v12.mjs
+          node scripts/verify-user-report-v13.mjs
 
       - name: Install JS dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
@@ -82,7 +58,7 @@ jobs:
             echo "No source changes to commit."
             exit 0
           fi
-          git commit -m "fix: startup state ordering regional categories and detail hydration v13"
+          git commit -m "fix: current startup navigation regional categories and detail preview v13"
           for attempt in 1 2 3 4 5; do
             if git pull --rebase origin main && git push origin HEAD:main; then
               exit 0
