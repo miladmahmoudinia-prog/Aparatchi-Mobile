@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Install exact Android NDK once
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $ver = '27.1.12297006'
@@ -38,14 +38,14 @@ jobs:
             }
             if (-not (Test-Path $zip)) { New-Item -ItemType File -Path $zip | Out-Null }
             Write-Host 'Downloading Android NDK r27b once. This file is kept for all later APK builds.'
-            curl.exe -fL -C - --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 7200 -o $zip $url
+            & curl.exe -fL -C - --retry 8 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 7200 -o $zip $url
             if ($LASTEXITCODE -ne 0) { throw 'NDK download failed.' }
             $size = (Get-Item $zip).Length
             if ($size -ne $expectedSize) { throw "NDK size mismatch: $size" }
             $sha1 = (Get-FileHash -Algorithm SHA1 $zip).Hash.ToLowerInvariant()
             if ($sha1 -ne $expectedSha1) { throw "NDK SHA1 mismatch: $sha1" }
             if (Test-Path $src) { Remove-Item -Recurse -Force $src }
-            tar.exe -xf $zip -C $toolRoot
+            & tar.exe -xf $zip -C $toolRoot
             if ($LASTEXITCODE -ne 0) { throw 'NDK extraction failed.' }
           }
 
@@ -57,7 +57,7 @@ jobs:
           Write-Host "Persistent NDK ready at $target"
 
       - name: Launch normal APK workflow
-        shell: pwsh
+        shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
