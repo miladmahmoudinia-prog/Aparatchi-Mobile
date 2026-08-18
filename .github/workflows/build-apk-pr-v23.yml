@@ -1,0 +1,114 @@
+name: Build APK v23
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk-v23-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      EXPO_NO_TELEMETRY: "1"
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager -perm -111 2>/dev/null | head -n 1 || true)"
+          fi
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $ANDROID_SDK_ROOT"
+            find "$ANDROID_SDK_ROOT" -maxdepth 4 -name sdkmanager -print 2>/dev/null || true
+            exit 1
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "build-tools;35.0.0" \
+            "ndk;27.1.12297006" \
+            "cmake;3.22.1"
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Type-check application
+        run: npm run typecheck
+
+      - name: Resolve application version
+        id: app_version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create Android project
+        run: npx expo prebuild --platform android
+        env:
+          NODE_ENV: production
+          CI: "1"
+
+      - name: Point Gradle to Android SDK
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+
+      - name: Build release APK
+        working-directory: android
+        shell: bash
+        env:
+          NODE_ENV: production
+        run: |
+          chmod +x gradlew
+          ./gradlew app:assembleRelease --no-daemon
+
+      - name: Prepare APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk Aparatchi-Android-Release.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aparatchi-Android-Release
+          path: Aparatchi-Android-Release.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish APK to GitHub Releases
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          APP_VERSION: ${{ steps.app_version.outputs.version }}
+          RELEASE_TAG: android-latest
+          APK_PATH: Aparatchi-Android-Release.apk
+        run: node scripts/publish-apk-release.mjs
