@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/update-project-state-v24.yml'
+      - 'project-state-v24-trigger.txt'
 
 permissions:
   contents: write
@@ -49,7 +50,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f .github/workflows/update-project-state-v24.yml
+          rm -f .github/workflows/update-project-state-v24.yml project-state-v24-trigger.txt
           git add -A
           git commit -m "docs: record Content sync and Kids v24"
           git push origin HEAD:main
