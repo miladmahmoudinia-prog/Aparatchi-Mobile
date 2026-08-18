@@ -108,6 +108,7 @@ type SearchFilter =
 // This avoids pushing extra router state into the large catalog tree and keeps Back instant.
 let collectionBrowserBackHandler: (() => boolean) | null = null;
 let collectionBrowserSelectedId: string | null = null;
+let collectionBrowserScrollOffset = 0;
 
 const hasPersianScript = (value?: string | null) => /[\u0600-\u06FF]/.test(String(value || ''));
 
@@ -4079,6 +4080,7 @@ const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGr
 function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (item: CatalogItem) => void }) {
   const groups = useMemo(() => collectionGroupsForCatalog(catalog), [catalog]);
   const [selectedCollectionId, setSelectedCollectionIdState] = useState<string | null>(() => collectionBrowserSelectedId);
+  const collectionFoldersRef = useRef<FlatList<any>>(null);
   const { width: screenWidth } = useWindowDimensions();
   const selected = groups.find((group) => group.id === selectedCollectionId) || null;
   const columns = screenWidth >= 720 ? 4 : screenWidth >= 520 ? 3 : 2;
@@ -4089,6 +4091,24 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
     collectionBrowserSelectedId = next;
     setSelectedCollectionIdState(next);
   }, []);
+
+  const rememberCollectionFolderOffset = useCallback((event: any) => {
+    collectionBrowserScrollOffset = Math.max(0, Number(event?.nativeEvent?.contentOffset?.y || 0));
+  }, []);
+
+  useEffect(() => {
+    if (selectedCollectionId) return undefined;
+    const offset = Math.max(0, collectionBrowserScrollOffset);
+    const restore = () => collectionFoldersRef.current?.scrollToOffset({ offset, animated: false });
+    const frame = requestAnimationFrame(restore);
+    const retry = setTimeout(restore, 60);
+    const finalRetry = setTimeout(restore, 180);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(retry);
+      clearTimeout(finalRetry);
+    };
+  }, [selectedCollectionId, groups.length, columns]);
 
   useEffect(() => {
     const handler = () => {
@@ -4150,11 +4170,17 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
 
   return (
     <FlatList
+      ref={collectionFoldersRef}
       key={`collection-folders-${columns}`}
       data={groups}
       numColumns={columns}
       keyExtractor={(group) => group.id}
       style={styles.screen}
+      contentOffset={{ x: 0, y: collectionBrowserScrollOffset }}
+      scrollEventThrottle={16}
+      onScroll={rememberCollectionFolderOffset}
+      onScrollEndDrag={rememberCollectionFolderOffset}
+      onMomentumScrollEnd={rememberCollectionFolderOffset}
       contentContainerStyle={styles.catalogListContent}
       columnWrapperStyle={columns > 1 ? { gap, flexDirection: 'row-reverse' } : undefined}
       ListHeaderComponent={(
