@@ -4,15 +4,15 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8');
 
-test('foreign original media is blocked', () => {
-  assert.ok(source.includes('const unlabeledSources = isIranianItem(item)'));
-  assert.ok(source.includes('const plainFiles = iranian'));
+test('foreign unlabelled media stays available through neutral UI without a fake language edition', () => {
+  assert.ok(source.includes('const unlabeledSources = playbackSourcesForFiles(files.filter((file) => !file.language));'));
+  assert.ok(source.includes('const plainFiles = sortedDownloadFiles(reconciled.filter((file) => !file.language));'));
 });
 
-test('all RTL people/star rails snap to the right edge', () => {
-  assert.ok(source.includes('peopleRailRef.current?.scrollToEnd({ animated: false })'));
-  assert.ok(source.includes('starPeopleRailRef.current?.scrollToEnd({ animated: false })'));
-  assert.ok(source.includes('starWorksRailRef.current?.scrollToEnd({ animated: false })'));
+test('all RTL people/star rails start from the right edge deterministically', () => {
+  const peopleRightEdgeStarts = source.match(/initialScrollIndex=\{displayedPeople\.length - 1\}/g) || [];
+  assert.ok(peopleRightEdgeStarts.length >= 2);
+  assert.ok(source.includes('initialScrollIndex={displayedWorks.length - 1}'));
   assert.ok(!source.includes('contentOffset={{ x: people.length * 100'));
 });
 
@@ -37,8 +37,9 @@ test('category position restores on return', () => {
   assert.ok(source.includes('categoriesScreenScrollOffset = liveCategoriesOffsetRef.current'));
 });
 
-test('home virtualization and operator redirect fixes remain enabled', () => {
+test('home virtualization and trusted operator URL guards remain enabled', () => {
   assert.ok(source.includes('removeClippedSubviews'));
-  assert.ok(source.includes('trustedOperatorNavigationRef.current'));
-  assert.ok(source.includes("startsWith('https://')"));
+  assert.ok(source.includes('const isTrustedOperatorHostUrl = (url?: string) => {'));
+  assert.ok(source.includes("parsed.protocol === 'https:'"));
+  assert.ok(source.includes('const isOperatorPortalUrl = (url?: string) => {'));
 });
