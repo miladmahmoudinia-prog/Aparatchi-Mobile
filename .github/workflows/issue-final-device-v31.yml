@@ -1,19 +1,19 @@
-name: RUN FINAL DEVICE V31
+name: Final Device Batch v31
 
 on:
-  issues:
-    types: [opened]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 concurrency:
-  group: final-device-v31-validation
+  group: final-device-v31-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   validate:
-    if: github.event.issue.title == 'RUN FINAL DEVICE V31 DIAG'
+    if: github.event.pull_request.head.ref == 'fix-final-device-batch-v31'
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
@@ -23,38 +23,40 @@ jobs:
           ref: fix-final-device-batch-v31
           fetch-depth: 0
 
+      - id: pending
+        name: Check whether patch is still pending
+        shell: bash
+        run: |
+          if [ -f scripts/fix-final-device-batch-v31.mjs ]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup Node.js
+        if: steps.pending.outputs.value == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: 22
 
-      - id: patch
-        name: Apply scoped mobile repair
-        continue-on-error: true
+      - name: Apply scoped mobile repair
+        if: steps.pending.outputs.value == 'true'
         run: node scripts/fix-final-device-batch-v31.mjs
 
-      - id: install
-        name: Install dependencies
-        if: steps.patch.outcome == 'success'
-        continue-on-error: true
+      - name: Install dependencies
+        if: steps.pending.outputs.value == 'true'
         run: npm ci --include=dev
 
-      - id: typecheck
-        name: TypeScript check
-        if: steps.patch.outcome == 'success' && steps.install.outcome == 'success'
-        continue-on-error: true
+      - name: TypeScript check
+        if: steps.pending.outputs.value == 'true'
         run: npm run typecheck
 
-      - id: tests
-        name: Regression tests
-        if: steps.patch.outcome == 'success' && steps.install.outcome == 'success'
-        continue-on-error: true
+      - name: Regression tests
+        if: steps.pending.outputs.value == 'true'
         run: node --test scripts/tests/*.test.mjs
 
-      - id: audit
-        name: Static audit
-        if: steps.patch.outcome == 'success'
-        continue-on-error: true
+      - name: Static audit
+        if: steps.pending.outputs.value == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -62,26 +64,19 @@ jobs:
           ! grep -F "duration - 120" App.tsx
           grep -F "onOpenRelated={openRelatedDetail}" App.tsx
           grep -F "pressRetentionOffset={{ top: 24, right: 24, bottom: 24, left: 24 }}" App.tsx
+          grep -F "styles.movieEndRecommendations," App.tsx
+          grep -F "frameRect," App.tsx
           grep -F "for (const item of usableCatalog)" App.tsx
           grep -F "installStartupContentGate" index.ts
           test ! -e src/collectionFlatListGuard.tsx
 
-      - name: Persist success or diagnostic status
-        if: always()
+      - name: Commit validated repair
+        if: steps.pending.outputs.value == 'true'
         shell: bash
-        env:
-          PATCH_OUTCOME: ${{ steps.patch.outcome }}
-          INSTALL_OUTCOME: ${{ steps.install.outcome }}
-          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
-          TESTS_OUTCOME: ${{ steps.tests.outcome }}
-          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          printf 'patch=%s\ninstall=%s\ntypecheck=%s\ntests=%s\naudit=%s\n' "$PATCH_OUTCOME" "$INSTALL_OUTCOME" "$TYPECHECK_OUTCOME" "$TESTS_OUTCOME" "$AUDIT_OUTCOME" > validation-v31.txt
-          if [ "$PATCH_OUTCOME" = success ] && [ "$INSTALL_OUTCOME" = success ] && [ "$TYPECHECK_OUTCOME" = success ] && [ "$TESTS_OUTCOME" = success ] && [ "$AUDIT_OUTCOME" = success ]; then
-            rm -f scripts/fix-final-device-batch-v31.mjs validation-v31.txt
+          rm -f scripts/fix-final-device-batch-v31.mjs
+          if ! grep -Fq "# milestone Final device interaction batch v31" PROJECT-STATE.md; then
             cat >> PROJECT-STATE.md <<'EOF'
 
 # milestone Final device interaction batch v31 — 2026-08-19
@@ -92,13 +87,11 @@ jobs:
 - Poster cards prefer compact latestEpisode metadata before expensive episode scanning and use a larger press-retention target; Home/category scroll tuning was intentionally not changed.
 - Category artwork keeps the fast 1200-item first pass and only scans the full catalog for filters still missing a cover.
 - Existing exact-pixel collection Back restore and startup content gate were preserved.
-- Validation: TypeScript + all Mobile regression tests green. Physical-device feel still requires the next APK/device check.
+- Validation: npm ci, TypeScript and all Mobile regression tests green in Final Device Batch v31 PR run. Physical-device feel still requires the next APK/device check.
 EOF
-            git add App.tsx PROJECT-STATE.md scripts/tests/final-device-batch-v31.test.mjs scripts/fix-final-device-batch-v31.mjs
-            git commit -m "fix: polish player end cards and poster interaction"
-          else
-            git restore App.tsx 2>/dev/null || true
-            git add validation-v31.txt
-            git commit -m "chore: record final device validation status"
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx PROJECT-STATE.md scripts/tests/final-device-batch-v31.test.mjs scripts/fix-final-device-batch-v31.mjs
+          git commit -m "fix: polish player end cards and poster interaction"
           git push origin HEAD:fix-final-device-batch-v31
