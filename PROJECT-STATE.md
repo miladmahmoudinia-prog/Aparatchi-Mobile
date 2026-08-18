@@ -51,9 +51,9 @@
 - verified `Twisted Metal` display title is `فلز درهم‌تنیده`; no generic guessed Persian-title generator was added.
 - all 3539 media-equipped client movies have immediate lightweight bootstrap media (previously 112); bootstrap 4,803,827 bytes vs client index 12,044,656 bytes.
 - media diagnostics: source/detail/summary URL loss = 0, dubbed loss = 0, source/client/bootstrap dubbed truth = 1415.
-- default ordering remains real add/update freshness, not production year; new episode meaningful updates sort series to the front.
-- episode frame generation probes duration and seeks around the 50% midpoint; UI accepts only exact generated episode artwork, not repeated series poster/backdrop.
-- pre-fix audit had 2970 episode groups and 2970 missing generated artworks because hourly Sync was blocked by stale tests. Live Sync run `31936854471` passed the regression gate and entered real discovery. Historical artwork is backfilled by the bounded hourly artwork lane; do not mark all historical frames complete until a later audit confirms it.
+- default ordering remains real add/update freshness, not production year؛ new episode meaningful updates sort series to the front.
+- episode frame generation probes duration and seeks around the 50% midpoint؛ UI accepts only exact generated episode artwork, not repeated series poster/backdrop.
+- pre-fix audit had 2970 episode groups and 2970 missing generated artworks because hourly Sync was blocked by stale tests. Live Sync run `31936854471` passed the regression gate and entered real discovery. Historical artwork is backfilled by the bounded hourly artwork lane؛ do not mark all historical frames complete until a later audit confirms it.
 - APK was not built.
 
 ---
@@ -357,3 +357,13 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 6. اگر کاربر چند ایراد می‌فرستد فقط جمع شود تا «تموم شد/اصلاح کن».
 7. هیچ موردی تا سبزشدن تست مرتبط «حل‌شده» اعلام نشود.
 8. APK فقط با دستور صریح کاربر.
+
+---
+
+# milestone Final reported batch v22 — 2026-08-18
+- Functional Mobile HEAD `84d2e3572e6a7e3bd1e7e73829575087f228aab5` با runner سالم Content روی source خام و source واقعیِ materialized توسط Metro بررسی شد؛ `rawTypecheck=success`, `patchedTypecheck=success`, `regressions=success`, `requestedBehaviorAudit=success`.
+- اصلاحات عنوان/کالکشن، بازگشت دقیق scroll کالکشن، badgeهای واقعی «ویژه همراه/دوبله/زیرنویس» در Related و بهینه‌سازی scroll عمودی Home در deterministic Metro patch فعال‌اند؛ startup gate نیز قبل از App نصب می‌شود.
+- تست‌های قدیمی که implementation منسوخ را انتظار داشتند با رفتار جدیدتر و از قبل تأییدشدهٔ neutral foreign media، RTL `initialScrollIndex` و trusted operator URL guard همگام شدند؛ منطق سالم اپ برای پاس کردن تست عقب‌گرد نکرد.
+- Content commit `fcbe103e7764953d9749b8e7a4ec011fbca36821` برای bootstrap هر عنوان حداکثر ۴ عامل/بازیگر اولیه حمل می‌کند تا بخش عوامل در اولین باز شدن منتظر detail shard نماند؛ detail کامل همچنان مرجع نهایی است.
+- workflow/scriptهای موقت قرمز v19/v20/v21/v22 از Mobile حذف شدند؛ workflowهای دائمی `android-apk.yml`, `delete-all-artifacts.yml`, `validate-mobile.yml` باقی ماندند.
+- APK ساخته نشد؛ رفتار واقعی روی دستگاه فقط بعد از build بعدی قابل تأیید است.
