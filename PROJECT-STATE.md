@@ -367,3 +367,13 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 - Content commit `fcbe103e7764953d9749b8e7a4ec011fbca36821` برای bootstrap هر عنوان حداکثر ۴ عامل/بازیگر اولیه حمل می‌کند تا بخش عوامل در اولین باز شدن منتظر detail shard نماند؛ detail کامل همچنان مرجع نهایی است.
 - workflow/scriptهای موقت قرمز v19/v20/v21/v22 از Mobile حذف شدند؛ workflowهای دائمی `android-apk.yml`, `delete-all-artifacts.yml`, `validate-mobile.yml` باقی ماندند.
 - APK ساخته نشد؛ رفتار واقعی روی دستگاه فقط بعد از build بعدی قابل تأیید است.
+
+---
+
+# milestone APK build v23 — 2026-08-18
+- کاربر صریحاً درخواست Build APK داد.
+- Build اول run `32133627396` در `:app:createBundleReleaseJsAndAssets` به‌خاطر resolver قدیمی `@expo/metro-config/babel-transformer` شکست خورد؛ TypeScript و prebuild قبل از آن سبز بودند و APK منتشر نشد.
+- Mobile commit `260cf6ae29eff4b88562ec60ffddd080c8e3056d` resolver Transformer را با Expo 57 سازگار کرد تا `@expo/metro-config` از package نصب‌شدهٔ خود Expo resolve شود؛ منطق UI/داده دستکاری نشد.
+- Build نهایی run `32134267841` با app version `0.15.9` کاملاً success شد: TypeScript، Expo prebuild، Gradle `assembleRelease`، آماده‌سازی APK، Upload Artifact و Publish GitHub Release همگی success.
+- Artifact `Aparatchi-Android-Release` با id `9323508208` و size `41841685` bytes ثبت شد؛ digest برابر `sha256:19593054d25ac344bb4e4cb55f88dafae47883574aea69d2526b020a74490879` است.
+- Release tag همان `android-latest` و فایل منتشرشده `Aparatchi-Android-Release.apk` است.
