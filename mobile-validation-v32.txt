@@ -1,5 +1,0 @@
-patch=failure
-install=skipped
-typecheck=skipped
-tests=skipped
-audit=skipped
