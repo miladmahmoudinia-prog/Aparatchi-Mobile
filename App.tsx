@@ -986,12 +986,28 @@ const latestEpisodeTimestamp = (item: CatalogItem) => {
 };
 
 const catalogItemTimestamp = (item: CatalogItem) => {
-  // Metadata enrichment must not pin an old title at the front. Movies are
-  // ordered by when Aparatchi/source actually discovered them; series may move
-  // forward only for a meaningful episode/content update.
+  // Repair historical false "updates": an old archive gap may have been filled
+  // today even though the episode itself was published months ago. Only trust a
+  // meaningful timestamp when the label is a real episode addition and the
+  // newest upstream episode timestamp is contemporaneous with Aparatchi's first
+  // discovery. Metadata/TMDB/sync timestamps never participate in ordering.
+  const firstSeenTimestamp = Date.parse(item.firstSeenAt || '') || 0;
+  const newestEpisodeSourceTimestamp = (item.downloads || []).reduce((latest, group) => {
+    if (!(Number(group.episodeNumber || 0) > 0)) return latest;
+    const timestamp = Date.parse(group.sourceUpdatedAt || '') || 0;
+    return Math.max(latest, timestamp);
+  }, 0);
+  const meaningfulTimestamp = Date.parse(item.meaningfulUpdatedAt || '') || 0;
+  const hasRealEpisodeLabel = /^قسمت\s+.+\s+اضافه\s+شد$/u.test(String(item.updateLabel || '').trim());
+  const credibleSeriesUpdate = Boolean(
+    item.type === 'series' &&
+    meaningfulTimestamp > 0 &&
+    hasRealEpisodeLabel &&
+    (firstSeenTimestamp <= 0 || newestEpisodeSourceTimestamp <= 0 || newestEpisodeSourceTimestamp >= firstSeenTimestamp - 6 * 60 * 60 * 1000)
+  );
   const value = item.type === 'series'
-    ? (item.meaningfulUpdatedAt || item.sourceCreatedAt || item.createdAt || '')
-    : (item.sourceCreatedAt || item.createdAt || '');
+    ? (credibleSeriesUpdate ? item.meaningfulUpdatedAt : '') || item.firstSeenAt || item.sourceCreatedAt || item.createdAt || ''
+    : item.firstSeenAt || item.sourceCreatedAt || item.createdAt || '';
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : 0;
 };
@@ -1016,8 +1032,11 @@ const hasSpecificCountry = (item: CatalogItem, code: string, originalLanguage: s
   const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
   const language = String(item.originalLanguage || '').toLowerCase();
   const primaryCountry = countryCodes[0] || '';
-  if (primaryCountry) return primaryCountry === code;
-  return language === originalLanguage;
+  // Co-production credits are not a nationality shelf. When TMDB provides an
+  // original language, it is the strongest identity signal; primary country is
+  // only the fallback for old rows with no language metadata.
+  if (language) return language === originalLanguage;
+  return primaryCountry === code;
 };
 
 const isKoreanItem = (item: CatalogItem) =>
@@ -1367,11 +1386,11 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'iranian-movies': return item.type === 'movie' && isIranianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
     case 'foreign-movies': return item.type === 'movie' && !isIranianItem(item) && !isKoreanItem(item) && !isIndianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item);
     case 'iranian-series': return item.type === 'series' && isIranianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
-    case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isKoreanItem(item) && !isIndianItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
+    case 'foreign-series': return item.type === 'series' && !isIranianItem(item) && !isKoreanItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
     case 'korean-movies': return item.type === 'movie' && isKoreanItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item);
     case 'korean-series': return item.type === 'series' && isKoreanItem(item) && !isAnimatedItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item) && !isDocumentaryItem(item);
     case 'indian-movies': return item.type === 'movie' && isIndianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item);
-    case 'indian-series': return item.type === 'series' && isIndianItem(item) && !isAnimatedItem(item) && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item);
+    case 'indian-series': return false;
     case 'anime-movies': return item.type === 'movie' && isAnimeItem(item);
     case 'anime-series': return item.type === 'series' && isAnimeItem(item);
     case 'animation-movies': return item.type === 'movie' && isAnimationItem(item);
@@ -1405,13 +1424,13 @@ let categoriesScreenScrollOffset = 0;
 const detailScrollOffsets = new Map<string, number>();
 const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
-  'korean-movies', 'korean-series', 'indian-movies', 'indian-series',
+  'korean-movies', 'korean-series', 'indian-movies',
   'anime-movies', 'anime-series', 'animation-movies', 'animation-series',
   'programs', 'kids', 'religious', 'documentaries', 'wildlife',
 ]);
 const STRICT_DYNAMIC_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
-  'korean-movies', 'korean-series', 'indian-movies', 'indian-series',
+  'korean-movies', 'korean-series', 'indian-movies',
   'anime-movies', 'anime-series', 'animation-movies', 'animation-series',
   'programs', 'kids', 'religious', 'documentaries', 'wildlife', 'collections',
 ]);
@@ -1655,6 +1674,7 @@ const PersonAvatar = memo(function PersonAvatar({ person, style }: { person: Cat
 const CatalogArtwork = memo(function CatalogArtwork({
   primary,
   fallback,
+  preview,
   localFallback,
   style,
   contentFit = 'cover',
@@ -1663,6 +1683,8 @@ const CatalogArtwork = memo(function CatalogArtwork({
 }: {
   primary?: string;
   fallback?: string;
+  /** Fast lower layer shown while the preferred remote artwork is decoding. */
+  preview?: string;
   localFallback?: any;
   style: any;
   contentFit?: 'cover' | 'contain';
@@ -1699,6 +1721,17 @@ const CatalogArtwork = memo(function CatalogArtwork({
           <Ionicons name="image-outline" color="rgba(216,180,90,0.58)" size={25} />
         </View>
       )}
+
+      {preview && isSafeHttpUrl(preview) ? (
+        <Image
+          source={{ uri: optimizedImageUrl(preview, imageKind) || preview }}
+          style={StyleSheet.absoluteFill}
+          contentFit={contentFit}
+          cachePolicy="memory-disk"
+          transition={0}
+          recyclingKey={`preview:${preview}`}
+        />
+      ) : null}
 
       {remoteUrl ? (
         <Image
@@ -1856,9 +1889,11 @@ function HeroSlide({
                 </Text>
               ))}
             </View>
-            <Text numberOfLines={2} style={styles.heroOverview}>
-              {item.overview}
-            </Text>
+            {catalogOverviewFor(item) ? (
+              <Text numberOfLines={2} style={styles.heroOverview}>
+                {catalogOverviewFor(item)}
+              </Text>
+            ) : null}
           </View>
         </View>
         <Pressable onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
@@ -3223,7 +3258,6 @@ const HOME_CATALOG_ROWS: Array<Omit<HomeCatalogRow, 'items'>> = [
   { filter: 'korean-movies', title: 'فیلم‌های کره‌ای' },
   { filter: 'korean-series', title: 'سریال‌های کره‌ای' },
   { filter: 'indian-movies', title: 'فیلم‌های هندی' },
-  { filter: 'indian-series', title: 'سریال‌های هندی' },
   { filter: 'anime-movies', title: 'انیمه‌های سینمایی' },
   { filter: 'anime-series', title: 'انیمه‌های سریالی' },
   { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی' },
@@ -3269,11 +3303,7 @@ const buildHomeCatalogRows = (catalog: CatalogItem[]): HomeCatalogRow[] => {
   }
 
   updatedCandidates
-    .sort((a, b) => {
-      const aTime = Date.parse(a.meaningfulUpdatedAt || a.updatedAt || '') || 0;
-      const bTime = Date.parse(b.meaningfulUpdatedAt || b.updatedAt || '') || 0;
-      return bTime - aTime;
-    })
+    .sort((a, b) => catalogItemTimestamp(b) - catalogItemTimestamp(a))
     .slice(0, 10)
     .forEach((item) => buckets.get('updated')!.push(item));
 
@@ -3318,6 +3348,7 @@ const HomeScreen = memo(function HomeScreen({
   onMenu,
   initialScrollOffset,
   onScrollOffset,
+  scrollToTopSignal,
   isActive,
   contentResolved,
   contentOffline,
@@ -3331,6 +3362,7 @@ const HomeScreen = memo(function HomeScreen({
   onMenu: () => void;
   initialScrollOffset: number;
   onScrollOffset: (offset: number) => void;
+  scrollToTopSignal: number;
   isActive: boolean;
   contentResolved: boolean;
   contentOffline: boolean;
@@ -3356,6 +3388,12 @@ const HomeScreen = memo(function HomeScreen({
       requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: initialScrollOffset, animated: false }));
     }
   }, []);
+
+  useEffect(() => {
+    if (!scrollToTopSignal) return;
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    onScrollOffset(0);
+  }, [onScrollOffset, scrollToTopSignal]);
 
   const homeHeader = useMemo(() => (
     <>
@@ -3472,7 +3510,6 @@ const CATEGORY_CARDS: CategoryCardConfig[] = [
   { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', subtitle: 'سینمای کره جنوبی', icon: 'location-outline' },
   { filter: 'korean-series', title: 'سریال‌های کره‌ای', subtitle: 'مجموعه‌های کره جنوبی', icon: 'tv-outline' },
   { filter: 'indian-movies', title: 'فیلم‌های هندی', subtitle: 'سینمای هند', icon: 'location-outline' },
-  { filter: 'indian-series', title: 'سریال‌های هندی', subtitle: 'مجموعه‌های هند', icon: 'tv-outline' },
   { filter: 'collections', title: 'کالکشن‌ها', subtitle: 'قسمت‌های یک مجموعه', icon: 'layers-outline' },
   { filter: 'kids', title: 'کودکان', subtitle: 'برنامه‌ها و آثار مخصوص کودکان', icon: 'happy-outline' },
   { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها', subtitle: 'مسابقه، رئالیتی و گفت‌وگو', icon: 'mic-outline' },
@@ -3522,7 +3559,6 @@ const relatedCategoryFilters = (filter: SearchFilter): SearchFilter[] => {
     'korean-movies': ['korean-series', 'foreign-movies'],
     'korean-series': ['korean-movies', 'foreign-series'],
     'indian-movies': ['movie'],
-    'indian-series': ['series'],
     collections: ['movie', 'series'],
     documentaries: ['movie', 'series'],
     wildlife: ['documentaries', 'movie'],
@@ -5722,7 +5758,7 @@ function DetailModal({
           onMomentumScrollEnd={(event) => detailScrollOffsets.set(String(item.id), Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
         >
           <View style={styles.detailHero}>
-            <CatalogArtwork primary={item.backdrop} fallback={item.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="backdrop" />
+            <CatalogArtwork primary={item.backdrop} fallback={item.poster} preview={item.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="backdrop" />
             <LinearGradient colors={['rgba(7,9,12,0.06)', COLORS.background]} style={StyleSheet.absoluteFill} />
             <View style={styles.detailTopBar}>
               <Pressable onPress={onClose} unstable_pressDelay={0} hitSlop={14} style={styles.detailCircleButton}><Ionicons name="arrow-forward" color="#fff" size={21} /></Pressable>
@@ -7253,7 +7289,6 @@ const BottomNavigation = memo(function BottomNavigation({ active, onChange }: { 
         return (
           <Pressable
             key={tab.id}
-            disabled={selected}
             onPressIn={() => onChange(tab.id)}
             unstable_pressDelay={0}
             hitSlop={14}
@@ -7395,7 +7430,7 @@ function AppContent() {
   const [contentLoading, setContentLoading] = useState(false);
   const [contentOffline, setContentOffline] = useState(false);
   const [startupVisible, setStartupVisible] = useState(true);
-  const [foregroundRefreshVisible, setForegroundRefreshVisible] = useState(false);
+  const [homeScrollTopSignal, setHomeScrollTopSignal] = useState(0);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
   const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
@@ -7501,12 +7536,12 @@ function AppContent() {
     setStartupVisible(false);
   }, []);
 
-  const reloadContent = async (force = true) => {
+  const reloadContent = async (force = true, options: { silent?: boolean } = {}) => {
     if (!force && Date.now() - lastContentLoadRef.current < 2 * 60 * 1000) return;
     const online = await internetIsReachable();
     setContentOffline(!online);
     const initialLoad = lastContentLoadRef.current === 0;
-    const showRefreshIndicator = force && !initialLoad;
+    const showRefreshIndicator = force && !initialLoad && !options.silent;
     const hadVisibleCatalog = contentRef.current.items.length > 0;
 
     if (showRefreshIndicator) setContentLoading(true);
@@ -7570,7 +7605,15 @@ function AppContent() {
 
       const mergedContent: LoadedContent = {
         ...visibleContent,
-        items: currentContent.items,
+        // Preserve the already-mounted order/identity while enriching every row
+        // with the complete index fields (people preview, backdrop, overview,
+        // firstSeenAt…). This avoids a rail rebuild without freezing summaries.
+        items: currentContent.items.map((currentItem, index) => {
+          const incomingItem = visibleContent.items[index];
+          return incomingItem && incomingItem.id === currentItem.id && incomingItem.type === currentItem.type
+            ? { ...currentItem, ...incomingItem }
+            : currentItem;
+        }),
       };
       contentRevisionRef.current = loadedContentRevision(nextContent);
       contentRef.current = mergedContent;
@@ -7797,10 +7840,9 @@ function AppContent() {
           Date.now() - backgroundedAt >= 2500
         );
         if (returningFromBackground) {
-          // Keep stale Home behind the same lightweight cover until the current
-          // bootstrap has been applied. The large index continues in background.
-          setForegroundRefreshVisible(true);
-          void reloadContent(true).finally(() => setForegroundRefreshVisible(false));
+          // Returning from Recent Apps must preserve the exact tab/detail/scroll
+          // state. Refresh truth silently; only a true cold start owns Splash.
+          void reloadContent(true, { silent: true });
         } else {
           reloadContentWhenIdle();
         }
@@ -8287,6 +8329,10 @@ function AppContent() {
   }, [categoriesMounted, content.items.length, startupVisible]);
 
   const handleBottomTabChange = useCallback((tab: MainTab) => {
+    if (tab === activeTabRef.current) {
+      if (tab === 'home') setHomeScrollTopSignal((value) => value + 1);
+      return;
+    }
     setSelectedItem(null);
     setSelectedPerson(null);
     setMenuOpen(false);
@@ -8792,6 +8838,7 @@ function AppContent() {
             onMenu={openMainMenu}
             initialScrollOffset={homeScrollOffsetRef.current}
             onScrollOffset={rememberHomeScrollOffset}
+            scrollToTopSignal={homeScrollTopSignal}
             isActive={activeTab === 'home'}
             contentResolved={contentResolved}
             contentOffline={contentOffline}
@@ -8948,7 +8995,7 @@ function AppContent() {
           onClose={() => setOperatorWebRequest(null)}
         />
       ) : null}
-      {startupVisible || foregroundRefreshVisible ? <StartupScreen /> : null}
+      {startupVisible ? <StartupScreen /> : null}
     </View>
   );
 }
@@ -9177,13 +9224,13 @@ const styles = StyleSheet.create({
   contentStatusTextWrap: { flex: 1, alignItems: 'flex-end', marginLeft: 10 },
   contentStatusTitle: { ...rtlText, color: COLORS.text, fontSize: 10, fontWeight: '900' },
   contentStatusMeta: { ...rtlText, color: COLORS.muted, fontSize: 8, marginTop: 4 },
-  heroSlider: { height: 448, position: 'relative', overflow: 'hidden', backgroundColor: COLORS.surface },
+  heroSlider: { height: 420, position: 'relative', overflow: 'hidden', backgroundColor: COLORS.surface },
   heroSlide: { flex: 1 },
   hero: { flex: 1, overflow: 'hidden', justifyContent: 'flex-end' },
   heroDots: { position: 'absolute', bottom: 13, left: 0, right: 0, zIndex: 5, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   heroDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.34)' },
   heroDotActive: { width: 23, backgroundColor: COLORS.red },
-  heroContent: { paddingHorizontal: 20, paddingBottom: 34, alignItems: 'stretch' },
+  heroContent: { paddingHorizontal: 20, paddingBottom: 30, alignItems: 'stretch' },
   heroIdentityRow: { flexDirection: 'row-reverse', alignItems: 'flex-end', gap: 13 },
   heroPoster: { width: 105, height: 150, borderRadius: 14, overflow: 'hidden', flexShrink: 0, borderWidth: 1, borderColor: 'rgba(255,255,255,0.20)', backgroundColor: COLORS.surfaceStrong },
   heroTextBlock: { flex: 1, minWidth: 0, alignItems: 'flex-end' },

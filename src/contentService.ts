@@ -61,6 +61,8 @@ type RemoteCatalogManifest = {
   catalogUpdatedAt?: string;
   sizeBytes?: number;
   clientSizeBytes?: number;
+  bootstrapRevision?: string;
+  bootstrapSizeBytes?: number;
   clientIndex?: string;
   detailBase?: string;
 };
@@ -957,7 +959,9 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
       isAnime: asBoolean(item.isAnime),
       isTalkShow: asBoolean(item.isTalkShow),
       isDocumentary: asBoolean(item.isDocumentary),
-      ...(asString(item.createdAt) ? { createdAt: asString(item.createdAt) } : {}),
+      ...(asString(item.firstSeenAt) ? { firstSeenAt: asString(item.firstSeenAt) } : {}),
+      ...(asString(item.firstSeenAt) ? { firstSeenAt: asString(item.firstSeenAt) } : {}),
+    ...(asString(item.createdAt) ? { createdAt: asString(item.createdAt) } : {}),
       ...(asString(item.updatedAt) ? { updatedAt: asString(item.updatedAt) } : {}),
       ...(asString(item.sourceCreatedAt) ? { sourceCreatedAt: asString(item.sourceCreatedAt) } : {}),
       ...(asString(item.sourceUpdatedAt) ? { sourceUpdatedAt: asString(item.sourceUpdatedAt) } : {}),
@@ -1160,6 +1164,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     isAnime: asBoolean(item.isAnime),
     isTalkShow: asBoolean(item.isTalkShow),
     isDocumentary: asBoolean(item.isDocumentary),
+    ...(asString(item.firstSeenAt) ? { firstSeenAt: asString(item.firstSeenAt) } : {}),
     ...(asString(item.createdAt) ? { createdAt: asString(item.createdAt) } : {}),
     ...(asString(item.updatedAt) ? { updatedAt: asString(item.updatedAt) } : {}),
     ...(asString(item.sourceCreatedAt) ? { sourceCreatedAt: asString(item.sourceCreatedAt) } : {}),
@@ -1514,35 +1519,54 @@ export const getBundledContent = (): LoadedContent => ({
 });
 
 /**
- * Fetch the tiny Home bootstrap before the multi-megabyte catalog index on a
- * true cold start. CDN and GitHub Raw race each other so one blocked mirror can
- * never hold the first useful Home frame for a full request timeout.
+ * Fetch the current Home/navigation bootstrap before the large index. Startup
+ * first resolves the tiny manifest and only accepts a bootstrap whose catalog
+ * timestamp matches it. This prevents a CDN/Raw race from painting a valid but
+ * older Home for several seconds.
  */
 export async function loadBootstrapContent(): Promise<LoadedContent | null> {
   const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();
   if (!remoteUrl) return null;
+
+  let manifest: RemoteCatalogManifest | null = null;
+  try {
+    manifest = await fetchRemoteManifest();
+  } catch {
+    // Both public manifest mirrors can be unavailable; bootstrap still remains
+    // a better emergency source than the bundled catalog in that case.
+  }
+
   const candidates = [...remoteRepositoryUrlCandidates(remoteUrl)].sort((a, b) =>
     Number(/raw\.githubusercontent\.com/i.test(b)) - Number(/raw\.githubusercontent\.com/i.test(a))
   );
-  if (!candidates.length) return null;
+  const revisionToken = manifest?.bootstrapRevision || manifest?.clientRevision || manifest?.revision || String(Date.now());
 
-  // Bootstrap decides what the user sees when the five-second cover disappears.
-  // Prefer GitHub Raw source truth and use CDN only as bounded failover; racing
-  // mirrors allowed an older jsDelivr object to win even while Raw was current.
   for (const candidate of candidates) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3200);
+    const timeout = setTimeout(() => controller.abort(), 3600);
     const separator = candidate.includes('?') ? '&' : '?';
     try {
-      const response = await fetch(candidate + separator + '_aparatchi_bootstrap=' + Date.now(), {
-        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
-        signal: controller.signal,
-      });
+      const response = await fetch(
+        candidate + separator + '_aparatchi_bootstrap=' + encodeURIComponent(revisionToken) + '&t=' + Date.now(),
+        {
+          headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+          signal: controller.signal,
+        },
+      );
       if (!response.ok) continue;
       const parsed = parsePayload(JSON.parse(await response.text()));
-      if (parsed?.items.length) return { ...parsed, source: 'remote' };
+      if (!parsed?.items.length) continue;
+      if (
+        manifest?.catalogUpdatedAt &&
+        asString(parsed.updatedAt) !== asString(manifest.catalogUpdatedAt)
+      ) {
+        // This mirror is serving the previous generated artifact. Never reveal
+        // it just because its JSON is otherwise valid; try the next mirror.
+        continue;
+      }
+      return { ...parsed, source: 'remote' };
     } catch {
-      // Try the next mirror.
+      // Try another repository mirror.
     } finally {
       clearTimeout(timeout);
     }
@@ -1606,9 +1630,11 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
   );
   for (const candidate of manifestCandidates) {
     const separator = candidate.includes('?') ? '&' : '?';
-    const requestUrl = `${candidate}${separator}_aparatchi_manifest=${Math.floor(Date.now() / 300_000)}`;
+    const requestUrl = `${candidate}${separator}_aparatchi_manifest=${Date.now()}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1800);
+    // Manifest is tiny; allow Raw a bounded extra moment so startup can bind
+    // itself to source truth instead of a several-minutes-stale mirror entry.
+    const timeout = setTimeout(() => controller.abort(), 2800);
     try {
       const response = await fetch(requestUrl, {
         headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
@@ -1643,6 +1669,12 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
         ...(asNumber(record.sizeBytes, 0) > 0 ? { sizeBytes: asNumber(record.sizeBytes, 0) } : {}),
         ...(asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) > 0
           ? { clientSizeBytes: asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) }
+          : {}),
+        ...(asString(record.bootstrapRevision ?? record.bootstrap_revision)
+          ? { bootstrapRevision: asString(record.bootstrapRevision ?? record.bootstrap_revision) }
+          : {}),
+        ...(asNumber(record.bootstrapSizeBytes ?? record.bootstrap_size_bytes, 0) > 0
+          ? { bootstrapSizeBytes: asNumber(record.bootstrapSizeBytes ?? record.bootstrap_size_bytes, 0) }
           : {}),
         ...(asString(record.clientIndex ?? record.client_index)
           ? { clientIndex: asString(record.clientIndex ?? record.client_index) }
