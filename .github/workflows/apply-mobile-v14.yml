@@ -31,6 +31,17 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Expose mobile v16 run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "aparatchi-mobile-bot"
+          git config user.email "actions@users.noreply.github.com"
+          printf 'run_id=%s\nhead_sha=%s\nstarted_at=%s\n' "${{ github.run_id }}" "${{ github.sha }}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > mobile-v16-run.txt
+          git add mobile-v16-run.txt
+          git commit -m 'chore: expose mobile v16 run id [skip ci]'
+          git push origin HEAD:main
+
       - name: Apply and statically verify reported fixes
         shell: bash
         run: |
