@@ -1,0 +1,56 @@
+name: Validate Collection Scroll v29
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@v6
+        with:
+          ref: fix-collection-scroll-v29
+          fetch-depth: 2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply exact collection scroll restore
+        run: node scripts/fix-collection-scroll-v29.mjs
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run Mobile regression tests
+        run: node --test scripts/tests/*.test.mjs
+
+      - name: Preserve startup gate
+        run: |
+          grep -q "installStartupContentGate" index.ts
+          grep -q "installStartupContentGate();" index.ts
+
+      - name: Remove one-shot files and commit validated repair
+        run: |
+          rm -f scripts/fix-collection-scroll-v29.mjs
+          rm -f .github/workflows/collection-scroll-v29.yml
+          git config user.name "miladmahmoudinia-prog"
+          git config user.email "milad.mahmoudinia@gmail.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "fix: restore exact collection scroll on back"
+            git push origin HEAD:fix-collection-scroll-v29
+          fi
