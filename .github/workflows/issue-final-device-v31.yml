@@ -1,10 +1,9 @@
 name: Final Device Batch v31
 
 on:
-  push:
-    branches: [fix-final-device-batch-v31]
-  pull_request:
+  pull_request_target:
     branches: [main]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -15,7 +14,7 @@ concurrency:
 
 jobs:
   validate:
-    if: github.ref == 'refs/heads/fix-final-device-batch-v31' || github.event.pull_request.head.ref == 'fix-final-device-batch-v31'
+    if: github.event.pull_request.head.ref == 'fix-final-device-batch-v31'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -24,6 +23,11 @@ jobs:
         with:
           ref: fix-final-device-batch-v31
           fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
 
       - id: patch
         name: Apply scoped mobile repair
