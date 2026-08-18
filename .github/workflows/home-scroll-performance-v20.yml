@@ -1,0 +1,77 @@
+name: Home scroll performance v20
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-home-scroll-v20
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.event.issue.title == 'RUN HOME SCROLL V20'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout latest Mobile main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 80
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Apply Home scroll repair
+        run: node scripts/fix-home-scroll-performance-v20.mjs
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Run existing Mobile regressions
+        run: node --test scripts/tests/*.test.mjs
+
+      - name: Audit scroll hot paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F "? (item.latestEpisode || newestEpisodeGroup(item))" App.tsx
+          grep -F "populatedRows.slice(0, 3)" App.tsx
+          grep -F "populatedRows.slice(3)" App.tsx
+          grep -F "initialNumToRender={3}" App.tsx
+          grep -F "updateCellsBatchingPeriod={64}" App.tsx
+          grep -F "removeClippedSubviews" App.tsx
+          ! grep -A12 -F "style={styles.homeScroll}" App.tsx | grep -F "removeClippedSubviews={false}"
+
+      - name: Commit verified Home performance repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          cat >> PROJECT-STATE.md <<'EOF'
+
+# milestone Home scroll performance v20 — 2026-08-18
+- Device report: Home vertical scrolling was slow, jumpy, and resisted fast flings.
+- Poster cards now use precomputed latestEpisode before falling back to sorting full episode downloads.
+- Home keeps only three eager catalog shelves inside the large header; later shelves stay virtualized.
+- Home vertical and horizontal lists use smaller render batches/windows and native clipping instead of accumulating off-screen poster/image views.
+- Stars rails also clip off-screen avatars/work posters and mount smaller batches.
+- UI/content ordering was not changed. TypeScript and existing Mobile regression tests were required to pass. No APK was built.
+EOF
+
+          git rm -f scripts/fix-home-scroll-performance-v20.mjs .github/workflows/home-scroll-performance-v20.yml
+          git add App.tsx PROJECT-STATE.md
+          git commit -m "perf: smooth Home vertical scrolling"
+          git pull --rebase origin main
+          git push origin HEAD:main
