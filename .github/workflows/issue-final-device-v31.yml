@@ -30,26 +30,25 @@ jobs:
           node-version: '22'
 
       - id: patch
-        name: Apply scoped mobile repair
-        continue-on-error: true
-        run: node scripts/fix-final-device-batch-v31.mjs
+        name: Apply scoped mobile repair when pending
+        shell: bash
+        run: |
+          if [ -f scripts/fix-final-device-batch-v31.mjs ]; then
+            node scripts/fix-final-device-batch-v31.mjs
+          else
+            echo "Repair already applied; validating current branch state."
+          fi
 
       - id: install
         name: Install dependencies
-        if: steps.patch.outcome == 'success'
-        continue-on-error: true
         run: npm ci --include=dev
 
       - id: typecheck
         name: TypeScript check
-        if: steps.patch.outcome == 'success' && steps.install.outcome == 'success'
-        continue-on-error: true
         run: npm run typecheck
 
       - id: tests
         name: Regression tests
-        if: steps.patch.outcome == 'success' && steps.install.outcome == 'success'
-        continue-on-error: true
         shell: bash
         run: |
           set +e
@@ -60,8 +59,6 @@ jobs:
 
       - id: audit
         name: Static audit
-        if: steps.patch.outcome == 'success'
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -73,28 +70,9 @@ jobs:
           grep -F "installStartupContentGate" index.ts
           test ! -e src/collectionFlatListGuard.tsx
 
-      - name: Persist validation result
-        if: always()
+      - name: Record success marker only if needed
         shell: bash
-        env:
-          PATCH_OUTCOME: ${{ steps.patch.outcome }}
-          INSTALL_OUTCOME: ${{ steps.install.outcome }}
-          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
-          TESTS_OUTCOME: ${{ steps.tests.outcome }}
-          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          printf 'patch=%s\ninstall=%s\ntypecheck=%s\ntests=%s\naudit=%s\n' "$PATCH_OUTCOME" "$INSTALL_OUTCOME" "$TYPECHECK_OUTCOME" "$TESTS_OUTCOME" "$AUDIT_OUTCOME" > mobile-validation-v32.txt
-          if [ "$PATCH_OUTCOME" = success ] && [ "$INSTALL_OUTCOME" = success ] && [ "$TYPECHECK_OUTCOME" = success ] && [ "$TESTS_OUTCOME" = success ] && [ "$AUDIT_OUTCOME" = success ]; then
-            rm -f scripts/fix-final-device-batch-v31.mjs .github/workflows/final-device-v32.yml mobile-validation-v32.txt mobile-tests-v32.log
-            git add -A
-            git commit -m "fix: polish player end cards and poster interaction"
-          else
-            git restore App.tsx 2>/dev/null || true
-            git add mobile-validation-v32.txt
-            if [ -f mobile-tests-v32.log ]; then git add mobile-tests-v32.log; fi
-            git commit -m "chore: record final device validation failure"
-          fi
-          git push origin HEAD:fix-final-device-batch-v31
+          rm -f mobile-tests-v32.log mobile-validation-v32.txt
+          git status --short
