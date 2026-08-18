@@ -1,0 +1,113 @@
+name: Finalize Mobile v22
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: aparatchi-mobile-finalize-v22
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: github.event.issue.title == 'RUN FINALIZE MOBILE V22'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 100
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Materialize verified Metro App patches into App.tsx
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { applyMobileSourcePatches } = require('./scripts/mobile-source-patches.cjs');
+          const file = 'App.tsx';
+          const before = fs.readFileSync(file, 'utf8');
+          const after = applyMobileSourcePatches(before, file);
+          if (!after || after === before) throw new Error('No App patches were materialized; refusing to finalize an unknown source state.');
+          fs.writeFileSync(file, after, 'utf8');
+          NODE
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Type-check final direct App source
+        run: npm run typecheck
+
+      - name: Run existing Mobile regressions
+        run: node --test scripts/tests/*.test.mjs
+
+      - name: Audit every reported final behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F "const posterNameFa = String(item.nameFa || item.name || '').trim();" App.tsx
+          grep -F "let collectionBrowserScrollOffset = 0;" App.tsx
+          grep -F "contentOffset={{ x: 0, y: collectionBrowserScrollOffset }}" App.tsx
+          grep -F "onScroll={rememberCollectionBrowserOffset}" App.tsx
+          grep -F "const relatedBadges = itemPosterBadges(relatedItem);" App.tsx
+          grep -F "badge.kind === 'operator' && styles.posterOperatorAccess" App.tsx
+          grep -F "? (item.latestEpisode || newestEpisodeGroup(item))" App.tsx
+          grep -A12 -F "style={styles.homeScroll}" App.tsx | grep -F "removeClippedSubviews"
+          ! grep -A12 -F "style={styles.homeScroll}" App.tsx | grep -F "removeClippedSubviews={false}"
+          grep -F "removeClippedSubviews={false}" App.tsx
+          grep -F "installStartupContentGate" index.ts
+          ! grep -F "installCollectionFlatListGuard" index.ts
+          test -f src/startupContentGate.ts
+          test ! -f src/collectionFlatListGuard.tsx
+          git diff --check
+
+      - name: Record milestone and remove all temporary repair machinery
+        shell: bash
+        run: |
+          cat >> PROJECT-STATE.md <<'EOF'
+
+# milestone Final reported Mobile batch v22 — 2026-08-18
+- The final title/collection identity, collection Back scroll restore, related availability badges and Home scroll-performance patches now live directly in App.tsx.
+- Related cards show dubbed, Persian-subtitle and verified mobile-operator badges only when item metadata proves them.
+- Collection browser restores the exact vertical pixel offset after header Back and Android hardware Back.
+- Cold-start startupContentGate remains installed before App loads, preventing the full catalog from competing with the compact bootstrap during first paint.
+- Home vertical rendering uses smaller batches/native clipping while horizontal RTL rails keep their proven unclipped behavior; series cards prefer precomputed latestEpisode metadata.
+- Temporary Metro source patching and all v19/v20/v21 one-shot repair workflows/scripts were removed after TypeScript + regression tests passed.
+- No APK was built in this milestone.
+EOF
+          git rm -f --ignore-unmatch \
+            scripts/fix-final-user-batch-v19.mjs \
+            scripts/fix-home-scroll-performance-v20.mjs \
+            scripts/fix-final-device-batch-v21.mjs \
+            scripts/mobile-source-patches.cjs \
+            scripts/metro-app-patch-transformer.cjs \
+            scripts/final-device-pr-trigger.txt \
+            metro.config.js \
+            .github/workflows/final-user-batch-v19.yml \
+            .github/workflows/home-scroll-performance-v20.yml \
+            .github/workflows/final-device-batch-v21.yml \
+            .github/workflows/issue-final-device-v21.yml \
+            .github/workflows/pr-final-device-v21.yml \
+            .github/workflows/finalize-mobile-v22.yml
+
+      - name: Commit only verified final state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --check
+          git commit -m "fix: finalize reported Mobile batch v22 [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main
