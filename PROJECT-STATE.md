@@ -301,7 +301,7 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 - exact episode thumbnails
 - commit مرحله آخر فقط بعد از سبزشدن همه موارد انجام شد.
 
-تست‌های قدیمی Operator/RTL/Related که expectation مربوط به implementation قبلی داشتند، با رفتار واقعی و تأییدشدهٔ فعلی همگام شدند؛ منطق سالم اپ برای پاس‌کردن تست‌ها به عقب برگردانده نشد.
+تست‌های قدیمی Operator/RTL/Related که expectation مربوط به implementation قبلی داشتند، با رفتار واقعی و تأییدشدهٔ فعلی همگام شدند؛ منطق سالم اپ برای پاس کردن تست‌ها به عقب برگردانده نشد.
 
 ---
 
@@ -377,3 +377,29 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 - Build نهایی run `32134267841` با app version `0.15.9` کاملاً success شد: TypeScript، Expo prebuild، Gradle `assembleRelease`، آماده‌سازی APK، Upload Artifact و Publish GitHub Release همگی success.
 - Artifact `Aparatchi-Android-Release` با id `9323508208` و size `41841685` bytes ثبت شد؛ digest برابر `sha256:19593054d25ac344bb4e4cb55f88dafae47883574aea69d2526b020a74490879` است.
 - Release tag همان `android-latest` و فایل منتشرشده `Aparatchi-Android-Release.apk` است.
+
+---
+
+# milestone Final device + category truth v31 — 2026-08-19
+
+## Mobile
+- PR #22 روی `main` با merge commit `28d49f4d760b4e3d83dabbf5de7445a44e859a8c` ادغام شد.
+- پیشنهاد فیلم و «قسمت بعدی» فقط از ۵ ثانیهٔ آخر نمایش داده می‌شوند و بعد از پایان هم باقی می‌مانند؛ overlay در portrait/landscape داخل video frame و safe-area قرار می‌گیرد و کارت‌ها جمع‌وجورتر شدند.
+- artwork واقعیِ یکتای قسمت می‌تواند در کارت «قسمت بعدی» استفاده شود ولی poster/backdrop تکراری خود سریال به‌عنوان artwork قسمت پذیرفته نمی‌شود.
+- ورود چندمرحله‌ای از «مرتبط‌ها» دیگر history جداگانه نمی‌سازد؛ Back به source اصلی Detail برمی‌گردد.
+- لمس PosterCard با hitSlop/pressRetention بهتر شد و `latestEpisode` compact قبل از scan قسمت‌ها استفاده می‌شود؛ تنظیمات فعلیِ خوب Home/menu scroll عمداً تغییر نکردند.
+- عنوان خود اثر دیگر با `collectionNameFa` جایگزین نمی‌شود.
+- Category cover ابتدا همان fast pool 1200تایی را نگه می‌دارد و فقط برای category بدون artwork یک fallback scan روی catalog کامل انجام می‌دهد.
+- startup gate حفظ شد، `src/collectionFlatListGuard.tsx` همچنان وجود ندارد و exact-pixel collection Back restore حفظ شد.
+- Validation واقعی: `npm ci --include=dev`، TypeScript، Static Audit و هر ۲۷ تست Mobile سبز شدند. تنها شکست میانی مربوط به assertion تکراریِ تست جدید برای شکل دقیق `scrollToOffset` بود؛ تست اختصاصی exact-scroll از ابتدا سبز بود و کد سالم برای پاس‌کردن تست عقب‌گرد نکرد.
+- workflowهای موقت validator بعد از Merge از main پاک شدند؛ workflowهای دائمی `android-apk.yml`, `delete-all-artifacts.yml`, `validate-mobile.yml` باید باقی بمانند.
+- APK جدید برای این milestone ساخته نشد؛ رفتار واقعی روی دستگاه تا Build/تست بعدی کاربر تأیید نشده است.
+
+## Content
+- PR #22 Content با merge commit `4021c986a3cc2eba3d26cda97e05eb174307597e` دسته‌بندی نهایی این Batch را اعمال کرد؛ cleanup HEAD بعدی `5b865d2e824124132a66c46da66e6195c3032306` workflow موقت قدیمی را حذف کرد.
+- موارد کودک‌محور operator حتی بدون synopsis می‌توانند با سیگنال‌های محافظه‌کارانه وارد `kids` شوند؛ همهٔ انیمیشن‌ها به‌طور کور به Kids منتقل نمی‌شوند.
+- «من ناصر حجازی هستم» در Documentary قرار گرفت؛ «پرویزخان» narrative باقی ماند؛ `Deep Sea 3D / دریای عمیق` به Wildlife و خارج از Documentary رفت؛ «ویژه برنامه نوروز ۱۴۰۱» و مشابه آن به Programs می‌روند.
+- برای operator-onlyهای فاقد توضیح فارسی، enrichment محدود از TMDB `fa-IR` اضافه شد؛ متن ساختگی تولید نمی‌شود.
+- full Content suite روی Batch: ۱۳۲/۱۳۲ سبز.
+- diagnostic مستقل v32 روی HEAD جدید همه مراحل را success ثبت کرد: `tests`, `sync`, `tmdb`, `persian`, `truth`, `imdb`. بنابراین تا زمانی که failure جدید با log مشخص دیده نشود، Sync/TMDB اصلی نباید حدسی بازنویسی شوند.
+- PR diagnostic #24 بسته و merge نشد؛ workflow موقت `refine-program-classification-v31.yml` از main حذف شد.
