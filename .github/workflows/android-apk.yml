@@ -1,11 +1,10 @@
-name: Build Android APK
+name: Apply verified mobile repair
 
 on:
   push:
     branches: [main]
     paths:
       - '.github/workflows/android-apk.yml'
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,149 +14,89 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  startup_repair:
-    if: github.event_name == 'push'
+  repair:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
+    env:
+      EXPO_NO_TELEMETRY: '1'
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - name: Checkout current main
+        uses: actions/checkout@v6
         with:
-          fetch-depth: 20
+          ref: main
+          fetch-depth: 120
 
-      - name: Expose startup repair run id
+      - name: Expose repair run id
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          printf 'run_id=%s\nhead_sha=%s\n' "${{ github.run_id }}" "${{ github.sha }}" > startup-v17-run.txt
-          git add startup-v17-run.txt
-          git commit -m "chore: expose startup v17 run id [skip ci]"
+          printf 'run_id=%s\nhead_sha=%s\nstarted_at=%s\n' "${{ github.run_id }}" "${{ github.sha }}" "$(date -u +%FT%TZ)" > mobile-v18-run.txt
+          git add mobile-v18-run.txt
+          git commit -m "chore: expose verified mobile v18 run id [skip ci]"
           git push origin HEAD:main
 
       - name: Set up Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '22'
           cache: npm
 
-      - name: Apply startup freshness patch
+      - name: Apply bounded fresh startup
         run: node scripts/apply-startup-freshness-v17.mjs
 
+      - name: Apply collection title and Back-scroll repair
+        run: node scripts/patch-collection-navigation-v18.mjs
+
       - name: Install dependencies
-        run: npm install --include=dev
+        run: npm ci --include=dev
 
       - name: Type-check application
         run: npm run typecheck
 
-      - name: Commit repair and restore manual build workflow
+      - name: Verify startup and collection regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F "Bootstrap transport is finished before the large index begins" App.tsx
+          grep -F "}, 5600);" App.tsx
+          grep -F "let collectionBrowserScrollOffset = 0;" App.tsx
+          grep -F "const posterNameFa = String(item.nameFa || item.name || '').trim();" App.tsx
+          grep -F "const collectionFolderListRef = useRef<any>(null);" App.tsx
+          grep -F "offset: collectionBrowserScrollOffset" App.tsx
+          grep -F "collectionBrowserScrollOffset = Math.max(0, event.nativeEvent.contentOffset.y)" App.tsx
+          ! grep -F "[A-Za-z]/.test(item.nameFa || '') && item.collectionNameFa" App.tsx
+          ! grep -F ': `مجموعه ${firstFa' App.tsx
+
+      - name: Commit verified repair and restore manual APK workflow
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git show "${{ github.event.before }}:.github/workflows/android-apk.yml" > .github/workflows/android-apk.yml
-          git rm -f scripts/apply-startup-freshness-v17.mjs .github/workflows/startup-freshness-v17.yml startup-v17-run.txt
-          git add App.tsx .github/workflows/android-apk.yml
-          git commit -m "fix: bound cold start and prioritize fresh Home"
+
+          git show 9b0974a73d7eb971d67c8e6c1cb8301a003016cb:.github/workflows/android-apk.yml > .github/workflows/android-apk.yml
+
+          cat >> PROJECT-STATE.md <<'EOF'
+
+# milestone Verified startup + collection identity v18 — 2026-08-18
+- Cold start now prefers the small current Home bootstrap before starting the large full index; the emergency startup escape is bounded at 5.6 seconds.
+- Individual movie/series cards always use the work's own title and never substitute `collectionNameFa`.
+- Collection folders use collection identity only; missing Persian collection metadata no longer manufactures a folder name from the first installment.
+- Collection folder pixel scroll position is preserved and restored after header Back and Android hardware Back.
+- No APK was built by this repair workflow; the normal manual APK workflow was restored afterward.
+EOF
+
+          rm -f mobile-v18-run.txt
+          git rm -f --ignore-unmatch \
+            scripts/apply-startup-freshness-v17.mjs \
+            scripts/patch-collection-navigation-v18.mjs \
+            scripts/patch-collection-title-scroll-v18.mjs \
+            .github/workflows/startup-freshness-v17.yml \
+            .github/workflows/collection-navigation-v18.yml \
+            .github/workflows/collection-navigation-v18-issue.yml
+          git add App.tsx PROJECT-STATE.md .github/workflows/android-apk.yml
+          git commit -m "fix: finalize startup and collection navigation truth"
           git pull --rebase origin main
           git push origin HEAD:main
-
-  build:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-
-    env:
-      EXPO_NO_TELEMETRY: "1"
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Set up Node 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Set up Gradle cache
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Prepare Android SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager -perm -111 2>/dev/null | head -n 1 || true)"
-          fi
-          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
-            echo "sdkmanager not found under $ANDROID_SDK_ROOT"
-            find "$ANDROID_SDK_ROOT" -maxdepth 4 -name sdkmanager -print 2>/dev/null || true
-            exit 1
-          fi
-          echo "Using sdkmanager: $SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "build-tools;35.0.0" \
-            "ndk;27.1.12297006" \
-            "cmake;3.22.1"
-          test -f "$ANDROID_SDK_ROOT/platforms/android-36/android.jar"
-          test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt2"
-          test -x "$ANDROID_SDK_ROOT/build-tools/35.0.0/aapt2"
-          test -f "$ANDROID_SDK_ROOT/ndk/27.1.12297006/build/cmake/android.toolchain.cmake"
-          test -x "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/cmake"
-
-      - name: Install dependencies
-        run: npm install --include=dev
-
-      - name: Type-check application
-        run: npm run typecheck
-
-      - name: Resolve application version
-        id: app_version
-        shell: bash
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Create Android project
-        run: npx expo prebuild --platform android
-        env:
-          NODE_ENV: production
-          CI: "1"
-
-      - name: Point Gradle to Android SDK
-        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
-
-      - name: Build release APK
-        working-directory: android
-        shell: bash
-        env:
-          NODE_ENV: production
-        run: |
-          chmod +x gradlew
-          ./gradlew app:assembleRelease --no-daemon
-
-      - name: Prepare APK for release
-        run: cp android/app/build/outputs/apk/release/app-release.apk Aparatchi-Android-Release.apk
-
-      - name: Publish APK to GitHub Releases
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          APP_VERSION: ${{ steps.app_version.outputs.version }}
-          RELEASE_TAG: android-latest
-          APK_PATH: Aparatchi-Android-Release.apk
-        run: node scripts/publish-apk-release.mjs
