@@ -44,10 +44,13 @@ jobs:
         run: |
           set -euo pipefail
           grep -F "let collectionBrowserScrollOffset = 0;" App.tsx
-          grep -F "const posterNameFa = item.nameFa;" App.tsx
+          grep -F "const posterNameFa = String(item.nameFa || item.name || '').trim();" App.tsx
+          grep -F "? rawFa" App.tsx
+          grep -F ": titleEn;" App.tsx
           grep -F "ref={collectionFolderListRef}" App.tsx
           grep -F "scrollToOffset" App.tsx
-          grep -F "collectionBrowserScrollOffset = event.nativeEvent.contentOffset.y" App.tsx
+          grep -F "collectionBrowserScrollOffset = Math.max(0, event.nativeEvent.contentOffset.y)" App.tsx
+          ! grep -F "[A-Za-z]/.test(item.nameFa || '') && item.collectionNameFa" App.tsx
 
       - name: Commit repair and remove one-shot files
         shell: bash
@@ -59,13 +62,17 @@ jobs:
           cat >> PROJECT-STATE.md <<'EOF'
 
 # milestone Collection title truth + scroll restore v18 — 2026-08-18
-- Collection cards no longer replace a movie's own title with `collectionNameFa`; missing Persian metadata is left for Content enrichment instead of inventing a folder title.
-- The collection-folder FlatList remembers its exact pixel offset and restores it after Back from a collection, for both the header Back button and Android hardware Back.
+- Individual movie/series cards no longer borrow `collectionNameFa` when their own Persian title is missing/Latin.
+- Collection folders no longer manufacture a Persian collection label from the first member title; they use verified collection metadata, otherwise the original collection title.
+- The collection-folder grid stores its exact native pixel offset and restores it after Back from a collection, for both header Back and Android hardware Back.
 - Startup/cold-start logic was intentionally not changed in this patch.
 EOF
 
           git rm -f scripts/patch-collection-navigation-v18.mjs .github/workflows/collection-navigation-v18.yml
+          if [ -f scripts/patch-collection-title-scroll-v18.mjs ]; then
+            git rm -f scripts/patch-collection-title-scroll-v18.mjs
+          fi
           git add App.tsx PROJECT-STATE.md
-          git commit -m "fix: preserve collection titles and Back scroll position"
+          git commit -m "fix: preserve collection title identity and Back scroll position"
           git pull --rebase origin main
           git push origin HEAD:main
