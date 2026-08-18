@@ -2427,14 +2427,21 @@ const PosterCard = memo(function PosterCard({
   width?: number;
 }) {
   const posterBadges = itemPosterBadges(item);
-  const latestEpisode = item.type === 'series' ? newestEpisodeGroup(item) : null;
-  const latestEpisodeMeta = latestEpisode || item.latestEpisode || null;
-  const posterNameFa = /[A-Za-z]/.test(item.nameFa || '') && item.collectionNameFa
-    ? `${item.collectionNameFa}${item.collectionOrder ? ` ${toPersianDigits(item.collectionOrder)}` : ''}`
-    : item.nameFa;
+  // Prefer compact catalog metadata. Sorting every episode group while a poster
+  // is being mounted makes taps feel delayed on large series shelves.
+  const latestEpisodeMeta = item.latestEpisode || (item.type === 'series' ? newestEpisodeGroup(item) : null);
+  // A movie/series title must never be replaced by its collection label.
+  const posterNameFa = String(item.nameFa || '').trim() || item.name;
 
   return (
-    <Pressable onPress={onOpen} unstable_pressDelay={0} hitSlop={7} style={({ pressed }) => [styles.posterCard, { width }, pressed && styles.posterCardPressed]}>
+    <Pressable
+      onPress={onOpen}
+      unstable_pressDelay={0}
+      hitSlop={12}
+      pressRetentionOffset={{ top: 24, right: 24, bottom: 24, left: 24 }}
+      android_ripple={{ color: 'rgba(216,180,90,0.12)', borderless: false }}
+      style={({ pressed }) => [styles.posterCard, { width }, pressed && styles.posterCardPressed]}
+    >
       <View style={[styles.posterImageWrap, { width, height: Math.round(width * 1.42) }]}>
         <CatalogArtwork
           primary={item.poster}
@@ -3617,8 +3624,27 @@ const CategoriesScreen = memo(function CategoriesScreen({
         scoreByFilter.set(filter, score);
       }
     }
+
+    // The first 1200 rows keep Categories fast. Only filters with no artwork
+    // get one bounded fallback scan over the complete catalog, so Kids,
+    // Programs and Iranian Series never fall back to a blank icon card merely
+    // because their first matching poster is older than the preview window.
+    const missing = new Set(previewFilters.filter((filter) => !result.has(filter)));
+    if (missing.size) {
+      for (const item of usableCatalog) {
+        if (!hasFastCategoryArtwork(item)) continue;
+        const keys = item.categoryKeys || [];
+        for (const filter of [...missing]) {
+          if (keys.includes(filter) || fastCatalogFilterMatch(item, filter)) {
+            result.set(filter, item);
+            missing.delete(filter);
+          }
+        }
+        if (!missing.size) break;
+      }
+    }
     return result;
-  }, [categoryPreviewPool]);
+  }, [categoryPreviewPool, usableCatalog]);
 
   const categoryActorMatches = useMemo(
     () => peopleWorkItemIdsMatchingQuery(peopleWorks, usableCatalog, deferredQuery),
@@ -5989,10 +6015,21 @@ function PersonProfileModal({
 }
 
 const exactEpisodeArtworkFor = (group: DownloadSection, item: CatalogItem) => {
-  const artwork = String(group.artwork || '').trim();
+  const artwork = optimizedImageUrl(String(group.artwork || '').trim(), 'backdrop');
+  if (!artwork) return '';
   const exactGeneratedFrame = /(?:^|\/)assets\/media\/episodes\/[a-f0-9]{24}\.jpg(?:$|[?#])/i.test(artwork);
   if (exactGeneratedFrame) return artwork;
-  return '';
+  if (!isSafeHttpUrl(artwork) || isPlaceholderUrl(artwork)) return '';
+
+  // Accept a real per-episode remote still while continuing to reject a series
+  // poster/backdrop recycled as episode artwork.
+  const seriesArtwork = new Set([
+    item.poster,
+    item.posterFallback,
+    item.backdrop,
+    item.backdropFallback,
+  ].map((value) => optimizedImageUrl(value, 'backdrop')).filter(Boolean));
+  return seriesArtwork.has(artwork) ? '' : artwork;
 };
 
 function PlayerEpisodesOverlay({
@@ -6505,20 +6542,9 @@ function VideoPlayerModal({
   };
 
   const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
-  const endCreditsMetadata = item as (CatalogItem & {
-    endCreditsStart?: number;
-    endCreditsStartSeconds?: number;
-    creditsStart?: number;
-  }) | null | undefined;
-  const declaredCreditsStart = Math.max(0, Number(
-    endCreditsMetadata?.endCreditsStartSeconds ??
-    endCreditsMetadata?.endCreditsStart ??
-    endCreditsMetadata?.creditsStart ??
-    0,
-  ));
-  const movieEndOverlayStart = declaredCreditsStart > 0 && declaredCreditsStart < duration
-    ? declaredCreditsStart
-    : Math.max(0, duration - 120);
+  // Do not cover the actual ending on titles with no credits. End cards appear
+  // only in the final five seconds and stay visible after playback completes.
+  const movieEndOverlayStart = Math.max(0, duration - 5);
   const movieEndRecommendations = item?.type === 'movie' ? relatedItems.slice(0, 5) : [];
   const movieRecommendationRailRef = useRef<ScrollView>(null);
   const movieRecommendationRailPositionedRef = useRef('');
@@ -6536,9 +6562,8 @@ function VideoPlayerModal({
     !settingsOpen &&
     !episodesOpen &&
     !nextEpisodeDismissed &&
-    duration >= 180 &&
-    currentTime >= movieEndOverlayStart &&
-    currentTime < duration
+    duration > 0 &&
+    currentTime >= movieEndOverlayStart
   );
   const showMovieEndRecommendations = Boolean(
     item?.type === 'movie' &&
@@ -6547,9 +6572,8 @@ function VideoPlayerModal({
     !settingsOpen &&
     !episodesOpen &&
     !endRecommendationsDismissed &&
-    duration >= 180 &&
+    duration > 0 &&
     currentTime >= movieEndOverlayStart &&
-    currentTime < duration &&
     movieEndRecommendations.length > 0
   );
   useEffect(() => {
@@ -6649,7 +6673,18 @@ function VideoPlayerModal({
         ) : null}
 
         {showNextEpisodeOverlay && nextEpisodeGroup && item?.type === 'series' ? (
-          <View pointerEvents="box-none" style={[styles.nextEpisodeOverlay, frameRect]}>
+          <View
+            pointerEvents="box-none"
+            style={[
+              styles.nextEpisodeOverlay,
+              frameRect,
+              landscape ? {
+                paddingLeft: safeLeft,
+                paddingRight: safeRight,
+                paddingBottom: Math.max(10, insets.bottom + 8),
+              } : null,
+            ]}
+          >
             <View style={[styles.nextEpisodeCard, landscape && styles.nextEpisodeCardLandscape]}>
               <Pressable
                 onPress={() => setNextEpisodeDismissed(true)}
@@ -6688,7 +6723,18 @@ function VideoPlayerModal({
         ) : null}
 
         {showMovieEndRecommendations ? (
-          <View pointerEvents="box-none" style={styles.movieEndRecommendations}>
+          <View
+            pointerEvents="box-none"
+            style={[
+              styles.movieEndRecommendations,
+              frameRect,
+              landscape ? {
+                paddingLeft: safeLeft,
+                paddingRight: safeRight,
+                paddingBottom: Math.max(10, insets.bottom + 8),
+              } : null,
+            ]}
+          >
             <View style={[styles.movieEndRecommendationsCard, landscape && styles.movieEndRecommendationsCardLandscape]}>
               <View style={styles.movieEndRecommendationsHeader}>
                 <Pressable
@@ -7906,6 +7952,13 @@ function AppContent() {
     setSelectedItem(nextItem);
   }, []);
 
+  // Related cards are a replacement of the current detail, not a navigation
+  // stack. One Back always returns to the screen that originally opened detail.
+  const openRelatedDetail = useCallback((nextItem: CatalogItem) => {
+    detailHistoryRef.current = [];
+    setSelectedItem(nextItem);
+  }, []);
+
   const closeOrBackDetail = useCallback(() => {
     const previous = detailHistoryRef.current.pop() || null;
     setSelectedItem(previous);
@@ -8963,7 +9016,7 @@ function AppContent() {
         onStream={openStreamInsideApp}
         onDownload={startDownloadInsideApp}
         onOperatorOpen={openOperatorAccess}
-        onOpenRelated={openNestedDetail}
+        onOpenRelated={openRelatedDetail}
         onOpenPerson={setSelectedPerson}
         onBrowse={openCatalogFilter}
         vpnActive={vpnActive}
@@ -9684,28 +9737,28 @@ const styles = StyleSheet.create({
   relatedTitleRate: { position: 'absolute', left: 7, top: 148, height: 24, paddingHorizontal: 7, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(5,7,10,0.86)' },
   relatedTitleRateText: { color: '#fff', fontSize: 8.5, fontWeight: '900' },
   playerOfflineOverlay: { position: 'absolute', zIndex: 95, elevation: 95, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, backgroundColor: 'rgba(0,0,0,0.78)' },
-  nextEpisodeOverlay: { position: 'absolute', zIndex: 83, elevation: 83, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 12 },
-  nextEpisodeCard: { width: '100%', maxWidth: 610, minHeight: 142, flexDirection: 'row-reverse', alignItems: 'center', gap: 13, padding: 13, borderRadius: 18, backgroundColor: 'rgba(10,12,16,0.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
-  nextEpisodeCardLandscape: { maxWidth: 720, minHeight: 134 },
-  nextEpisodeClose: { position: 'absolute', top: 9, left: 9, zIndex: 3, width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.09)' },
-  nextEpisodeArtwork: { width: 178, height: 104, borderRadius: 12, backgroundColor: COLORS.surfaceStrong },
+  nextEpisodeOverlay: { position: 'absolute', zIndex: 83, elevation: 83, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 8 },
+  nextEpisodeCard: { width: '100%', maxWidth: 520, minHeight: 112, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, padding: 10, borderRadius: 16, backgroundColor: 'rgba(10,12,16,0.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
+  nextEpisodeCardLandscape: { maxWidth: 560, minHeight: 108 },
+  nextEpisodeClose: { position: 'absolute', top: 8, left: 8, zIndex: 3, width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.09)' },
+  nextEpisodeArtwork: { width: 132, height: 78, borderRadius: 11, backgroundColor: COLORS.surfaceStrong },
   nextEpisodeBody: { flex: 1, minWidth: 0, alignItems: 'flex-end' },
   nextEpisodeEyebrow: { ...rtlText, color: COLORS.gold, fontSize: 9.5, fontWeight: '900', marginBottom: 4 },
-  nextEpisodeTitle: { ...rtlText, color: '#fff', fontSize: 14, lineHeight: 22, fontWeight: '900', textAlign: 'right' },
-  nextEpisodePlayButton: { minWidth: 154, height: 42, marginTop: 11, paddingHorizontal: 18, borderRadius: 21, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: COLORS.gold },
+  nextEpisodeTitle: { ...rtlText, color: '#fff', fontSize: 12.5, lineHeight: 19, fontWeight: '900', textAlign: 'right' },
+  nextEpisodePlayButton: { minWidth: 128, height: 36, marginTop: 8, paddingHorizontal: 14, borderRadius: 18, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: COLORS.gold },
   nextEpisodePlayText: { ...rtlText, color: '#05070A', fontSize: 11.5, fontWeight: '900' },
-  movieEndRecommendations: { ...absoluteFillObject, zIndex: 82, elevation: 82, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 18 },
-  movieEndRecommendationsCard: { width: '100%', maxWidth: 610, padding: 14, borderRadius: 18, backgroundColor: 'rgba(10,12,16,0.95)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
-  movieEndRecommendationsCardLandscape: { maxWidth: 760, padding: 12 },
-  movieEndRecommendationsHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 11 },
+  movieEndRecommendations: { position: 'absolute', zIndex: 82, elevation: 82, justifyContent: 'flex-end', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 8 },
+  movieEndRecommendationsCard: { width: '100%', maxWidth: 540, padding: 10, borderRadius: 16, backgroundColor: 'rgba(10,12,16,0.95)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
+  movieEndRecommendationsCardLandscape: { maxWidth: 620, padding: 9 },
+  movieEndRecommendationsHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   movieEndRecommendationsHeaderText: { flex: 1, alignItems: 'flex-end' },
-  movieEndRecommendationsTitle: { ...rtlText, color: '#fff', fontSize: 15.5, fontWeight: '900' },
+  movieEndRecommendationsTitle: { ...rtlText, color: '#fff', fontSize: 14, fontWeight: '900' },
   movieEndRecommendationsSubtitle: { ...rtlText, color: COLORS.muted, fontSize: 9.5, marginTop: 2 },
-  movieEndRecommendationsClose: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.09)' },
-  movieEndRecommendationsRail: { flexDirection: 'row-reverse', gap: 10, paddingHorizontal: 1 },
-  movieEndRecommendationItem: { width: 92, alignItems: 'center' },
-  movieEndRecommendationPoster: { width: 92, height: 126, borderRadius: 11, backgroundColor: COLORS.surfaceStrong },
-  movieEndRecommendationName: { ...rtlText, width: '100%', color: '#fff', fontSize: 9.5, fontWeight: '800', textAlign: 'center', marginTop: 6 },
+  movieEndRecommendationsClose: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.09)' },
+  movieEndRecommendationsRail: { flexDirection: 'row-reverse', gap: 8, paddingHorizontal: 1 },
+  movieEndRecommendationItem: { width: 72, alignItems: 'center' },
+  movieEndRecommendationPoster: { width: 72, height: 98, borderRadius: 10, backgroundColor: COLORS.surfaceStrong },
+  movieEndRecommendationName: { ...rtlText, width: '100%', color: '#fff', fontSize: 9, fontWeight: '800', textAlign: 'center', marginTop: 5 },
   playerOfflineCard: { width: '100%', maxWidth: 340, padding: 20, borderRadius: 18, alignItems: 'center', backgroundColor: '#11151C', borderWidth: 1, borderColor: 'rgba(216,180,90,0.36)' },
   playerOfflineTitle: { ...rtlText, color: COLORS.text, fontSize: 17, fontWeight: '900', marginTop: 10, textAlign: 'center' },
   playerOfflineText: { ...rtlText, color: COLORS.muted, fontSize: 10, lineHeight: 18, marginTop: 7, textAlign: 'center' },
