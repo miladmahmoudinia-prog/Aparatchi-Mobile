@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   validate:
-    if: github.event.issue.title == 'RUN FINAL DEVICE V31'
+    if: github.event.issue.title == 'RUN FINAL DEVICE V31 RETRY'
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f scripts/fix-final-device-batch-v31.mjs .github/workflows/final-device-batch-v31.yml
+          rm -f scripts/fix-final-device-batch-v31.mjs
           cat >> PROJECT-STATE.md <<'EOF'
 
 # milestone Final device interaction batch v31 — 2026-08-19
@@ -67,6 +67,6 @@ jobs:
 EOF
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add App.tsx PROJECT-STATE.md scripts/tests/final-device-batch-v31.test.mjs scripts/fix-final-device-batch-v31.mjs
           git commit -m "fix: polish player end cards and poster interaction"
           git push origin HEAD:fix-final-device-batch-v31
