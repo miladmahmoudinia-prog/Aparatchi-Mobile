@@ -1,6 +1,10 @@
 name: Build Android APK
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-apk.yml'
   workflow_dispatch:
 
 permissions:
@@ -11,7 +15,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  startup_repair:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+
+      - name: Expose startup repair run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf 'run_id=%s\nhead_sha=%s\n' "${{ github.run_id }}" "${{ github.sha }}" > startup-v17-run.txt
+          git add startup-v17-run.txt
+          git commit -m "chore: expose startup v17 run id [skip ci]"
+          git push origin HEAD:main
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply startup freshness patch
+        run: node scripts/apply-startup-freshness-v17.mjs
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Type-check application
+        run: npm run typecheck
+
+      - name: Commit repair and restore manual build workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git show "${{ github.event.before }}:.github/workflows/android-apk.yml" > .github/workflows/android-apk.yml
+          git rm -f scripts/apply-startup-freshness-v17.mjs .github/workflows/startup-freshness-v17.yml startup-v17-run.txt
+          git add App.tsx .github/workflows/android-apk.yml
+          git commit -m "fix: bound cold start and prioritize fresh Home"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
   build:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
