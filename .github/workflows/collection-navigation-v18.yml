@@ -1,0 +1,71 @@
+name: One-shot collection navigation v18
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/collection-navigation-v18.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-write-lock
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 20
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Patch collection navigation
+        run: node scripts/patch-collection-navigation-v18.mjs
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Verify targeted regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F "let collectionBrowserScrollOffset = 0;" App.tsx
+          grep -F "const posterNameFa = item.nameFa;" App.tsx
+          grep -F "ref={collectionFolderListRef}" App.tsx
+          grep -F "scrollToOffset" App.tsx
+          grep -F "collectionBrowserScrollOffset = event.nativeEvent.contentOffset.y" App.tsx
+
+      - name: Commit repair and remove one-shot files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          cat >> PROJECT-STATE.md <<'EOF'
+
+# milestone Collection title truth + scroll restore v18 — 2026-08-18
+- Collection cards no longer replace a movie's own title with `collectionNameFa`; missing Persian metadata is left for Content enrichment instead of inventing a folder title.
+- The collection-folder FlatList remembers its exact pixel offset and restores it after Back from a collection, for both the header Back button and Android hardware Back.
+- Startup/cold-start logic was intentionally not changed in this patch.
+EOF
+
+          git rm -f scripts/patch-collection-navigation-v18.mjs .github/workflows/collection-navigation-v18.yml
+          git add App.tsx PROJECT-STATE.md
+          git commit -m "fix: preserve collection titles and Back scroll position"
+          git pull --rebase origin main
+          git push origin HEAD:main
