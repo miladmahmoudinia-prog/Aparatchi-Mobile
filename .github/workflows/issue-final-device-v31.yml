@@ -50,7 +50,13 @@ jobs:
         name: Regression tests
         if: steps.patch.outcome == 'success' && steps.install.outcome == 'success'
         continue-on-error: true
-        run: node --test scripts/tests/*.test.mjs
+        shell: bash
+        run: |
+          set +e
+          node --test scripts/tests/*.test.mjs > mobile-tests-v32.log 2>&1
+          STATUS=$?
+          cat mobile-tests-v32.log
+          exit "$STATUS"
 
       - id: audit
         name: Static audit
@@ -82,12 +88,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           printf 'patch=%s\ninstall=%s\ntypecheck=%s\ntests=%s\naudit=%s\n' "$PATCH_OUTCOME" "$INSTALL_OUTCOME" "$TYPECHECK_OUTCOME" "$TESTS_OUTCOME" "$AUDIT_OUTCOME" > mobile-validation-v32.txt
           if [ "$PATCH_OUTCOME" = success ] && [ "$INSTALL_OUTCOME" = success ] && [ "$TYPECHECK_OUTCOME" = success ] && [ "$TESTS_OUTCOME" = success ] && [ "$AUDIT_OUTCOME" = success ]; then
-            rm -f scripts/fix-final-device-batch-v31.mjs .github/workflows/final-device-v32.yml mobile-validation-v32.txt
+            rm -f scripts/fix-final-device-batch-v31.mjs .github/workflows/final-device-v32.yml mobile-validation-v32.txt mobile-tests-v32.log
             git add -A
             git commit -m "fix: polish player end cards and poster interaction"
           else
             git restore App.tsx 2>/dev/null || true
             git add mobile-validation-v32.txt
+            if [ -f mobile-tests-v32.log ]; then git add mobile-tests-v32.log; fi
             git commit -m "chore: record final device validation failure"
           fi
           git push origin HEAD:fix-final-device-batch-v31
