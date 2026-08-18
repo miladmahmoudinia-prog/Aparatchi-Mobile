@@ -28,6 +28,17 @@ jobs:
           ref: main
           fetch-depth: 20
 
+      - name: Expose run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf 'run_id=%s\nrun_attempt=%s\nstarted_at=%s\n' '${{ github.run_id }}' '${{ github.run_attempt }}' "$(date -u +%FT%TZ)" > collection-navigation-v18-status.log
+          git add collection-navigation-v18-status.log
+          git commit -m "chore: expose collection navigation v18 run id [skip ci]"
+          git push origin HEAD:main
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -71,7 +82,7 @@ jobs:
 - Startup/cold-start logic was intentionally not changed in this patch.
 EOF
 
-          git rm -f scripts/patch-collection-navigation-v18.mjs .github/workflows/collection-navigation-v18.yml
+          git rm -f scripts/patch-collection-navigation-v18.mjs .github/workflows/collection-navigation-v18.yml collection-navigation-v18-status.log
           if [ -f scripts/patch-collection-title-scroll-v18.mjs ]; then
             git rm -f scripts/patch-collection-title-scroll-v18.mjs
           fi
