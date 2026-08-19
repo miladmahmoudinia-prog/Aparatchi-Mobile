@@ -1,1 +1,1 @@
-first-install freshness v33 syntax-safe device regression
+first-install freshness v33 final startup regressions
