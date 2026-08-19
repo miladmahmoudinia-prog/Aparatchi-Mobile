@@ -1,1 +1,1 @@
-first-install freshness v33 retry-user
+first-install freshness v33 retry-idempotent
