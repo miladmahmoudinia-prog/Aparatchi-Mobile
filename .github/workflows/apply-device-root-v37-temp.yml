@@ -1,0 +1,62 @@
+name: Apply device root fix v37 temp
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  apply:
+    if: github.event.issue.title == 'RUN DEVICE ROOT FIX V37'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/device-startup-detail-root-v37
+          fetch-depth: 20
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply root fix
+        run: node scripts/apply-device-root-v37.mjs
+      - name: Install dependencies
+        run: npm ci --include=dev
+      - name: Typecheck
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck
+      - name: Regression suite
+        id: regressions
+        continue-on-error: true
+        run: node --test scripts/tests/*.test.mjs
+      - name: Persist verified source
+        if: steps.typecheck.outcome == 'success' && steps.regressions.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx src/contentService.ts scripts/tests/device-root-v37.test.mjs
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: root cold-start and detail first paint v37"
+            git push origin HEAD:fix/device-startup-detail-root-v37
+          fi
+      - name: Report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TYPECHECK: ${{ steps.typecheck.outcome }}
+          REGRESSIONS: ${{ steps.regressions.outcome }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: gh issue comment "$ISSUE_NUMBER" --body "typecheck=${TYPECHECK}\nregressions=${REGRESSIONS}\nrun=${RUN_ID}\nhead=$(git rev-parse HEAD)"
+      - name: Fail if verification failed
+        if: steps.typecheck.outcome != 'success' || steps.regressions.outcome != 'success'
+        run: exit 1
