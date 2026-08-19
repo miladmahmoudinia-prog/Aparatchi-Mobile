@@ -337,6 +337,51 @@ const normalizePersonImage = (value: unknown, source: 'tmdb' | 'upera' = 'upera'
   return '';
 };
 
+const normalizeSummaryPeoplePreview = (value: unknown, ownerId: string): CatalogPerson[] => {
+  if (!Array.isArray(value)) return [];
+  const output: CatalogPerson[] = [];
+  const seen = new Set<string>();
+  for (const raw of value.slice(0, 12)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const person = raw as Record<string, unknown>;
+    const role = normalizePersonRole(
+      person.role ?? person.job ?? person.roleLabel ?? person.role_label ?? person.department,
+      null,
+    );
+    if (!role) continue;
+    const nameFa = asString(person.nameFa ?? person.name_fa ?? person.name ?? person.title);
+    const name = asString(person.name ?? person.nameFa ?? person.name_fa ?? person.title, nameFa);
+    if (!nameFa && !name) continue;
+    const tmdbId = asNumber(person.tmdbId ?? person.tmdb_id, 0);
+    const rawId = asString(person.id ?? person.personId ?? person.person_id ?? person.tmdbId ?? person.tmdb_id);
+    const normalizedName = (name || nameFa).toLowerCase().normalize('NFKC').replace(/[^a-z0-9\u0600-\u06ff]+/g, '-');
+    const id = rawId
+      ? (rawId.startsWith(`${role}-`) ? rawId : `${role}-${rawId}`)
+      : `${role}-summary-${ownerId}-${normalizedName}`;
+    const identity = tmdbId > 0 ? `${role}:tmdb:${tmdbId}` : `${role}:name:${normalizedName}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    const source = asString(person.source).toLowerCase() === 'tmdb' || tmdbId > 0 ? 'tmdb' : 'upera';
+    const image = normalizePersonImage(
+      person.image ?? person.profile_path ?? person.profilePath ?? person.photo ?? person.avatar,
+      source,
+    );
+    output.push({
+      id,
+      nameFa: nameFa || name,
+      ...(name ? { name } : {}),
+      role,
+      roleLabel: asString(person.roleLabel ?? person.role_label, role === 'director' ? 'کارگردان' : 'بازیگر'),
+      ...(image ? { image } : {}),
+      ...(tmdbId > 0 ? { tmdbId } : {}),
+      ...(source ? { source } : {}),
+      order: asNumber(person.order ?? person.castOrder ?? person.cast_order, output.length),
+    });
+    if (output.length >= 8) break;
+  }
+  return output;
+};
+
 const personSourceEntries = (
   value: unknown,
   fallbackRole: CatalogPerson['role'] | null = null,
@@ -866,6 +911,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
     const summaryDownloads = Array.isArray(item.downloads)
       ? normalizeDownloads(item.downloads, iranian)
       : [];
+    const summaryPeople = normalizeSummaryPeoplePreview(item.people, id);
     const rawSummaryStreamUrl = asString(item.streamUrl);
     const summaryStreamUrl = rawSummaryStreamUrl && isPlayableUrl(rawSummaryStreamUrl)
       ? rawSummaryStreamUrl
@@ -897,6 +943,7 @@ const normalizeCatalogItem = (value: unknown): CatalogItem | null => {
       ...(backdropFallback ? { backdropFallback } : {}),
       overview: asString(item.overview),
       genres: stringArray(item.genres),
+      ...(summaryPeople.length ? { people: summaryPeople } : {}),
       ...(Number.isFinite(rate) ? { rate } : {}),
       access,
       ...(asBoolean(item.operatorOnly ?? item.operator_only) ? { operatorOnly: true } : {}),
@@ -1527,6 +1574,7 @@ export const getBundledContent = (): LoadedContent => ({
 export async function loadBootstrapContent(): Promise<LoadedContent | null> {
   const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();
   if (!remoteUrl) return null;
+  await readCacheMetadata();
 
   // Manifest mirrors are raced internally. This keeps the exact clientRevision
   // truth check without paying Raw + CDN timeout costs one after another.
@@ -1668,6 +1716,15 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
       const record = value as Record<string, unknown>;
       const revision = asString(record.revision);
       if (!revision) return null;
+      const candidateUpdatedAt = asString(record.catalogUpdatedAt ?? record.updatedAt);
+      const cachedUpdatedAt = asString(cacheMetadata.catalogUpdatedAt);
+      if (candidateUpdatedAt && cachedUpdatedAt) {
+        const candidateTime = Date.parse(candidateUpdatedAt);
+        const cachedTime = Date.parse(cachedUpdatedAt);
+        if (Number.isFinite(candidateTime) && Number.isFinite(cachedTime) && candidateTime < cachedTime) {
+          return null;
+        }
+      }
       return {
         revision,
         ...(asString(record.clientRevision ?? record.client_revision)
@@ -1727,12 +1784,12 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
   };
 
   // Start source truth and CDN at the same instant. Give Raw only a short
-  // preference window; a blocked Raw host must never add seconds to cold start.
+  // truth window; a stale CDN manifest must never beat a healthy Raw response.
   const rawPromise = firstValidManifest(rawCandidates);
   const mirrorPromise = firstValidManifest(mirrorCandidates);
   const rawPreferred = await Promise.race([
     rawPromise,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), 900)),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 2200)),
   ]);
   if (rawPreferred) return rawPreferred;
 
@@ -1807,7 +1864,7 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
   }
 
   await readCacheMetadata();
-  const cached = await readCachedContent();
+  const cached = forceRemote ? null : await readCachedContent();
   let manifest: RemoteCatalogManifest | null = null;
 
   try {
