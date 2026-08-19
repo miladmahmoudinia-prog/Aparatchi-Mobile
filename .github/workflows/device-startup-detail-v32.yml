@@ -1,0 +1,60 @@
+name: One-shot device startup and detail stability v32
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/device-startup-detail-v32.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aparatchi-mobile-write-lock
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 20
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --include=dev
+
+      - name: Apply source repair
+        run: node scripts/apply-device-startup-detail-v32.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Device regression
+        run: node --test scripts/tests/device-startup-detail-stability-v32.test.mjs
+
+      - name: Existing startup regressions
+        shell: bash
+        run: |
+          node scripts/test-truthful-startup-cache-v6.mjs
+          node scripts/test-visible-media-startup-v7.mjs
+
+      - name: Commit verified source repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/device-startup-detail-v32.yml scripts/apply-device-startup-detail-v32.mjs
+          git add App.tsx src/contentService.ts scripts/tests/device-startup-detail-stability-v32.test.mjs
+          git commit -m "fix: reveal current Home and keep detail artwork stable"
+          git pull --rebase origin main
+          git push origin HEAD:main
