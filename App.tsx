@@ -5810,7 +5810,7 @@ function DetailModal({
           onMomentumScrollEnd={(event) => detailScrollOffsets.set(String(item.id), Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
         >
           <View style={styles.detailHero}>
-            <CatalogArtwork primary={item.backdrop} fallback={item.poster} preview={item.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="backdrop" />
+            <CatalogArtwork primary={item.backdrop || item.backdropFallback || item.poster} fallback={item.backdropFallback || item.poster} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} imageKind="backdrop" />
             <LinearGradient colors={['rgba(7,9,12,0.06)', COLORS.background]} style={StyleSheet.absoluteFill} />
             <View style={styles.detailTopBar}>
               <Pressable onPress={onClose} unstable_pressDelay={0} hitSlop={14} style={styles.detailCircleButton}><Ionicons name="arrow-forward" color="#fff" size={21} /></Pressable>
@@ -7725,10 +7725,49 @@ function AppContent() {
       // this prevents the brief false "catalog is empty" screen at startup.
       let foregroundBootstrapUsed = false;
       let firstContent: LoadedContent;
-      if (!initialLoad && force && online) {
-        // A foreground reopen should refresh from the compact current bootstrap
-        // before the large index. This prevents a stale cached Home/IMDb frame
-        // from being visible for several seconds after returning to the app.
+
+      if (initialLoad && online) {
+        // A true cold start must never parse the previous multi-megabyte cache
+        // before asking for the current revision-bound bootstrap. That old path
+        // blocked Android's JS thread and could reveal an older Home after Splash.
+        let bootstrapContent: LoadedContent | null = null;
+        try {
+          bootstrapContent = await loadBootstrapContent();
+        } catch {
+          bootstrapContent = null;
+        }
+
+        if (bootstrapContent?.items.length) {
+          startupFallbackContentRef.current = bootstrapContent;
+          if (applyContent(bootstrapContent)) {
+            dismissStartup();
+            // The bootstrap already contains the complete navigation catalog.
+            // Fetch/parse the larger index only after first paint and bypass the
+            // old disk cache entirely; merge it without rebuilding visible rails.
+            InteractionManager.runAfterInteractions(() => {
+              void loadContent(false, true)
+                .then((freshContent) => {
+                  if (freshContent.source === 'remote') applyBackgroundFullContent(freshContent);
+                })
+                .catch(() => undefined);
+            });
+            return;
+          }
+        }
+
+        // If bootstrap mirrors are unavailable, try source truth directly. Only
+        // after both current-network paths fail may the old disk cache be parsed.
+        try {
+          const freshContent = await loadContent(false, true);
+          if (freshContent.source === 'remote' && applyContent(freshContent)) {
+            dismissStartup();
+            return;
+          }
+        } catch {
+          // Persisted cache is the emergency offline fallback below.
+        }
+        firstContent = await loadContent(true);
+      } else if (!initialLoad && force && online) {
         const bootstrapContent = await loadBootstrapContent();
         if (bootstrapContent?.items.length) {
           firstContent = bootstrapContent;
@@ -7738,72 +7777,6 @@ function AppContent() {
         }
       } else {
         firstContent = await loadContent(initialLoad);
-      }
-
-      // On an online cold start, start the large full index immediately but do
-      // not make first paint wait for it. The compact bootstrap is the complete
-      // navigation catalog and is bounded to arrive quickly; the full index then
-      // enriches supplemental data in the background without replacing the same
-      // item list. This lets the current Home snapshot dismiss startup as soon as it is usable.
-      if (initialLoad && online && firstContent.source !== 'remote') {
-        const freshContentPromise = loadContent(false);
-        const bootstrapContentPromise = loadBootstrapContent().then((bootstrapContent) => {
-          if (bootstrapContent?.items.length) startupFallbackContentRef.current = bootstrapContent;
-          return bootstrapContent;
-        });
-
-        let bootstrapApplied = false;
-        try {
-          const bootstrapContent = await bootstrapContentPromise;
-          let startupContent = bootstrapContent;
-          if (bootstrapContent?.items.length && firstContent.source === 'cache' && firstContent.items.length) {
-            // The fresh Home snapshot owns the front of the catalog, while the
-            // last complete index keeps categories/search usable until the new
-            // full index finishes in background. Never let an old cache outrank
-            // a title carried by the current revision-bound bootstrap.
-            const bootstrapIds = new Set(
-              bootstrapContent.items.map((item) => `${item.type}:${String(item.id)}`),
-            );
-            startupContent = {
-              ...bootstrapContent,
-              items: [
-                ...bootstrapContent.items,
-                ...firstContent.items.filter((item) =>
-                  !bootstrapIds.has(`${item.type}:${String(item.id)}`),
-                ),
-              ],
-            };
-          }
-          bootstrapApplied = Boolean(startupContent && applyContent(startupContent));
-        } catch {
-          // The full catalog is already in flight and remains the fallback below.
-        }
-
-        if (bootstrapApplied) {
-          dismissStartup();
-          void freshContentPromise
-            .then((freshContent) => {
-              if (freshContent.source === 'remote') applyBackgroundFullContent(freshContent);
-            })
-            .catch(() => undefined);
-          return;
-        }
-
-        // If the compact bootstrap is temporarily unavailable, do not reveal
-        // stale persisted Home while the already-started full remote request is
-        // still capable of succeeding. Only fall back to cache after that remote
-        // attempt actually settles.
-        try {
-          const freshContent = await freshContentPromise;
-          if (freshContent.source === 'remote' && applyContent(freshContent)) {
-            dismissStartup();
-            return;
-          }
-        } catch {
-          // Fall through to the persisted emergency fallback below.
-        }
-        if (applyContent(firstContent)) dismissStartup();
-        return;
       }
 
       const firstApplied = applyContent(firstContent);

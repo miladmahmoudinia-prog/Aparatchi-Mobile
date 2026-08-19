@@ -2,12 +2,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
 
-test('cold start overlays the fresh Home snapshot on the complete cached navigation catalog', async () => {
+test('cold online start resolves current bootstrap before persisted full-index fallback', async () => {
   const source = await fs.readFile('App.tsx', 'utf8');
-  assert.ok(source.includes('const bootstrapIds = new Set'));
-  assert.ok(source.includes('...bootstrapContent.items,'));
-  assert.ok(source.includes('...firstContent.items.filter((item) =>'));
-  assert.ok(source.includes('bootstrapApplied = Boolean(startupContent && applyContent(startupContent));'));
+  const start = source.indexOf('if (initialLoad && online)');
+  const end = source.indexOf('const firstApplied = applyContent(firstContent);', start);
+  const block = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.ok(block.includes('bootstrapContent = await loadBootstrapContent();'));
+  assert.ok(block.includes('firstContent = await loadContent(true);'));
+  assert.ok(block.indexOf('bootstrapContent = await loadBootstrapContent();') < block.indexOf('firstContent = await loadContent(true);'));
+  assert.ok(block.includes('loadContent(false, true)'));
 });
 
 test('detail hydration cannot replace already visible poster or backdrop artwork', async () => {
