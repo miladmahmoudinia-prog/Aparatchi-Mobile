@@ -12,9 +12,11 @@ test('cold start overlays the fresh Home snapshot on the complete cached navigat
 
 test('detail hydration cannot replace already visible poster or backdrop artwork', async () => {
   const source = await fs.readFile('App.tsx', 'utf8');
+  assert.ok(source.includes('const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): CatalogItem => {'));
   assert.ok(source.includes('const visiblePoster = current.poster || current.posterFallback'));
   assert.ok(source.includes('const visibleBackdrop = current.backdrop || current.backdropFallback || visiblePoster'));
-  assert.ok(source.includes('backdrop: current.backdrop || visibleBackdrop'));
+  assert.ok(source.includes('backdrop: visibleBackdrop'));
+  assert.ok(source.includes('return mergeOpenDetailSnapshot(current, fullItem);'));
 });
 
 test('startup bootstrap is accepted only when it belongs to the manifest client revision', async () => {
