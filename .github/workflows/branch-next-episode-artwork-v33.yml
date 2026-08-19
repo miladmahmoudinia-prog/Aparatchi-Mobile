@@ -1,0 +1,91 @@
+name: Branch Next Episode Artwork v33
+
+on:
+  push:
+    branches:
+      - fix-next-episode-artwork-v33
+
+permissions:
+  contents: write
+
+concurrency:
+  group: branch-next-episode-artwork-v33
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v6
+        with:
+          ref: fix-next-episode-artwork-v33
+          fetch-depth: 0
+
+      - id: pending
+        name: Check whether repair is pending
+        shell: bash
+        run: |
+          if [ -f scripts/fix-next-episode-artwork-v33.mjs ]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.pending.outputs.value == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Apply scoped repair
+        if: steps.pending.outputs.value == 'true'
+        run: node scripts/fix-next-episode-artwork-v33.mjs
+
+      - name: Install dependencies
+        if: steps.pending.outputs.value == 'true'
+        run: npm ci --include=dev
+
+      - name: TypeScript check
+        if: steps.pending.outputs.value == 'true'
+        run: npm run typecheck
+
+      - name: Full regression suite
+        if: steps.pending.outputs.value == 'true'
+        run: node --test scripts/tests/*.test.mjs
+
+      - name: Static player audit
+        if: steps.pending.outputs.value == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'const movieEndOverlayStart = Math.max(0, duration - 5);' App.tsx
+          grep -F 'styles.nextEpisodeOverlay,' App.tsx
+          grep -F 'frameRect,' App.tsx
+          grep -F 'fallback={item.backdropFallback || item.backdrop || item.posterFallback || item.poster}' App.tsx
+          grep -F 'localFallback={localArtworkForItem(item)}' App.tsx
+          grep -F 'installStartupContentGate' index.ts
+          test ! -e src/collectionFlatListGuard.tsx
+
+      - name: Commit validated repair
+        if: steps.pending.outputs.value == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/fix-next-episode-artwork-v33.mjs .github/workflows/branch-next-episode-artwork-v33.yml
+          if ! grep -Fq '# milestone Next episode artwork fallback v33' PROJECT-STATE.md; then
+            cat >> PROJECT-STATE.md <<'EOF'
+
+# milestone Next episode artwork fallback v33 — 2026-08-19
+- Final-five-second/end-of-playback timing, compact frame-relative overlay and landscape safe-area behavior from v31 were audited and preserved.
+- The next-episode card still prefers unique episode artwork, but if that episode does not yet have a generated/remote still it now falls back to the series backdrop/poster (and bundled local fallback) instead of rendering an empty dark image area.
+- Episode list cards still reject recycled series art as exact episode artwork; this fallback is scoped only to the single next-episode end card.
+- Validation: npm ci, TypeScript, full Mobile regression suite and static player audit green. Physical-device appearance still requires the next device build/check.
+EOF
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App.tsx PROJECT-STATE.md scripts/tests/next-episode-artwork-fallback-v33.test.mjs scripts/fix-next-episode-artwork-v33.mjs .github/workflows/branch-next-episode-artwork-v33.yml
+          git commit -m "fix: ensure next episode card always has artwork"
+          git push origin HEAD:fix-next-episode-artwork-v33
