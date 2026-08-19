@@ -1,1 +1,1 @@
-first-install freshness v33 retry-idempotent
+first-install freshness v33 capture-typecheck
