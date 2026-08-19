@@ -19,9 +19,10 @@ test('bootstrap mirrors race instead of stacking timeout costs', async () => {
   assert.ok(bootstrap.includes('payloadClientRevision !== manifest.clientRevision'));
 });
 
-test('manifest Raw and CDN requests start together with a bounded Raw preference', async () => {
+test('manifest Raw and CDN requests start together with a bounded source-truth window', async () => {
   const service = await fs.readFile('src/contentService.ts', 'utf8');
   assert.ok(service.includes('const rawPromise = firstValidManifest(rawCandidates);'));
   assert.ok(service.includes('const mirrorPromise = firstValidManifest(mirrorCandidates);'));
-  assert.ok(service.includes('setTimeout(() => resolve(null), 900)'));
+  assert.ok(service.includes('setTimeout(() => resolve(null), 2200)'));
+  assert.ok(service.includes('candidateTime < cachedTime'));
 });
