@@ -40,10 +40,26 @@ jobs:
           node --check scripts/apply-first-install-freshness-v33.mjs
 
       - name: Apply missed startup/detail repair
-        run: node scripts/apply-device-startup-detail-v32.mjs
+        shell: bash
+        run: |
+          if grep -q "const bootstrapIds = new Set" App.tsx \
+            && grep -q "const visiblePoster = current.poster" App.tsx \
+            && grep -q "payloadClientRevision !== manifest.clientRevision" src/contentService.ts; then
+            echo "startup/detail repair already persisted"
+          else
+            node scripts/apply-device-startup-detail-v32.mjs
+          fi
 
       - name: Apply first-install freshness repair
-        run: node scripts/apply-first-install-freshness-v33.mjs
+        shell: bash
+        run: |
+          if grep -q "const STARTUP_MIN_VISIBLE_MS = 0;" App.tsx \
+            && grep -q "const rawPromise = firstValidManifest(rawCandidates);" src/contentService.ts \
+            && grep -q "const controllers = candidates.map" src/contentService.ts; then
+            echo "first-install freshness repair already persisted"
+          else
+            node scripts/apply-first-install-freshness-v33.mjs
+          fi
 
       - name: Normalize generated regressions
         run: |
