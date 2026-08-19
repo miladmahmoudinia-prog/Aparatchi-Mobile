@@ -2,8 +2,6 @@ name: Build Android APK
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
 
 permissions:
   contents: write
@@ -101,13 +99,6 @@ jobs:
 
       - name: Prepare APK for release
         run: cp android/app/build/outputs/apk/release/app-release.apk Aparatchi-Android-Release.apk
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Aparatchi-Android-Release
-          path: Aparatchi-Android-Release.apk
-          retention-days: 1
 
       - name: Publish APK to GitHub Releases
         env:
