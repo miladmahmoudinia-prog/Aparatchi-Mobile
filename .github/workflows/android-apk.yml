@@ -28,6 +28,18 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Expose APK build run id
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+          printf 'run_id=%s\nhead_sha=%s\n' "${{ github.run_id }}" "${{ github.sha }}" > apk-build-run.txt
+          git add apk-build-run.txt
+          git commit -m "chore: expose APK build run id [skip ci]"
+          git push origin HEAD:main
+
       - name: Set up Node 22
         uses: actions/setup-node@v4
         with:
@@ -103,6 +115,13 @@ jobs:
 
       - name: Prepare APK for release
         run: cp android/app/build/outputs/apk/release/app-release.apk Aparatchi-Android-Release.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aparatchi-Android-Release
+          path: Aparatchi-Android-Release.apk
+          retention-days: 1
 
       - name: Publish APK to GitHub Releases
         env:
