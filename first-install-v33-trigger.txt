@@ -1,1 +1,1 @@
-first-install freshness v33 capture-typecheck
+first-install freshness v33 syntax-safe device regression
