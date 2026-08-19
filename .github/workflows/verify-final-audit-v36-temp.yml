@@ -25,31 +25,10 @@ jobs:
         id: typecheck
         continue-on-error: true
         run: npm run typecheck
-      - name: Run all regression scripts
+      - name: Run mobile regression suite
         id: regressions
         continue-on-error: true
-        shell: bash
-        run: |
-          set -uo pipefail
-          shopt -s nullglob
-          files=(scripts/regression*.mjs scripts/*regression*.mjs)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo 'No regression scripts found.' > /tmp/regression-failures.txt
-            exit 1
-          fi
-          printf '%s\n' "${files[@]}" | sort -u > /tmp/regressions.txt
-          : > /tmp/regression-failures.txt
-          failed=0
-          while IFS= read -r file; do
-            echo "==> $file"
-            if ! node "$file" > /tmp/one-regression.log 2>&1; then
-              failed=1
-              echo "FAIL: $file" >> /tmp/regression-failures.txt
-              tail -n 25 /tmp/one-regression.log >> /tmp/regression-failures.txt
-              echo >> /tmp/regression-failures.txt
-            fi
-          done < /tmp/regressions.txt
-          exit "$failed"
+        run: node --test scripts/tests/*.test.mjs
       - name: Report
         if: always()
         env:
@@ -59,11 +38,7 @@ jobs:
           TYPECHECK: ${{ steps.typecheck.outcome }}
           REGRESSIONS: ${{ steps.regressions.outcome }}
           RUN_ID: ${{ github.run_id }}
-        shell: bash
-        run: |
-          detail='none'
-          if [ -s /tmp/regression-failures.txt ]; then detail="$(head -c 6000 /tmp/regression-failures.txt)"; fi
-          gh issue comment "$ISSUE_NUMBER" --body "typecheck=${TYPECHECK}\nregressions=${REGRESSIONS}\nrun=${RUN_ID}\nhead=$(git rev-parse HEAD)\n\`\`\`\n${detail}\n\`\`\`"
+        run: gh issue comment "$ISSUE_NUMBER" --body "typecheck=${TYPECHECK}\nregressions=${REGRESSIONS}\nrun=${RUN_ID}\nhead=$(git rev-parse HEAD)"
       - name: Fail on audit failure
         if: steps.typecheck.outcome != 'success' || steps.regressions.outcome != 'success'
         run: exit 1
