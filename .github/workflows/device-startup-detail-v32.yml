@@ -1,5 +1,4 @@
-name: One-shot device startup and detail stability v32
-# tracked retry
+name: One-shot first-install freshness v33
 
 on:
   push:
@@ -32,7 +31,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           printf 'run_id=%s\nhead_sha=%s\n' "${{ github.run_id }}" "${{ github.sha }}" > device-startup-detail-v32-run.txt
           git add device-startup-detail-v32-run.txt
-          git commit -m "chore: expose device startup detail v32 run id [skip ci]"
+          git commit -m "chore: expose first-install v33 run id [skip ci]"
           git push origin HEAD:main
 
       - name: Setup Node
@@ -44,13 +43,19 @@ jobs:
       - name: Install dependencies
         run: npm ci --include=dev
 
-      - name: Apply source repair
+      - name: Apply missed startup/detail repair
         run: node scripts/apply-device-startup-detail-v32.mjs
+
+      - name: Apply first-install freshness repair
+        run: node scripts/apply-first-install-freshness-v33.mjs
 
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Device regression
+      - name: First-install regression
+        run: node --test scripts/tests/first-install-freshness-v33.test.mjs
+
+      - name: Device startup/detail regression
         run: node --test scripts/tests/device-startup-detail-stability-v32.test.mjs
 
       - name: Existing startup regressions
@@ -65,8 +70,8 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f .github/workflows/device-startup-detail-v32.yml scripts/apply-device-startup-detail-v32.mjs device-startup-detail-v32-run.txt
-          git add App.tsx src/contentService.ts scripts/tests/device-startup-detail-stability-v32.test.mjs
-          git commit -m "fix: reveal current Home and keep detail artwork stable"
+          git rm -f .github/workflows/device-startup-detail-v32.yml scripts/apply-device-startup-detail-v32.mjs scripts/apply-first-install-freshness-v33.mjs device-startup-detail-v32-run.txt
+          git add App.tsx src/contentService.ts scripts/test-truthful-startup-cache-v6.mjs scripts/test-visible-media-startup-v7.mjs scripts/tests/device-startup-detail-stability-v32.test.mjs scripts/tests/first-install-freshness-v33.test.mjs
+          git commit -m "fix: make first install reveal current Home immediately"
           git pull --rebase origin main
           git push origin HEAD:main
