@@ -7477,7 +7477,7 @@ function StartupScreen() {
   );
 }
 
-const STARTUP_MIN_VISIBLE_MS = 5000;
+const STARTUP_MIN_VISIBLE_MS = 0;
 
 function AppContent() {
   const appInsets = useSafeAreaInsets();
@@ -7721,7 +7721,7 @@ function AppContent() {
       // not make first paint wait for it. The compact bootstrap is the complete
       // navigation catalog and is bounded to arrive quickly; the full index then
       // enriches supplemental data in the background without replacing the same
-      // item list. This keeps the existing five-second startup cover useful.
+      // item list. This lets the current Home snapshot dismiss startup as soon as it is usable.
       if (initialLoad && online && firstContent.source !== 'remote') {
         const freshContentPromise = loadContent(false);
         const bootstrapContentPromise = loadBootstrapContent().then((bootstrapContent) => {
@@ -7732,7 +7732,26 @@ function AppContent() {
         let bootstrapApplied = false;
         try {
           const bootstrapContent = await bootstrapContentPromise;
-          bootstrapApplied = Boolean(bootstrapContent && applyContent(bootstrapContent));
+          let startupContent = bootstrapContent;
+          if (bootstrapContent?.items.length && firstContent.source === 'cache' && firstContent.items.length) {
+            // The fresh Home snapshot owns the front of the catalog, while the
+            // last complete index keeps categories/search usable until the new
+            // full index finishes in background. Never let an old cache outrank
+            // a title carried by the current revision-bound bootstrap.
+            const bootstrapIds = new Set(
+              bootstrapContent.items.map((item) => `${item.type}:${String(item.id)}`),
+            );
+            startupContent = {
+              ...bootstrapContent,
+              items: [
+                ...bootstrapContent.items,
+                ...firstContent.items.filter((item) =>
+                  !bootstrapIds.has(`${item.type}:${String(item.id)}`),
+                ),
+              ],
+            };
+          }
+          bootstrapApplied = Boolean(startupContent && applyContent(startupContent));
         } catch {
           // The full catalog is already in flight and remains the fallback below.
         }
@@ -8118,7 +8137,24 @@ function AppContent() {
         if (!current) return current;
         if (current.type !== activeSummary.type || String(current.id) !== String(activeSummary.id)) return current;
         if (current.detailPath !== activeSummary.detailPath) return current;
-        return fullItem;
+
+        // Keep the artwork that was already visible when Detail opened. The
+        // immutable shard may contain a newer/fallback backdrop, but swapping it
+        // one or two seconds after the screen is mounted looks like a broken
+        // banner. The next fresh catalog open can still adopt new artwork.
+        const visiblePoster = current.poster || current.posterFallback || '';
+        const visibleBackdrop = current.backdrop || current.backdropFallback || visiblePoster;
+        return {
+          ...fullItem,
+          ...(visiblePoster ? {
+            poster: current.poster || visiblePoster,
+            posterFallback: current.posterFallback || fullItem.posterFallback,
+          } : {}),
+          ...(visibleBackdrop ? {
+            backdrop: current.backdrop || visibleBackdrop,
+            backdropFallback: current.backdropFallback || fullItem.backdropFallback,
+          } : {}),
+        };
       });
     })().catch(() => undefined);
 

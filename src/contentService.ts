@@ -1528,50 +1528,73 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
   const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();
   if (!remoteUrl) return null;
 
+  // Manifest mirrors are raced internally. This keeps the exact clientRevision
+  // truth check without paying Raw + CDN timeout costs one after another.
   let manifest: RemoteCatalogManifest | null = null;
   try {
     manifest = await fetchRemoteManifest();
   } catch {
-    // Both public manifest mirrors can be unavailable; bootstrap still remains
-    // a better emergency source than the bundled catalog in that case.
+    // A current bootstrap is still preferable to the bundled emergency catalog
+    // if both manifest mirrors are temporarily unavailable.
   }
 
-  const candidates = [...remoteRepositoryUrlCandidates(remoteUrl)].sort((a, b) =>
-    Number(/raw\.githubusercontent\.com/i.test(b)) - Number(/raw\.githubusercontent\.com/i.test(a))
-  );
+  const candidates = remoteRepositoryUrlCandidates(remoteUrl);
+  if (!candidates.length) return null;
   const revisionToken = manifest?.bootstrapRevision || manifest?.clientRevision || manifest?.revision || String(Date.now());
+  const controllers = candidates.map(() => new AbortController());
 
-  for (const candidate of candidates) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3600);
-    const separator = candidate.includes('?') ? '&' : '?';
-    try {
-      const response = await fetch(
-        candidate + separator + '_aparatchi_bootstrap=' + encodeURIComponent(revisionToken) + '&t=' + Date.now(),
-        {
-          headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
-          signal: controller.signal,
-        },
-      );
-      if (!response.ok) continue;
-      const parsed = parsePayload(JSON.parse(await response.text()));
-      if (!parsed?.items.length) continue;
-      if (
-        manifest?.catalogUpdatedAt &&
-        asString(parsed.updatedAt) !== asString(manifest.catalogUpdatedAt)
-      ) {
-        // This mirror is serving the previous generated artifact. Never reveal
-        // it just because its JSON is otherwise valid; try the next mirror.
-        continue;
-      }
-      return { ...parsed, source: 'remote' };
-    } catch {
-      // Try another repository mirror.
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-  return null;
+  return await new Promise<LoadedContent | null>((resolve) => {
+    let pending = candidates.length;
+    let settled = false;
+
+    candidates.forEach((candidate, index) => {
+      const controller = controllers[index];
+      const timeout = setTimeout(() => controller.abort(), 3200);
+      const separator = candidate.includes('?') ? '&' : '?';
+
+      void (async () => {
+        try {
+          const response = await fetch(
+            candidate + separator + '_aparatchi_bootstrap=' + encodeURIComponent(revisionToken) + '&t=' + Date.now(),
+            {
+              headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+              signal: controller.signal,
+            },
+          );
+          if (!response.ok) return;
+
+          const rawBootstrap = JSON.parse(await response.text());
+          const bootstrapRecord = rawBootstrap && typeof rawBootstrap === 'object'
+            ? rawBootstrap as Record<string, unknown>
+            : {};
+          const payloadClientRevision = asString(
+            bootstrapRecord.clientRevision ?? bootstrapRecord.client_revision,
+          );
+          if (manifest?.clientRevision && payloadClientRevision !== manifest.clientRevision) return;
+
+          const parsed = parsePayload(rawBootstrap);
+          if (!parsed?.items.length) return;
+          if (
+            manifest?.catalogUpdatedAt &&
+            asString(parsed.updatedAt) !== asString(manifest.catalogUpdatedAt)
+          ) return;
+          if (settled) return;
+
+          settled = true;
+          controllers.forEach((other, otherIndex) => {
+            if (otherIndex !== index) other.abort();
+          });
+          resolve({ ...parsed, source: 'remote' });
+        } catch {
+          // Another public mirror may still return the current revision.
+        } finally {
+          clearTimeout(timeout);
+          pending -= 1;
+          if (!pending && !settled) resolve(null);
+        }
+      })();
+    });
+  });
 }
 
 const readCachedContent = async (): Promise<CatalogPayload | null> => {
@@ -1623,38 +1646,28 @@ const writeCacheMetadata = async (metadata: RemoteCacheMetadata) => {
 const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
   const manifestUrl = REMOTE_CONTENT_MANIFEST_URL.trim();
   if (!manifestUrl) return null;
-  let lastError: unknown = null;
 
-  const manifestCandidates = [...remoteRepositoryUrlCandidates(manifestUrl)].sort((a, b) =>
-    Number(/raw\.githubusercontent\.com/i.test(b)) - Number(/raw\.githubusercontent\.com/i.test(a))
-  );
-  for (const candidate of manifestCandidates) {
+  const manifestCandidates = remoteRepositoryUrlCandidates(manifestUrl);
+  if (!manifestCandidates.length) return null;
+  const rawCandidates = manifestCandidates.filter((candidate) => /raw\.githubusercontent\.com/i.test(candidate));
+  const mirrorCandidates = manifestCandidates.filter((candidate) => !/raw\.githubusercontent\.com/i.test(candidate));
+
+  const fetchManifestCandidate = async (candidate: string): Promise<RemoteCatalogManifest | null> => {
     const separator = candidate.includes('?') ? '&' : '?';
-    const requestUrl = `${candidate}${separator}_aparatchi_manifest=${Date.now()}`;
+    const requestUrl = candidate + separator + '_aparatchi_manifest=' + Date.now();
     const controller = new AbortController();
-    // Manifest is tiny; allow Raw a bounded extra moment so startup can bind
-    // itself to source truth instead of a several-minutes-stale mirror entry.
-    const timeout = setTimeout(() => controller.abort(), 2800);
+    const timeout = setTimeout(() => controller.abort(), 2400);
     try {
       const response = await fetch(requestUrl, {
         headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
         signal: controller.signal,
       });
-      if (!response.ok) {
-        lastError = new Error(`Manifest HTTP ${response.status} from ${candidate}`);
-        continue;
-      }
+      if (!response.ok) return null;
       const value = await response.json();
-      if (!value || typeof value !== 'object') {
-        lastError = new Error(`Invalid catalog manifest from ${candidate}`);
-        continue;
-      }
+      if (!value || typeof value !== 'object') return null;
       const record = value as Record<string, unknown>;
       const revision = asString(record.revision);
-      if (!revision) {
-        lastError = new Error(`Catalog manifest has no revision from ${candidate}`);
-        continue;
-      }
+      if (!revision) return null;
       return {
         revision,
         ...(asString(record.clientRevision ?? record.client_revision)
@@ -1683,15 +1696,59 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
           ? { detailBase: asString(record.detailBase ?? record.detail_base) }
           : {}),
       };
-    } catch (error) {
-      lastError = error;
+    } catch {
+      return null;
     } finally {
       clearTimeout(timeout);
     }
-  }
+  };
 
-  throw lastError instanceof Error ? lastError : new Error('Catalog manifest is unavailable from all mirrors');
+  const firstValidManifest = (candidates: string[]) => {
+    if (!candidates.length) return Promise.resolve<RemoteCatalogManifest | null>(null);
+    return new Promise<RemoteCatalogManifest | null>((resolve) => {
+      let pending = candidates.length;
+      let settled = false;
+      candidates.forEach((candidate) => {
+        void fetchManifestCandidate(candidate).then((value) => {
+          if (settled) return;
+          if (value) {
+            settled = true;
+            resolve(value);
+            return;
+          }
+          pending -= 1;
+          if (!pending) {
+            settled = true;
+            resolve(null);
+          }
+        });
+      });
+    });
+  };
+
+  // Start source truth and CDN at the same instant. Give Raw only a short
+  // preference window; a blocked Raw host must never add seconds to cold start.
+  const rawPromise = firstValidManifest(rawCandidates);
+  const mirrorPromise = firstValidManifest(mirrorCandidates);
+  const rawPreferred = await Promise.race([
+    rawPromise,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 900)),
+  ]);
+  if (rawPreferred) return rawPreferred;
+
+  const firstAfterPreference = await Promise.race([
+    rawPromise.then((value) => ({ source: 'raw' as const, value })),
+    mirrorPromise.then((value) => ({ source: 'mirror' as const, value })),
+  ]);
+  if (firstAfterPreference.value) return firstAfterPreference.value;
+
+  const second = firstAfterPreference.source === 'raw'
+    ? await mirrorPromise
+    : await rawPromise;
+  if (second) return second;
+  throw new Error('Catalog manifest is unavailable from all mirrors');
 };
+
 const manifestMatchesCachedContent = (
   manifest: RemoteCatalogManifest,
   cached: CatalogPayload,
