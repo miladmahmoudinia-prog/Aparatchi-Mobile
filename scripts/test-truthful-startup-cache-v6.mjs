@@ -6,7 +6,6 @@ const service = await fs.readFile('src/contentService.ts', 'utf8');
 const requiredApp = [
   'const STARTUP_MIN_VISIBLE_MS = 0;',
   'const startupStartedAtRef = useRef(Date.now());',
-  'startupFallbackTimer = setTimeout(dismissStartup, 10000);',
   'const freshContentPromise = loadContent(false);',
   'const bootstrapContentPromise = loadBootstrapContent()',
   'const bootstrapIds = new Set(',
@@ -17,6 +16,9 @@ for (const marker of requiredApp) {
 }
 if (app.includes('const STARTUP_MIN_VISIBLE_MS = 5000;')) {
   throw new Error('Five-second mandatory splash is still active.');
+}
+if (!/startupFallbackTimer = setTimeout\(\(\) => \{[\s\S]*?\}, 10000\);/.test(app)) {
+  throw new Error('Ten-second emergency startup escape is missing.');
 }
 
 const freshStart = app.indexOf('const freshContentPromise = loadContent(false);');
