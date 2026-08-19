@@ -11,8 +11,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: aparatchi-mobile-write-lock
-  cancel-in-progress: true
+  group: first-install-v33-${{ github.event.pull_request.number }}-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   repair:
