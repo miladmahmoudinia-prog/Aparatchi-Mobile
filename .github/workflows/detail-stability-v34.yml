@@ -58,6 +58,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm -f --ignore-unmatch .github/workflows/detail-stability-v34.yml scripts/apply-detail-stability-v34.mjs detail-stability-v34-trigger.txt
-          git add App.tsx scripts/tests/detail-first-paint-stability-v34.test.mjs
+          git add App.tsx scripts/tests/detail-first-paint-stability-v34.test.mjs scripts/tests/device-startup-detail-stability-v32.test.mjs
           git commit -m "fix: keep Detail first paint stable during enrichment"
           git push origin HEAD:${{ github.head_ref }}
