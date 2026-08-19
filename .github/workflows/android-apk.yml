@@ -2,6 +2,10 @@ name: Build Android APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'device-startup-detail-v32-run.txt'
 
 permissions:
   contents: write
