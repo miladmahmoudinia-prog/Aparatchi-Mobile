@@ -2,6 +2,8 @@
 
 function replaceOnce(source, before, after, label) {
   if (source.includes(after)) return source;
+  if (label === 'collection scroll callback' && source.includes('const rememberCollectionFolderOffset = useCallback')) return source;
+  if (label === 'collection scroll restore' && source.includes('onScroll={rememberCollectionFolderOffset}')) return source;
   const count = source.split(before).length - 1;
   if (count !== 1) {
     throw new Error(`${label}: expected exactly one source anchor, found ${count}`);
