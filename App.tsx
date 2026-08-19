@@ -97,6 +97,7 @@ type SearchFilter =
   | 'kids'
   | 'religious'
   | 'documentaries'
+  | 'short-films'
   | 'wildlife'
   | 'collections'
   | 'mobile-operator'
@@ -319,40 +320,99 @@ const RELATED_GENERIC_CATEGORY_KEYS = new Set([
   'movies', 'series', 'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
   'latest', 'updated', 'mobile-operator',
 ]);
+const RELATED_GENERIC_GENRES = new Set(['درام', 'drama']);
+const relatedStableHash = (value: string) => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
 
-const relatedCatalogItems = (item: CatalogItem, catalog: CatalogItem[], limit = 5) => {
+const relatedCatalogItems = (item: CatalogItem, catalog: CatalogItem[], limit = 5, selectionSeed = 0) => {
   const sourceGenres = new Set((item.genres || []).map(normalizeComparableText).filter(Boolean));
   const sourceCategories = new Set((item.categoryKeys || []).filter((key) => !RELATED_GENERIC_CATEGORY_KEYS.has(key)));
   const sourceCountries = new Set((item.countryCodes || []).map((code) => String(code).toUpperCase()));
+  const sourcePeople = new Set((item.people || []).map((person) =>
+    person.tmdbId ? `tmdb:${person.tmdbId}` : normalizeComparableText(person.nameFa || person.name || ''),
+  ).filter(Boolean));
+  const sourceYear = Number(item.year || 0);
 
   const ranked = catalog
     .filter((candidate) => candidate.id !== item.id && candidate.type === item.type)
     .filter((candidate) => candidate.type !== 'series' || isSeriesPublished(candidate))
     .map((candidate) => {
       const candidateGenres = (candidate.genres || []).map(normalizeComparableText).filter(Boolean);
-      const sharedGenres = candidateGenres.filter((genre) => sourceGenres.has(genre)).length;
+      const sharedGenres = candidateGenres.filter((genre) => sourceGenres.has(genre));
+      const meaningfulGenres = sharedGenres.filter((genre) => !RELATED_GENERIC_GENRES.has(genre));
       const sharedCategories = (candidate.categoryKeys || []).filter(
         (key) => !RELATED_GENERIC_CATEGORY_KEYS.has(key) && sourceCategories.has(key),
-      ).length;
-      const sharedCountries = (candidate.countryCodes || []).filter((code) =>
-        sourceCountries.has(String(code).toUpperCase()),
-      ).length;
-      let score = sharedGenres * 5 + sharedCategories * 4 + sharedCountries * 2;
-      if (item.collectionId && candidate.collectionId === item.collectionId) score += 30;
+      );
+      const sharedCountries = (candidate.countryCodes || []).map((code) => String(code).toUpperCase()).filter((code) => sourceCountries.has(code));
+      const sharedPeople = (candidate.people || []).map((person) =>
+        person.tmdbId ? `tmdb:${person.tmdbId}` : normalizeComparableText(person.nameFa || person.name || ''),
+      ).filter((key) => key && sourcePeople.has(key));
+      const yearDistance = sourceYear > 0 && Number(candidate.year || 0) > 0
+        ? Math.abs(sourceYear - Number(candidate.year || 0))
+        : 99;
+      let score = meaningfulGenres.length * 6 + (sharedGenres.length - meaningfulGenres.length);
+      score += sharedCategories.length * 5 + sharedCountries.length * 2 + sharedPeople.length * 7;
+      if (yearDistance <= 3) score += 2;
+      else if (yearDistance <= 8) score += 1;
+      if (item.collectionId && candidate.collectionId === item.collectionId) score += 40;
       if (item.ir === candidate.ir) score += 1;
       if (item.isAnimation === candidate.isAnimation) score += 1;
       if (item.isAnime === candidate.isAnime) score += 1;
-      return { candidate, score };
+      const jitter = (relatedStableHash(String(item.id) + ':' + String(candidate.id) + ':' + String(selectionSeed)) % 10000) / 10000;
+      const dominantGenre = meaningfulGenres[0] || sharedGenres[0] || '';
+      const dominantCategory = sharedCategories[0] || '';
+      const dominantCountry = sharedCountries[0] || '';
+      return { candidate, score, jitter, dominantGenre, dominantCategory, dominantCountry, meaningfulGenres, sharedPeople, yearDistance };
     })
-    .sort((a, b) =>
-      b.score - a.score ||
-      Number(b.candidate.rate || 0) - Number(a.candidate.rate || 0) ||
-      Number(b.candidate.year || 0) - Number(a.candidate.year || 0),
-    );
+    .sort((a, b) => b.score - a.score || b.jitter - a.jitter);
 
-  const strong = ranked.filter((entry) => entry.score > 1);
-  const fallback = ranked.filter((entry) => entry.score <= 1);
-  return [...strong, ...fallback].slice(0, Math.max(0, limit)).map((entry) => entry.candidate);
+  const selected: CatalogItem[] = [];
+  const used = new Set<string>();
+  const genreCounts = new Map<string, number>();
+  const categoryCounts = new Map<string, number>();
+  const countryCounts = new Map<string, number>();
+  const take = (entry: (typeof ranked)[number], enforceDiversity: boolean) => {
+    if (selected.length >= limit || used.has(entry.candidate.id)) return false;
+    if (enforceDiversity) {
+      if (entry.dominantGenre && (genreCounts.get(entry.dominantGenre) || 0) >= 2) return false;
+      if (entry.dominantCategory && (categoryCounts.get(entry.dominantCategory) || 0) >= 2) return false;
+      if (entry.dominantCountry && (countryCounts.get(entry.dominantCountry) || 0) >= 3) return false;
+    }
+    selected.push(entry.candidate);
+    used.add(entry.candidate.id);
+    if (entry.dominantGenre) genreCounts.set(entry.dominantGenre, (genreCounts.get(entry.dominantGenre) || 0) + 1);
+    if (entry.dominantCategory) categoryCounts.set(entry.dominantCategory, (categoryCounts.get(entry.dominantCategory) || 0) + 1);
+    if (entry.dominantCountry) countryCounts.set(entry.dominantCountry, (countryCounts.get(entry.dominantCountry) || 0) + 1);
+    return true;
+  };
+
+  // Exact franchise/collection relations always win.
+  ranked.filter((entry) => item.collectionId && entry.candidate.collectionId === item.collectionId)
+    .forEach((entry) => take(entry, true));
+
+  // Prefer genuinely strong relations, but never let one broad tag such as
+  // "Drama" consume the entire rail.
+  ranked.filter((entry) => entry.score >= 5).forEach((entry) => take(entry, true));
+
+  // Fill with varied same-format titles before allowing repeated broad-tag hits.
+  ranked
+    .filter((entry) => !used.has(entry.candidate.id))
+    .sort((a, b) => {
+      const aDiverse = Number(a.meaningfulGenres.length > 0 || a.sharedPeople.length > 0 || a.yearDistance <= 8);
+      const bDiverse = Number(b.meaningfulGenres.length > 0 || b.sharedPeople.length > 0 || b.yearDistance <= 8);
+      return bDiverse - aDiverse || b.jitter - a.jitter;
+    })
+    .forEach((entry) => take(entry, true));
+
+  // Only if the catalog is too small do we relax the diversity caps.
+  ranked.forEach((entry) => take(entry, false));
+  return selected.slice(0, Math.max(0, limit));
 };
 
 const titleLayoutMetrics = (value?: string) => {
@@ -1123,6 +1183,7 @@ const mediaKindLabel = (item: CatalogItem) => {
     return item.type === 'movie' ? 'فیلم مذهبی' : 'سریال مذهبی';
   }
   if (isKidsItem(item) && !isAnimatedItem(item)) return 'محتوای کودک';
+  if (item.contentKind === 'short-film' || hasCategory(item, 'short-films')) return 'فیلم کوتاه';
   if (isDocumentaryItem(item)) {
     return item.type === 'series' ? 'مستند سریالی' : 'مستند';
   }
@@ -1361,7 +1422,7 @@ const filterTitle = (filter: SearchFilter) => {
     'korean-movies': 'فیلم‌های کره‌ای', 'korean-series': 'سریال‌های کره‌ای', 'indian-movies': 'فیلم‌های هندی', 'indian-series': 'سریال‌های هندی',
     'anime-movies': 'انیمه‌های سینمایی', 'anime-series': 'انیمه‌های سریالی',
     'animation-movies': 'انیمیشن‌های سینمایی', 'animation-series': 'انیمیشن‌های سریالی',
-    programs: 'برنامه‌ها و مسابقه‌ها', kids: 'کودکان', religious: 'مذهبی و مناسبتی', documentaries: 'مستندها', wildlife: 'حیات وحش', collections: 'کالکشن‌ها',
+    programs: 'برنامه‌ها و مسابقه‌ها', kids: 'کودکان', religious: 'مذهبی و مناسبتی', documentaries: 'مستندها', 'short-films': 'فیلم کوتاه', wildlife: 'حیات وحش', collections: 'کالکشن‌ها',
     'mobile-operator': 'ویژه اینترنت همراه',
   };
   return titles[filter] || 'همه محتوا';
@@ -1400,6 +1461,7 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
     case 'kids': return isKidsItem(item);
     case 'religious': return isReligiousItem(item);
     case 'documentaries': return isDocumentaryItem(item) && !isWildlifeDocumentaryItem(item);
+    case 'short-films': return item.contentKind === 'short-film' || hasCategory(item, 'short-films');
     case 'wildlife': return isWildlifeDocumentaryItem(item);
     case 'collections': return item.type === 'movie' && Boolean(item.collectionId);
     case 'mobile-operator': return itemHasOperatorAccess(item);
@@ -1427,7 +1489,7 @@ const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
   'korean-movies', 'korean-series', 'indian-movies',
   'anime-movies', 'anime-series', 'animation-movies', 'animation-series',
-  'programs', 'kids', 'religious', 'documentaries', 'wildlife',
+  'programs', 'kids', 'religious', 'documentaries', 'short-films', 'wildlife',
 ]);
 const STRICT_DYNAMIC_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
@@ -3274,6 +3336,7 @@ const HOME_CATALOG_ROWS: Array<Omit<HomeCatalogRow, 'items'>> = [
   { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها' },
   { filter: 'religious', title: 'مذهبی و مناسبتی' },
   { filter: 'documentaries', title: 'مستندها' },
+  { filter: 'short-films', title: 'فیلم کوتاه' },
 ];
 
 const summaryMatchesHomeFilter = (item: CatalogItem, filter: SearchFilter) => {
@@ -3523,6 +3586,7 @@ const CATEGORY_CARDS: CategoryCardConfig[] = [
   { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها', subtitle: 'مسابقه، رئالیتی و گفت‌وگو', icon: 'mic-outline' },
   { filter: 'religious', title: 'مذهبی و مناسبتی', subtitle: 'آثار مذهبی، قرآنی و مناسبتی', icon: 'book-outline' },
   { filter: 'documentaries', title: 'مستندها', subtitle: 'آثار مستند', icon: 'camera-outline' },
+  { filter: 'short-films', title: 'فیلم کوتاه', subtitle: 'فیلم‌های کوتاه و آثار جشنواره‌ای', icon: 'film-outline' },
   { filter: 'wildlife', title: 'حیات وحش', subtitle: 'مستندهای طبیعت و حیات وحش', icon: 'leaf-outline' },
 ];
 
@@ -3569,6 +3633,7 @@ const relatedCategoryFilters = (filter: SearchFilter): SearchFilter[] => {
     'indian-movies': ['movie'],
     collections: ['movie', 'series'],
     documentaries: ['movie', 'series'],
+    'short-films': ['movie', 'documentaries'],
     wildlife: ['documentaries', 'movie'],
     programs: ['series', 'foreign-series'],
     kids: ['animation-series', 'series'],
@@ -5672,12 +5737,14 @@ function RelatedTitlesSection({
   item,
   catalog,
   onOpen,
+  selectionSeed,
 }: {
   item: CatalogItem;
   catalog: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
+  selectionSeed: number;
 }) {
-  const related = useMemo(() => relatedCatalogItems(item, catalog, 5), [item, catalog]);
+  const related = useMemo(() => relatedCatalogItems(item, catalog, 5, selectionSeed), [item, catalog, selectionSeed]);
   const displayedRelated = useMemo(() => [...related].reverse(), [related]);
   if (!related.length) return null;
 
@@ -5772,10 +5839,12 @@ function DetailModal({
   );
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
   const [downloadInitialGroup, setDownloadInitialGroup] = useState<string | null>(null);
+  const [relatedSelectionSeed, setRelatedSelectionSeed] = useState(0);
 
   useEffect(() => {
     setDownloadSheetOpen(false);
     setDownloadInitialGroup(null);
+    if (visible && item?.id) setRelatedSelectionSeed((seed) => seed + 1);
   }, [item?.id, visible]);
   if (!item) return null;
 
@@ -5894,7 +5963,7 @@ function DetailModal({
             ) : null}
             <PeopleSection item={item} onOpen={onOpenPerson} />
             <MovieCollectionSection item={item} catalog={catalog} onOpen={onOpenRelated} />
-            <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} />
+            <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} selectionSeed={relatedSelectionSeed} />
             {item.type === 'series' && episodeGroups.length ? (
               <SeriesEpisodeShowcase
                 item={item}
