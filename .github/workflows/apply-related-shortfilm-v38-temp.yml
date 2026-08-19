@@ -20,6 +20,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Normalize patch generator
+        run: node scripts/fix-related-patch-v38.mjs
       - name: Apply patch
         run: node scripts/apply-related-shortfilm-v38.mjs
       - name: Install dependencies
