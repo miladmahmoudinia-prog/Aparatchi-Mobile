@@ -22,7 +22,7 @@ function applyMobileSourcePatches(input) {
   source = replaceOnce(
     source,
     "  const posterBadges = itemPosterBadges(item);\n  const latestEpisode = item.type === 'series' ? newestEpisodeGroup(item) : null;\n  const latestEpisodeMeta = latestEpisode || item.latestEpisode || null;\n  const posterNameFa = /[A-Za-z]/.test(item.nameFa || '') && item.collectionNameFa\n    ? `${item.collectionNameFa}${item.collectionOrder ? ` ${toPersianDigits(item.collectionOrder)}` : ''}`\n    : item.nameFa;\n",
-    "  const posterBadges = itemPosterBadges(item);\n  const latestEpisodeMeta = item.type === 'series'\n    ? (item.latestEpisode || newestEpisodeGroup(item))\n    : null;\n  const posterNameFa = String(item.nameFa || item.name || '').trim();\n",
+    "  const posterBadges = itemPosterBadges(item);\n  // Prefer compact catalog metadata. Sorting every episode group while a poster\n  // is being mounted makes taps feel delayed on large series shelves.\n  const latestEpisodeMeta = item.latestEpisode || (item.type === 'series' ? newestEpisodeGroup(item) : null);\n  // A movie/series title must never be replaced by its collection label.\n  const posterNameFa = String(item.nameFa || '').trim() || item.name;\n",
     'poster own-title and latest episode fast path',
   );
 
