@@ -4,23 +4,23 @@ const app = await fs.readFile('App.tsx', 'utf8');
 const service = await fs.readFile('src/contentService.ts', 'utf8');
 
 const requiredApp = [
-  'const STARTUP_MIN_VISIBLE_MS = 5000;',
+  'const STARTUP_MIN_VISIBLE_MS = 0;',
   "if (initialLoad && online && firstContent.source !== 'remote') {",
   'const freshContentPromise = loadContent(false);',
-  'const bootstrapContent = await loadBootstrapContent();',
-  'const currentBootstrapApplied = Boolean(bootstrapContent && applyContent(bootstrapContent));',
+  'const bootstrapContent = await bootstrapContentPromise;',
+  'bootstrapApplied = Boolean(startupContent && applyContent(startupContent));',
   'startupFallbackTimer = setTimeout(dismissStartup, 10000);',
   "if (await refreshVpnState()) { setVpnWarningVisible(true); return; }",
 ];
 for (const marker of requiredApp) {
-  if (!app.includes(marker)) throw new Error(`Missing v7 app marker: ${marker}`);
+  if (!app.includes(marker)) throw new Error(`Missing current startup marker: ${marker}`);
 }
 
 const staleGate = app.indexOf("if (initialLoad && online && firstContent.source !== 'remote') {");
+const bootstrapLoad = app.indexOf('const bootstrapContent = await bootstrapContentPromise;', staleGate);
 const normalApply = app.indexOf('const firstApplied = applyContent(firstContent);', staleGate);
-const bootstrapLoad = app.indexOf('const bootstrapContent = await loadBootstrapContent();', staleGate);
 if (staleGate < 0 || bootstrapLoad < 0 || normalApply < 0 || !(staleGate < bootstrapLoad && bootstrapLoad < normalApply)) {
-  throw new Error('Persisted cache can still be committed before current bootstrap on an online cold start.');
+  throw new Error('Stale cache/local catalog can still be committed before current bootstrap on online cold start.');
 }
 
 if (app.includes("!vpnActive && (hasPlayableStream || primaryOperatorPlayFile)")) {
@@ -34,23 +34,25 @@ if (!streamHandler.includes('if (await refreshVpnState()) { setVpnWarningVisible
 const bootstrapStart = service.indexOf('export async function loadBootstrapContent');
 const bootstrapEnd = service.indexOf('const readCachedContent', bootstrapStart);
 const bootstrap = service.slice(bootstrapStart, bootstrapEnd);
-if (!bootstrap.includes('const candidates = [...remoteRepositoryUrlCandidates(remoteUrl)].sort')) {
-  throw new Error('Bootstrap mirrors are not explicitly ordered.');
+if (!bootstrap.includes('candidates.forEach((candidate, index) => {')) {
+  throw new Error('Bootstrap mirrors are not raced concurrently.');
 }
-if (!bootstrap.includes('raw\\.githubusercontent\\.com')) throw new Error('Raw bootstrap preference missing.');
-if (!bootstrap.includes('setTimeout(() => controller.abort(), 3200)')) throw new Error('Bootstrap failover is not bounded.');
-if (bootstrap.includes('Promise<LoadedContent | null>((resolve)')) throw new Error('Old stale-mirror bootstrap race is still present.');
-
+if (!bootstrap.includes('setTimeout(() => controller.abort(), 3200)')) {
+  throw new Error('Bootstrap request timeout is not bounded.');
+}
+if (!bootstrap.includes('payloadClientRevision !== manifest.clientRevision')) {
+  throw new Error('Bootstrap can reveal a different client revision than manifest.');
+}
 if (!service.includes('const catalogCandidates = [...remoteRepositoryUrlCandidates(remoteUrl)].sort')) {
-  throw new Error('Full catalog mirrors are not Raw-first.');
+  throw new Error('Full catalog source-truth preference disappeared.');
 }
 
 console.log(JSON.stringify({
   staleCacheVisibleBeforeCurrentBootstrap: false,
-  normalStartupMinimumMs: 5000,
+  mandatoryStartupMinimumMs: 0,
   emergencyStartupFallbackMs: 10000,
-  bootstrapRawFirst: true,
-  fullCatalogRawFirst: true,
+  bootstrapMirrorRace: true,
+  fullCatalogBackgroundRefresh: true,
   playActionVisibleWithVpn: true,
   vpnStillCheckedOnTap: true,
 }, null, 2));
