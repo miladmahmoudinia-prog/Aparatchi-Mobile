@@ -1,0 +1,56 @@
+name: Verify final mobile audit v36 temp
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify:
+    if: github.event.issue.title == 'RUN FINAL MOBILE AUDIT V36'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --include=dev
+      - name: Typecheck
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck
+      - name: Run all regression scripts
+        id: regressions
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(scripts/regression*.mjs scripts/*regression*.mjs)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo 'No regression scripts found.' >&2
+            exit 1
+          fi
+          printf '%s\n' "${files[@]}" | sort -u > /tmp/regressions.txt
+          while IFS= read -r file; do
+            echo "==> $file"
+            node "$file"
+          done < /tmp/regressions.txt
+      - name: Report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TYPECHECK: ${{ steps.typecheck.outcome }}
+          REGRESSIONS: ${{ steps.regressions.outcome }}
+        run: gh issue comment "$ISSUE_NUMBER" --body "typecheck=${TYPECHECK}\nregressions=${REGRESSIONS}\nhead=$(git rev-parse HEAD)"
+      - name: Fail on audit failure
+        if: steps.typecheck.outcome != 'success' || steps.regressions.outcome != 'success'
+        run: exit 1
