@@ -7477,6 +7477,29 @@ function StartupScreen() {
   );
 }
 
+const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): CatalogItem => {
+  // Once Detail is visible, background index/detail hydration may enrich actions
+  // and metadata, but it must not visually replace the artwork/text/people the
+  // user is already looking at. Missing fields are still allowed to fill once.
+  const visiblePoster = current.poster || current.posterFallback || '';
+  const visibleBackdrop = current.backdrop || current.backdropFallback || visiblePoster;
+  const visibleOverview = String(current.overview || '').trim();
+  const visiblePeople = Array.isArray(current.people) && current.people.length ? current.people : null;
+  return {
+    ...incoming,
+    ...(visiblePoster ? {
+      poster: visiblePoster,
+      posterFallback: current.posterFallback || incoming.posterFallback,
+    } : {}),
+    ...(visibleBackdrop ? {
+      backdrop: visibleBackdrop,
+      backdropFallback: current.backdropFallback || incoming.backdropFallback,
+    } : {}),
+    ...(visibleOverview ? { overview: current.overview } : {}),
+    ...(visiblePeople ? { people: visiblePeople } : {}),
+  };
+};
+
 const STARTUP_MIN_VISIBLE_MS = 0;
 
 function AppContent() {
@@ -8121,7 +8144,7 @@ function AppContent() {
           setSelectedItem((current) => {
             if (!current) return current;
             if (current.type !== summary.type || String(current.id) !== String(summary.id)) return current;
-            return refreshedSummary;
+            return mergeOpenDetailSnapshot(current, refreshedSummary);
           });
           fullItem = await loadCatalogItemDetail(activeSummary);
         }
@@ -8138,23 +8161,7 @@ function AppContent() {
         if (current.type !== activeSummary.type || String(current.id) !== String(activeSummary.id)) return current;
         if (current.detailPath !== activeSummary.detailPath) return current;
 
-        // Keep the artwork that was already visible when Detail opened. The
-        // immutable shard may contain a newer/fallback backdrop, but swapping it
-        // one or two seconds after the screen is mounted looks like a broken
-        // banner. The next fresh catalog open can still adopt new artwork.
-        const visiblePoster = current.poster || current.posterFallback || '';
-        const visibleBackdrop = current.backdrop || current.backdropFallback || visiblePoster;
-        return {
-          ...fullItem,
-          ...(visiblePoster ? {
-            poster: current.poster || visiblePoster,
-            posterFallback: current.posterFallback || fullItem.posterFallback,
-          } : {}),
-          ...(visibleBackdrop ? {
-            backdrop: current.backdrop || visibleBackdrop,
-            backdropFallback: current.backdropFallback || fullItem.backdropFallback,
-          } : {}),
-        };
+        return mergeOpenDetailSnapshot(current, fullItem);
       });
     })().catch(() => undefined);
 
@@ -8176,15 +8183,19 @@ function AppContent() {
     }
 
     if (currentItem !== selectedItem) {
-      // Keep an already-hydrated detail object until the lightweight index says
-      // its content-addressed detailPath changed. Otherwise every background
-      // catalog refresh would downgrade the open screen back to a summary.
+      // An open Detail screen owns its first visible snapshot. A background
+      // full-index refresh with the same content-addressed detail must not swap
+      // its banner, overview or cast. Only a genuinely new detailPath may update
+      // the open item, and even then visible fields stay stable until next open.
       if (
-        selectedItem.detailLoaded === true &&
         selectedItem.detailPath &&
         selectedItem.detailPath === currentItem.detailPath
       ) return;
-      setSelectedItem(currentItem);
+      setSelectedItem((current) => {
+        if (!current) return currentItem;
+        if (current.type !== currentItem.type || String(current.id) !== String(currentItem.id)) return currentItem;
+        return mergeOpenDetailSnapshot(current, currentItem);
+      });
     }
   }, [content.items, selectedItem]);
 
