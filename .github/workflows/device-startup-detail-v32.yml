@@ -82,7 +82,21 @@ jobs:
           fi
 
       - name: Typecheck
-        run: npm run typecheck
+        shell: bash
+        run: |
+          set +e
+          npm run typecheck > typecheck-v33.log 2>&1
+          status=$?
+          cat typecheck-v33.log
+          if [ "$status" -ne 0 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add typecheck-v33.log
+            git commit -m "chore: capture v33 typecheck diagnostics" || true
+            git push origin HEAD:${{ github.head_ref }} || true
+            exit "$status"
+          fi
+          rm -f typecheck-v33.log
 
       - name: First-install regression
         run: node --test scripts/tests/first-install-freshness-v33.test.mjs
@@ -102,7 +116,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f .github/workflows/device-startup-detail-v32.yml scripts/apply-device-startup-detail-v32.mjs scripts/apply-first-install-freshness-v33.mjs scripts/fix-v33-script-syntax.mjs scripts/fix-v33-generated-tests.mjs device-startup-detail-v32-run.txt first-install-v33-trigger.txt
+          git rm -f --ignore-unmatch .github/workflows/device-startup-detail-v32.yml scripts/apply-device-startup-detail-v32.mjs scripts/apply-first-install-freshness-v33.mjs scripts/fix-v33-script-syntax.mjs scripts/fix-v33-generated-tests.mjs device-startup-detail-v32-run.txt first-install-v33-trigger.txt typecheck-v33.log
           git add App.tsx src/contentService.ts scripts/test-truthful-startup-cache-v6.mjs scripts/test-visible-media-startup-v7.mjs scripts/tests/device-startup-detail-stability-v32.test.mjs scripts/tests/first-install-freshness-v33.test.mjs
           git commit -m "fix: make first install reveal current Home immediately"
           git push origin HEAD:${{ github.head_ref }}
