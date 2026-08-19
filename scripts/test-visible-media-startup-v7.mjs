@@ -9,11 +9,13 @@ const requiredApp = [
   'const freshContentPromise = loadContent(false);',
   'const bootstrapContent = await bootstrapContentPromise;',
   'bootstrapApplied = Boolean(startupContent && applyContent(startupContent));',
-  'startupFallbackTimer = setTimeout(dismissStartup, 10000);',
   "if (await refreshVpnState()) { setVpnWarningVisible(true); return; }",
 ];
 for (const marker of requiredApp) {
   if (!app.includes(marker)) throw new Error(`Missing current startup marker: ${marker}`);
+}
+if (!/startupFallbackTimer = setTimeout\(\(\) => \{[\s\S]*?\}, 10000\);/.test(app)) {
+  throw new Error('Ten-second emergency startup escape is missing.');
 }
 
 const staleGate = app.indexOf("if (initialLoad && online && firstContent.source !== 'remote') {");
