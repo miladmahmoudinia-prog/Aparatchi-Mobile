@@ -1,0 +1,25 @@
+name: Query APK status v36 temp
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  actions: read
+  issues: write
+  contents: read
+
+jobs:
+  query:
+    if: github.event.issue.title == 'QUERY APK STATUS V36'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query latest APK run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        shell: bash
+        run: |
+          row="$(gh run list --workflow android-apk.yml --event workflow_dispatch --limit 1 --json databaseId,status,conclusion,createdAt,headSha --jq '.[0]')"
+          gh issue comment "$ISSUE_NUMBER" --body "$row"
