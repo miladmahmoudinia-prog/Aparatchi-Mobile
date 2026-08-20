@@ -43,8 +43,10 @@ test('category cards keep fast preview scan but backfill missing artwork from fu
 });
 
 test('exact collection pixel restore remains installed', () => {
-  assert.match(app, /let collectionBrowserScrollOffset = 0;/);
+  assert.match(app, /let collectionBrowserScrollSnapshot: GridScrollSnapshot = \{ offset: 0 \};/);
+  assert.match(app, /anchorId: group\.id,/);
+  assert.match(app, /snapshot\.offset \+ \(nextRow - previousRow\) \* folderRowHeight/);
   assert.match(app, /scrollToOffset\(\{ offset, animated: false \}\)/);
-  assert.match(app, /contentOffset=\{\{ x: 0, y: collectionBrowserScrollOffset \}\}/);
+  assert.doesNotMatch(app, /contentOffset=\{\{ x: 0, y: collectionBrowserScrollOffset \}\}/);
   assert.match(app, /onScroll=\{rememberCollectionFolderOffset\}/);
 });

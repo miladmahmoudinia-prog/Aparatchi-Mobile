@@ -109,9 +109,20 @@ type SearchFilter =
 // This avoids pushing extra router state into the large catalog tree and keeps Back instant.
 let collectionBrowserBackHandler: (() => boolean) | null = null;
 let collectionBrowserSelectedId: string | null = null;
-let collectionBrowserScrollOffset = 0;
+
+type GridScrollSnapshot = {
+  offset: number;
+  anchorId?: string;
+  anchorIndex?: number;
+  columns?: number;
+};
+
+let collectionBrowserScrollSnapshot: GridScrollSnapshot = { offset: 0 };
 
 const hasPersianScript = (value?: string | null) => /[\u0600-\u06FF]/.test(String(value || ''));
+const hasLatinScript = (value?: string | null) => /\p{Script=Latin}/u.test(String(value || ''));
+const hasUsablePersianCollectionLabel = (value?: string | null) =>
+  hasPersianScript(value) && !hasLatinScript(value);
 
 type CatalogDeepLink = {
   id: string;
@@ -1482,7 +1493,7 @@ const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
 
 
 const catalogFilterCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem[]>>();
-const catalogListScrollOffsets = new Map<string, number>();
+const catalogListScrollSnapshots = new Map<string, GridScrollSnapshot>();
 let categoriesScreenScrollOffset = 0;
 const detailScrollOffsets = new Map<string, number>();
 const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
@@ -2579,9 +2590,11 @@ function MovieCollectionSection({
   if (members.length < 2) return null;
   const rawCollectionFa = String(item.collectionNameFa || '').trim();
   const rawCollectionEn = String(item.collectionName || '').trim();
-  const collectionTitleFa = rawCollectionFa && hasPersianScript(rawCollectionFa)
-    ? rawCollectionFa
-    : `مجموعه ${String(members[0]?.nameFa || item.nameFa || 'فیلم‌ها').trim()}`;
+  // Do not publish a collection under an English/mixed or guessed member
+  // title. The content enrichment lane will expose it once a verified Persian
+  // collection label exists.
+  if (!hasUsablePersianCollectionLabel(rawCollectionFa)) return null;
+  const collectionTitleFa = rawCollectionFa;
   const collectionTitleEn = rawCollectionEn && !hasPersianScript(rawCollectionEn)
     ? rawCollectionEn
     : '';
@@ -3664,6 +3677,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const { width: screenWidth } = useWindowDimensions();
   const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
   const liveCategoriesOffsetRef = useRef(categoriesScreenScrollOffset);
+  const restoringCategoriesOffsetRef = useRef(false);
   const usableCatalog = catalog;
   const categoryPreviewPool = useMemo(
     () => usableCatalog.slice(0, 1200),
@@ -3742,24 +3756,41 @@ const CategoriesScreen = memo(function CategoriesScreen({
 
   useEffect(() => {
     if (!isActive || deferredQuery || categoriesScreenScrollOffset <= 0) return undefined;
-    const frame = requestAnimationFrame(() => {
+    restoringCategoriesOffsetRef.current = true;
+    const restore = () => {
+      liveCategoriesOffsetRef.current = categoriesScreenScrollOffset;
       categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
+    };
+    const frame = requestAnimationFrame(() => {
+      restore();
     });
     const retry = setTimeout(() => {
-      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
+      restore();
     }, 120);
     const settle = setTimeout(() => {
-      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
+      restore();
     }, 420);
-    return () => { cancelAnimationFrame(frame); clearTimeout(retry); clearTimeout(settle); };
+    const release = setTimeout(() => {
+      restoringCategoriesOffsetRef.current = false;
+    }, 520);
+    return () => {
+      restoringCategoriesOffsetRef.current = false;
+      cancelAnimationFrame(frame);
+      clearTimeout(retry);
+      clearTimeout(settle);
+      clearTimeout(release);
+    };
   }, [columnCount, deferredQuery, isActive]);
 
   const rememberCategoriesOffset = useCallback((event: any) => {
-    if (deferredQuery) return;
+    // The categories tree remains mounted behind a selected category. Ignore
+    // hidden-list and programmatic restoration events so a synthetic y=0
+    // event cannot overwrite the user's exact position.
+    if (!isActive || deferredQuery || restoringCategoriesOffsetRef.current) return;
     const next = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
     liveCategoriesOffsetRef.current = next;
     categoriesScreenScrollOffset = next;
-  }, [deferredQuery]);
+  }, [deferredQuery, isActive]);
 
   const searchHeader = (
     <>
@@ -3880,7 +3911,10 @@ const CategoriesScreen = memo(function CategoriesScreen({
       updateCellsBatchingPeriod={48}
       windowSize={4}
       removeClippedSubviews
-      scrollEventThrottle={96}
+      scrollEventThrottle={16}
+      onScrollBeginDrag={() => {
+        restoringCategoriesOffsetRef.current = false;
+      }}
       onScroll={rememberCategoriesOffset}
       onScrollEndDrag={rememberCategoriesOffset}
       onMomentumScrollEnd={rememberCategoriesOffset}
@@ -3902,6 +3936,10 @@ function CatalogListScreen({
   const { width: screenWidth } = useWindowDimensions();
   const listRef = useRef<FlatList<CatalogItem>>(null);
   const scrollKey = String(initialFilter);
+  const initialScrollSnapshot = catalogListScrollSnapshots.get(scrollKey);
+  const liveCatalogOffsetRef = useRef(initialScrollSnapshot?.offset || 0);
+  const restoringCatalogOffsetRef = useRef(false);
+  const openingCatalogItemRef = useRef(false);
 
   // Filter results are cached per catalog. Waiting for InteractionManager here
   // made a normal tap feel ignored whenever an image list or slider animation
@@ -3924,30 +3962,67 @@ function CatalogListScreen({
   const columnCount = screenWidth >= 720 ? 5 : screenWidth >= 590 ? 4 : screenWidth >= 480 ? 3 : 2;
   const gridGap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
+  const rowHeight = Math.round(cardWidth * 1.42) + 57;
 
   useEffect(() => {
-    const offset = catalogListScrollOffsets.get(scrollKey) || 0;
-    if (offset <= 0) return undefined;
-    const frame = requestAnimationFrame(() => {
-      listRef.current?.scrollToOffset({ offset, animated: false });
-    });
-    const retry = setTimeout(() => {
-      listRef.current?.scrollToOffset({ offset, animated: false });
-    }, 120);
-    const settle = setTimeout(() => {
-      listRef.current?.scrollToOffset({ offset, animated: false });
-    }, 420);
+    liveCatalogOffsetRef.current = catalogListScrollSnapshots.get(scrollKey)?.offset || 0;
+    restoringCatalogOffsetRef.current = false;
+    openingCatalogItemRef.current = false;
+  }, [scrollKey]);
+
+  useEffect(() => {
+    const snapshot = catalogListScrollSnapshots.get(scrollKey);
+    if (!snapshot || snapshot.offset <= 0 || deferredQuery) return undefined;
+    let offset = snapshot.offset;
+    let anchorIndex = snapshot.anchorIndex;
+    if (snapshot.anchorId && snapshot.columns === columnCount && Number.isInteger(snapshot.anchorIndex)) {
+      const nextIndex = results.findIndex((item) => String(item.id) === snapshot.anchorId);
+      if (nextIndex >= 0) {
+        const previousRow = Math.floor(Number(snapshot.anchorIndex) / columnCount);
+        const nextRow = Math.floor(nextIndex / columnCount);
+        offset = Math.max(0, snapshot.offset + (nextRow - previousRow) * rowHeight);
+        anchorIndex = nextIndex;
+      }
+    }
+    restoringCatalogOffsetRef.current = true;
+    liveCatalogOffsetRef.current = offset;
+    catalogListScrollSnapshots.set(scrollKey, { ...snapshot, offset, anchorIndex, columns: columnCount });
+    const restore = () => listRef.current?.scrollToOffset({ offset, animated: false });
+    const frame = requestAnimationFrame(restore);
+    const retry = setTimeout(restore, 120);
+    const settle = setTimeout(restore, 420);
+    const release = setTimeout(() => {
+      restoringCatalogOffsetRef.current = false;
+      openingCatalogItemRef.current = false;
+    }, 520);
     return () => {
+      restoringCatalogOffsetRef.current = false;
       cancelAnimationFrame(frame);
       clearTimeout(retry);
       clearTimeout(settle);
+      clearTimeout(release);
     };
-  }, [columnCount, scrollKey]);
+  }, [columnCount, deferredQuery, results, rowHeight, scrollKey]);
 
   const rememberCatalogOffset = useCallback((event: any) => {
-    if (query) return;
-    catalogListScrollOffsets.set(scrollKey, Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)));
-  }, [query, scrollKey]);
+    if (query || restoringCatalogOffsetRef.current || openingCatalogItemRef.current) return;
+    const offset = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
+    liveCatalogOffsetRef.current = offset;
+    const previous = catalogListScrollSnapshots.get(scrollKey);
+    catalogListScrollSnapshots.set(scrollKey, { ...previous, offset, columns: columnCount });
+  }, [columnCount, query, scrollKey]);
+
+  const openCatalogItem = useCallback((item: CatalogItem, index: number) => {
+    const offset = liveCatalogOffsetRef.current;
+    catalogListScrollSnapshots.set(scrollKey, {
+      offset,
+      anchorId: String(item.id),
+      anchorIndex: index,
+      columns: columnCount,
+    });
+    openingCatalogItemRef.current = true;
+    onOpen(item);
+  }, [columnCount, onOpen, scrollKey]);
 
   const header = (
     <View>
@@ -3990,9 +4065,9 @@ function CatalogListScreen({
           <Text style={styles.largeEmptyText}>عبارت جست‌وجو را تغییر دهید.</Text>
         </View>
       )}
-      renderItem={({ item }) => (
+      renderItem={({ item, index }) => (
         <View style={{ width: cardWidth, marginBottom: 16 }}>
-          <PosterCard item={item} width={cardWidth} onOpen={() => onOpen(item)} />
+          <PosterCard item={item} width={cardWidth} onOpen={() => openCatalogItem(item, index)} />
         </View>
       )}
       initialNumToRender={4}
@@ -4001,7 +4076,11 @@ function CatalogListScreen({
       updateCellsBatchingPeriod={48}
       removeClippedSubviews
       showsVerticalScrollIndicator={false}
-      scrollEventThrottle={96}
+      scrollEventThrottle={16}
+      onScrollBeginDrag={() => {
+        restoringCatalogOffsetRef.current = false;
+        openingCatalogItemRef.current = false;
+      }}
       onScroll={rememberCatalogOffset}
       onScrollEndDrag={rememberCatalogOffset}
       onMomentumScrollEnd={rememberCatalogOffset}
@@ -4149,13 +4228,10 @@ const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGr
       const titleEn = rawEn && !hasPersianScript(rawEn)
         ? rawEn
         : String(first?.name || '').trim() || rawFa || `Collection ${id}`;
-      // Never show an English-only collection name as the Persian line. If TMDB
-      // does not provide a Persian collection title, use a deterministic local
-      // label based on the first Persian movie title instead of bad machine text.
-      const firstFa = String(first?.nameFa || '').trim();
-      const titleFa = rawFa && hasPersianScript(rawFa)
-        ? rawFa
-        : `مجموعه ${firstFa || 'فیلم‌ها'}`;
+      // A new collection is visible only after the content lane has assigned a
+      // Persian-only label. Guessing from whichever sequel arrived first is how
+      // unrelated member titles used to become collection names.
+      const titleFa = hasUsablePersianCollectionLabel(rawFa) ? rawFa : '';
       return {
         id,
         titleFa,
@@ -4164,7 +4240,7 @@ const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGr
         cover: first?.poster || first?.backdrop || '',
       };
     })
-    .filter((group) => group.members.length >= 2)
+    .filter((group) => group.members.length >= 2 && Boolean(group.titleFa))
     .sort((a, b) => b.members.length - a.members.length || a.titleFa.localeCompare(b.titleFa, 'fa'));
 };
 
@@ -4172,38 +4248,78 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
   const groups = useMemo(() => collectionGroupsForCatalog(catalog), [catalog]);
   const [selectedCollectionId, setSelectedCollectionIdState] = useState<string | null>(() => collectionBrowserSelectedId);
   const collectionFoldersRef = useRef<FlatList<any>>(null);
+  const liveCollectionFolderOffsetRef = useRef(collectionBrowserScrollSnapshot.offset);
+  const restoringCollectionFolderOffsetRef = useRef(false);
+  const collectionFoldersVisibleRef = useRef(!collectionBrowserSelectedId);
   const { width: screenWidth } = useWindowDimensions();
   const selected = groups.find((group) => group.id === selectedCollectionId) || null;
   const columns = screenWidth >= 720 ? 4 : screenWidth >= 520 ? 3 : 2;
   const gap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - gap * (columns - 1)) / columns);
+  const folderRowHeight = cardWidth / 0.72 + 16;
 
   const setSelectedCollectionId = useCallback((next: string | null) => {
+    collectionFoldersVisibleRef.current = next === null;
     collectionBrowserSelectedId = next;
     setSelectedCollectionIdState(next);
   }, []);
 
   const rememberCollectionFolderOffset = useCallback((event: any) => {
-    collectionBrowserScrollOffset = Math.max(0, Number(event?.nativeEvent?.contentOffset?.y || 0));
-  }, []);
+    if (!collectionFoldersVisibleRef.current || restoringCollectionFolderOffsetRef.current) return;
+    const offset = Math.max(0, Number(event?.nativeEvent?.contentOffset?.y || 0));
+    liveCollectionFolderOffsetRef.current = offset;
+    collectionBrowserScrollSnapshot = { ...collectionBrowserScrollSnapshot, offset, columns };
+  }, [columns]);
+
+  const openCollectionFolder = useCallback((group: CatalogCollectionGroup, index: number) => {
+    const offset = liveCollectionFolderOffsetRef.current;
+    collectionBrowserScrollSnapshot = {
+      offset,
+      anchorId: group.id,
+      anchorIndex: index,
+      columns,
+    };
+    setSelectedCollectionId(group.id);
+  }, [columns, setSelectedCollectionId]);
 
   useEffect(() => {
     if (selectedCollectionId) return undefined;
-    const offset = Math.max(0, collectionBrowserScrollOffset);
+    collectionFoldersVisibleRef.current = true;
+    const snapshot = collectionBrowserScrollSnapshot;
+    let offset = Math.max(0, snapshot.offset);
+    let anchorIndex = snapshot.anchorIndex;
+    if (snapshot.anchorId && snapshot.columns === columns && Number.isInteger(snapshot.anchorIndex)) {
+      const nextIndex = groups.findIndex((group) => group.id === snapshot.anchorId);
+      if (nextIndex >= 0) {
+        const previousRow = Math.floor(Number(snapshot.anchorIndex) / columns);
+        const nextRow = Math.floor(nextIndex / columns);
+        offset = Math.max(0, snapshot.offset + (nextRow - previousRow) * folderRowHeight);
+        anchorIndex = nextIndex;
+      }
+    }
+    restoringCollectionFolderOffsetRef.current = true;
+    liveCollectionFolderOffsetRef.current = offset;
+    collectionBrowserScrollSnapshot = { ...snapshot, offset, anchorIndex, columns };
     const restore = () => collectionFoldersRef.current?.scrollToOffset({ offset, animated: false });
     const frame = requestAnimationFrame(restore);
-    const retry = setTimeout(restore, 60);
-    const finalRetry = setTimeout(restore, 180);
+    const retry = setTimeout(restore, 120);
+    const finalRetry = setTimeout(restore, 420);
+    const release = setTimeout(() => {
+      restoringCollectionFolderOffsetRef.current = false;
+    }, 520);
     return () => {
+      restoringCollectionFolderOffsetRef.current = false;
       cancelAnimationFrame(frame);
       clearTimeout(retry);
       clearTimeout(finalRetry);
+      clearTimeout(release);
     };
-  }, [selectedCollectionId, groups.length, columns]);
+  }, [columns, folderRowHeight, groups, selectedCollectionId]);
 
   useEffect(() => {
     const handler = () => {
       if (!collectionBrowserSelectedId) return false;
+      collectionFoldersVisibleRef.current = true;
       collectionBrowserSelectedId = null;
       setSelectedCollectionIdState(null);
       return true;
@@ -4267,8 +4383,11 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
       numColumns={columns}
       keyExtractor={(group) => group.id}
       style={styles.screen}
-      contentOffset={{ x: 0, y: collectionBrowserScrollOffset }}
       scrollEventThrottle={16}
+      onScrollBeginDrag={() => {
+        restoringCollectionFolderOffsetRef.current = false;
+        collectionFoldersVisibleRef.current = true;
+      }}
       onScroll={rememberCollectionFolderOffset}
       onScrollEndDrag={rememberCollectionFolderOffset}
       onMomentumScrollEnd={rememberCollectionFolderOffset}
@@ -4290,9 +4409,9 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
           <Text style={styles.largeEmptyText}>با اضافه‌شدن فیلم دوم هر مجموعه، پوشه آن خودکار اینجا ظاهر می‌شود.</Text>
         </View>
       )}
-      renderItem={({ item: group }) => (
+      renderItem={({ item: group, index }) => (
         <View style={{ width: cardWidth, marginBottom: 16 }}>
-          <Pressable onPress={() => setSelectedCollectionId(group.id)} style={[styles.collectionFolderCard, { width: cardWidth }]}>
+          <Pressable onPress={() => openCollectionFolder(group, index)} style={[styles.collectionFolderCard, { width: cardWidth }]}>
             <CatalogArtwork primary={group.cover} fallback={group.members[1]?.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="poster" />
             <LinearGradient colors={['rgba(5,7,10,0.05)', 'rgba(5,7,10,0.94)']} style={StyleSheet.absoluteFill} />
             <View style={styles.collectionFolderIcon}><Ionicons name="folder-open-outline" color={COLORS.gold} size={20} /></View>
