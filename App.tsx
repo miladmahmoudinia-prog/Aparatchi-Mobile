@@ -1067,7 +1067,7 @@ const catalogItemTimestamp = (item: CatalogItem) => {
     (firstSeenTimestamp <= 0 || newestEpisodeSourceTimestamp <= 0 || newestEpisodeSourceTimestamp >= firstSeenTimestamp - 6 * 60 * 60 * 1000)
   );
   const value = item.type === 'series'
-    ? (credibleSeriesUpdate ? item.meaningfulUpdatedAt : '') || item.firstSeenAt || item.sourceCreatedAt || item.createdAt || ''
+    ? (credibleSeriesUpdate ? item.meaningfulUpdatedAt : '') || item.publishedAt || item.firstSeenAt || item.sourceCreatedAt || item.createdAt || ''
     : item.firstSeenAt || item.sourceCreatedAt || item.createdAt || '';
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : 0;
@@ -5963,7 +5963,6 @@ function DetailModal({
             ) : null}
             <PeopleSection item={item} onOpen={onOpenPerson} />
             <MovieCollectionSection item={item} catalog={catalog} onOpen={onOpenRelated} />
-            <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} selectionSeed={relatedSelectionSeed} />
             {item.type === 'series' && episodeGroups.length ? (
               <SeriesEpisodeShowcase
                 item={item}
@@ -5972,6 +5971,7 @@ function DetailModal({
                 onOpenOperator={(file) => onOperatorOpen(item, file)}
               />
             ) : null}
+            <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} selectionSeed={relatedSelectionSeed} />
               </>
             )}
           </View>

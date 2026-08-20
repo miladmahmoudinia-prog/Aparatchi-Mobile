@@ -150,6 +150,8 @@ export type CatalogItem = {
   archiveDiscoveryCheckedAt?: string;
   updateLabel?: string;
   meaningfulUpdatedAt?: string;
+  /** زمان اولین انتشار واقعی عنوان پس از کامل‌شدن آرشیو. */
+  publishedAt?: string;
   /** زمان اولین کشف واقعی عنوان در آپاراتچی؛ برای ترتیب تازه‌ها. */
   firstSeenAt?: string;
   categoryKeys?: string[];
