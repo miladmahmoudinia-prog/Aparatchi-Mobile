@@ -7,14 +7,14 @@ const service = fs.readFileSync('src/contentService.ts', 'utf8');
 const workflow = fs.readFileSync('.github/workflows/android-apk.yml', 'utf8');
 const bootstrap = JSON.parse(fs.readFileSync('src/catalogBootstrap.json', 'utf8'));
 
-test('APK carries a practical current Home snapshot', () => {
-  assert.ok(bootstrap.items.length >= 100);
+test('APK carries the complete current startup navigation snapshot', () => {
+  assert.ok(bootstrap.items.length > 1000);
   assert.ok(String(bootstrap.clientRevision || '').length >= 32);
   assert.equal(
     bootstrap.items.filter((item) => item.categoryKeys?.includes('iranian-series')).length,
     18,
   );
-  assert.ok(fs.statSync('src/catalogBootstrap.json').size < 1_500_000);
+  assert.ok(fs.statSync('src/catalogBootstrap.json').size < 10_000_000);
 });
 
 test('startup is stale-while-revalidate and never network-gated', () => {
@@ -28,13 +28,8 @@ test('startup is stale-while-revalidate and never network-gated', () => {
 });
 
 test('large index cannot steal the startup path', () => {
-  assert.ok(app.includes('void loadContent(false)'));
-  const initial = app.slice(
-    app.indexOf('if (initialLoad && online)'),
-    app.indexOf('const firstApplied = applyContent(firstContent);'),
-  );
-  assert.ok(!initial.includes('loadContent(false, true)'));
-  assert.ok(!initial.includes('loadContent(true)'));
+  const reload = app.slice(app.indexOf('const reloadContent = async'), app.indexOf('useEffect(() => {', app.indexOf('const reloadContent = async')));
+  assert.ok(!reload.includes('loadContent('));
   assert.ok(service.includes('const metadataMatches = Boolean('));
 });
 

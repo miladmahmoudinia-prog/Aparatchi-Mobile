@@ -215,6 +215,7 @@ export type PersonWorkRef = string | number;
 export type CatalogPayload = {
   version: string;
   updatedAt: string;
+  clientRevision?: string;
   items: CatalogItem[];
   iranianSchedule: ScheduleEntry[];
   weeklySchedule?: ScheduleEntry[];

@@ -19,9 +19,9 @@ test('cold start reveals bundled/cache bootstrap before remote work', () => {
   assert.ok(block.indexOf('await loadBootstrapContent()') >= 0);
   assert.ok(app.includes('const cachedBootstrap = initialLoad ? await loadCachedBootstrapContent() : null;'));
   assert.ok(!block.includes('firstContent = await loadContent(true)'));
-  assert.ok(block.includes('loadContent(false)'));
+  assert.ok(!block.includes('loadContent('));
   assert.ok(!block.includes('loadContent(false, true)'));
-  assert.ok(block.includes('InteractionManager.runAfterInteractions'));
+  assert.ok(block.includes('firstContent = cachedBootstrap || contentRef.current;'));
 });
 
 test('changed manifest skips parsing the stale full-index cache', () => {

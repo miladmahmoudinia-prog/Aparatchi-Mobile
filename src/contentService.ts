@@ -60,6 +60,8 @@ type RemoteCacheMetadata = {
   catalogVersion?: string;
   catalogUpdatedAt?: string;
   bootstrapRevision?: string;
+  bootstrapClientRevision?: string;
+  bootstrapItemCount?: number;
 };
 
 type RemoteCatalogManifest = {
@@ -69,14 +71,17 @@ type RemoteCatalogManifest = {
   catalogUpdatedAt?: string;
   sizeBytes?: number;
   clientSizeBytes?: number;
+  clientItemCount?: number;
   bootstrapRevision?: string;
   bootstrapSizeBytes?: number;
+  bootstrapItemCount?: number;
   clientIndex?: string;
   detailBase?: string;
 };
 
 let memoryContent: CatalogPayload | null = null;
 let memoryBootstrapContent: CatalogPayload | null = null;
+let memoizedLocalPayload: CatalogPayload | null = null;
 let cacheMetadataLoaded = false;
 let cacheMetadata: RemoteCacheMetadata = {};
 const detailMemoryCache = new Map<string, CatalogItem>();
@@ -1509,6 +1514,9 @@ const parsePayload = (value: unknown): CatalogPayload | null => {
   return {
     version: asString(payload.version, 'remote'),
     updatedAt,
+    ...(asString(payload.clientRevision ?? payload.client_revision)
+      ? { clientRevision: asString(payload.clientRevision ?? payload.client_revision) }
+      : {}),
     // The content sync already writes newest-first items and enriched people.
     // Rebuilding a global person index and cloning every item on the phone made
     // large catalogs freeze the JS thread during startup.
@@ -1545,19 +1553,21 @@ const normalizePeopleWorks = (value: unknown): Record<string, PersonWorkRef[]> =
 };
 
 const normalizedLocalPayload = (): CatalogPayload => {
+  if (memoizedLocalPayload) return memoizedLocalPayload;
   const items = LOCAL_PAYLOAD.items
     .map((item) => normalizeCatalogItem(item))
     .filter((item): item is CatalogItem => Boolean(item));
   const featuredPeople = normalizeFeaturedPeople(LOCAL_PAYLOAD.featuredPeople);
   const peopleWorks = normalizePeopleWorks(LOCAL_PAYLOAD.peopleWorks);
 
-  return {
+  memoizedLocalPayload = {
     ...LOCAL_PAYLOAD,
     items,
     featuredPeople,
     peopleWorks,
     imdbTop100: normalizeImdbTop100(LOCAL_PAYLOAD.imdbTop100, items, LOCAL_PAYLOAD.updatedAt),
   };
+  return memoizedLocalPayload;
 };
 
 const unavailableLocalPayload = (): CatalogPayload => ({
@@ -1600,8 +1610,23 @@ const writeCachedBootstrapPayload = async (rawPayload: string, parsed: CatalogPa
 };
 
 export async function loadCachedBootstrapContent(): Promise<LoadedContent | null> {
+  await readCacheMetadata();
+  // Old versions wrote sampled caches without completeness metadata. Prefer the
+  // complete APK snapshot and avoid parsing that legacy JSON on the JS thread.
+  if (!cacheMetadata.bootstrapItemCount) return null;
+  if (cacheMetadata.bootstrapItemCount < LOCAL_PAYLOAD.items.length) return null;
+  if (
+    cacheMetadata.bootstrapItemCount === LOCAL_PAYLOAD.items.length &&
+    cacheMetadata.bootstrapClientRevision &&
+    cacheMetadata.bootstrapClientRevision === LOCAL_PAYLOAD.clientRevision
+  ) return null;
   const cached = await readCachedBootstrapPayload();
-  return cached?.items.length ? { ...cached, source: 'cache' } : null;
+  if (!cached?.items.length) return null;
+  // Never let an older sampled cache replace the complete catalog bundled in a
+  // newer APK. Future complete snapshots can still grow beyond the APK count.
+  if (cached.items.length < LOCAL_PAYLOAD.items.length) return null;
+  if (cacheMetadata.bootstrapItemCount && cached.items.length !== cacheMetadata.bootstrapItemCount) return null;
+  return { ...cached, source: 'cache' };
 }
 
 /**
@@ -1617,6 +1642,7 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
   // Bootstrap and manifest are both small. Start them together so the manifest
   // truth check does not add another 2–3 seconds before the first catalog byte.
   const manifestPromise = fetchRemoteManifest().catch(() => null);
+  const currentBootstrap = memoryBootstrapContent || normalizedLocalPayload();
 
   const candidates = remoteRepositoryUrlCandidates(remoteUrl);
   if (!candidates.length) return null;
@@ -1627,9 +1653,31 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
     let pending = candidates.length;
     let settled = false;
 
+    // The small manifest usually settles before the catalog response body. If
+    // the complete local/cache snapshot is already current, cancel both large
+    // requests immediately so repeat launches transfer only the manifest.
+    void manifestPromise.then((manifest) => {
+      const currentIsComplete = Boolean(
+        manifest?.clientRevision &&
+        currentBootstrap.clientRevision === manifest.clientRevision &&
+        (!manifest.bootstrapItemCount || currentBootstrap.items.length === manifest.bootstrapItemCount)
+      );
+      if (!currentIsComplete || settled) return;
+      settled = true;
+      controllers.forEach((controller) => controller.abort());
+      cacheMetadata = {
+        ...cacheMetadata,
+        ...(manifest?.bootstrapRevision ? { bootstrapRevision: manifest.bootstrapRevision } : {}),
+        ...(manifest?.clientRevision ? { bootstrapClientRevision: manifest.clientRevision } : {}),
+        ...(manifest?.bootstrapItemCount ? { bootstrapItemCount: manifest.bootstrapItemCount } : {}),
+      };
+      void writeCacheMetadata(cacheMetadata);
+      resolve({ ...currentBootstrap, source: 'remote' });
+    });
+
     candidates.forEach((candidate, index) => {
       const controller = controllers[index];
-      const timeout = setTimeout(() => controller.abort(), 3200);
+      const timeout = setTimeout(() => controller.abort(), 8000);
       const separator = candidate.includes('?') ? '&' : '?';
 
       void (async () => {
@@ -1657,6 +1705,15 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
           const parsed = parsePayload(rawBootstrap);
           if (!parsed?.items.length) return;
           if (
+            manifest?.clientItemCount &&
+            manifest?.bootstrapItemCount &&
+            manifest.clientItemCount !== manifest.bootstrapItemCount
+          ) return;
+          if (
+            manifest?.bootstrapItemCount &&
+            parsed.items.length !== manifest.bootstrapItemCount
+          ) return;
+          if (
             manifest?.catalogUpdatedAt &&
             asString(parsed.updatedAt) !== asString(manifest.catalogUpdatedAt)
           ) return;
@@ -1668,7 +1725,12 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
           });
           void writeCachedBootstrapPayload(rawBootstrapText, parsed);
           if (manifest?.bootstrapRevision) {
-            cacheMetadata = { ...cacheMetadata, bootstrapRevision: manifest.bootstrapRevision };
+            cacheMetadata = {
+              ...cacheMetadata,
+              bootstrapRevision: manifest.bootstrapRevision,
+              ...(manifest.clientRevision ? { bootstrapClientRevision: manifest.clientRevision } : {}),
+              ...(manifest.bootstrapItemCount ? { bootstrapItemCount: manifest.bootstrapItemCount } : {}),
+            };
             void writeCacheMetadata(cacheMetadata);
           }
           resolve({ ...parsed, source: 'remote' });
@@ -1715,6 +1777,8 @@ const readCacheMetadata = async () => {
         ...(asString(value.catalogVersion) ? { catalogVersion: asString(value.catalogVersion) } : {}),
         ...(asString(value.catalogUpdatedAt) ? { catalogUpdatedAt: asString(value.catalogUpdatedAt) } : {}),
         ...(asString(value.bootstrapRevision) ? { bootstrapRevision: asString(value.bootstrapRevision) } : {}),
+        ...(asString(value.bootstrapClientRevision) ? { bootstrapClientRevision: asString(value.bootstrapClientRevision) } : {}),
+        ...(asNumber(value.bootstrapItemCount, 0) > 0 ? { bootstrapItemCount: asNumber(value.bootstrapItemCount, 0) } : {}),
       };
     }
   } catch {
@@ -1780,11 +1844,17 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
         ...(asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) > 0
           ? { clientSizeBytes: asNumber(record.clientSizeBytes ?? record.client_size_bytes, 0) }
           : {}),
+        ...(asNumber(record.clientItemCount ?? record.client_item_count, 0) > 0
+          ? { clientItemCount: asNumber(record.clientItemCount ?? record.client_item_count, 0) }
+          : {}),
         ...(asString(record.bootstrapRevision ?? record.bootstrap_revision)
           ? { bootstrapRevision: asString(record.bootstrapRevision ?? record.bootstrap_revision) }
           : {}),
         ...(asNumber(record.bootstrapSizeBytes ?? record.bootstrap_size_bytes, 0) > 0
           ? { bootstrapSizeBytes: asNumber(record.bootstrapSizeBytes ?? record.bootstrap_size_bytes, 0) }
+          : {}),
+        ...(asNumber(record.bootstrapItemCount ?? record.bootstrap_item_count, 0) > 0
+          ? { bootstrapItemCount: asNumber(record.bootstrapItemCount ?? record.bootstrap_item_count, 0) }
           : {}),
         ...(asString(record.clientIndex ?? record.client_index)
           ? { clientIndex: asString(record.clientIndex ?? record.client_index) }

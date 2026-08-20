@@ -3,7 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
-import { loadContent } from './contentService';
+import { loadBootstrapContent } from './contentService';
 import { CatalogItem } from './types';
 
 const EPISODE_ALERT_TASK = 'aparatchi-episode-alert-check-v1';
@@ -298,8 +298,8 @@ export async function initializeEpisodeAlertSystem() {
 if (!TaskManager.isTaskDefined(EPISODE_ALERT_TASK)) {
   TaskManager.defineTask(EPISODE_ALERT_TASK, async () => {
     try {
-      const content = await loadContent();
-      if (content.source === 'remote') {
+      const content = await loadBootstrapContent();
+      if (content?.source === 'remote') {
         await syncEpisodeAlerts(content.items, true);
       }
       return BackgroundTask.BackgroundTaskResult.Success;

@@ -1245,6 +1245,7 @@ const visibleLoadedContent = (loaded: LoadedContent): LoadedContent => ({
 // array reference was enough to make every home row, star card and image list
 // render again even when nothing had changed.
 const loadedContentRevision = (loaded: LoadedContent) => [
+  String(loaded.clientRevision || ''),
   String(loaded.version || ''),
   String(loaded.updatedAt || ''),
   String((loaded.items || []).length),
@@ -7738,61 +7739,10 @@ function AppContent() {
       return true;
     };
 
-    // Bootstrap already carries the complete navigation catalog plus compact
-    // actionable media. When the larger index arrives later with the same
-    // catalog identity/order, merge only its supplemental top-level data and
-    // retain the bootstrap item objects so Home/detail do not visibly jump.
-    const applyBackgroundFullContent = (nextContent: LoadedContent) => {
-      const visibleContent = visibleLoadedContent(nextContent);
-      if (!visibleContent.items.length) return false;
-
-      const currentContent = contentRef.current;
-      const sameCatalog =
-        currentContent.items.length === visibleContent.items.length &&
-        currentContent.items.every((currentItem, index) => {
-          const incomingItem = visibleContent.items[index];
-          return Boolean(
-            incomingItem &&
-            currentItem.id === incomingItem.id &&
-            currentItem.type === incomingItem.type
-          );
-        });
-
-      if (!sameCatalog) {
-        // loadedContentRevision intentionally omits the item list. If artifacts
-        // raced and identity/order really changed, force the full truth through.
-        if (loadedContentRevision(nextContent) === contentRevisionRef.current) {
-          contentRevisionRef.current = '';
-        }
-        return applyContent(nextContent);
-      }
-
-      const mergedContent: LoadedContent = {
-        ...visibleContent,
-        // Preserve the already-mounted order/identity while enriching every row
-        // with the complete index fields (people preview, backdrop, overview,
-        // firstSeenAt…). This avoids a rail rebuild without freezing summaries.
-        items: currentContent.items.map((currentItem, index) => {
-          const incomingItem = visibleContent.items[index];
-          return incomingItem && incomingItem.id === currentItem.id && incomingItem.type === currentItem.type
-            ? { ...currentItem, ...incomingItem }
-            : currentItem;
-        }),
-      };
-      contentRevisionRef.current = loadedContentRevision(nextContent);
-      contentRef.current = mergedContent;
-      startTransition(() => setContent(mergedContent));
-      lastContentLoadRef.current = Date.now();
-      setContentReady(true);
-      setContentResolved(true);
-      return true;
-    };
-
     try {
-      // First try the fast bundled/persisted catalog. When it is empty, keep
-      // the loading state visible until the remote attempt actually settles;
-      // this prevents the brief false "catalog is empty" screen at startup.
-      let foregroundBootstrapUsed = false;
+      // The bundled and persisted startup catalogs both contain every current
+      // navigation title. Network refreshes replace that complete snapshot;
+      // the detail-rich 20+ MB index is never part of app start or app resume.
       let firstContent: LoadedContent;
       const cachedBootstrap = initialLoad ? await loadCachedBootstrapContent() : null;
 
@@ -7817,91 +7767,27 @@ function AppContent() {
           startupFallbackContentRef.current = bootstrapContent;
           if (applyContent(bootstrapContent)) {
             dismissStartup();
-            // The bootstrap already contains the complete navigation catalog.
-            // Fetch/parse the larger index only after first paint and bypass the
-            // visible startup path; merge it without rebuilding visible rails.
-            InteractionManager.runAfterInteractions(() => {
-              void loadContent(false)
-                .then((freshContent) => {
-                  if (freshContent.source === 'remote') applyBackgroundFullContent(freshContent);
-                })
-                .catch(() => undefined);
-            });
             return;
           }
         }
 
-        // A failed compact request must not promote the 20+ MB full index onto
-        // the startup thread. Keep the already visible bundled/cache snapshot;
-        // the large index gets one idle background attempt below.
+        // A failed complete-navigation request keeps the already visible
+        // bundled/cache snapshot. It must never promote the 20+ MB index.
         firstContent = cachedBootstrap || contentRef.current;
-      } else if (!initialLoad && force && online) {
+      } else if (!initialLoad && online) {
         const bootstrapContent = await loadBootstrapContent();
-        if (bootstrapContent?.items.length) {
-          firstContent = bootstrapContent;
-          foregroundBootstrapUsed = true;
-        } else {
-          firstContent = await loadContent(false);
-        }
+        firstContent = bootstrapContent?.items.length ? bootstrapContent : contentRef.current;
       } else if (initialLoad) {
-        // Never parse the old multi-megabyte full index on the startup thread.
-        // The bundled/current compact snapshot is already visible and the
-        // persisted compact bootstrap is the offline upgrade path.
+        // Offline startup still has the whole bundled/current navigation set.
         firstContent = cachedBootstrap || contentRef.current;
       } else {
-        firstContent = await loadContent(false);
+        firstContent = contentRef.current;
       }
 
       const firstApplied = applyContent(firstContent);
 
       if (firstApplied) {
         dismissStartup();
-        if (foregroundBootstrapUsed) {
-          // Bootstrap is already current and safe to reveal; enrich the same
-          // catalog with the full index without blocking the foreground reopen.
-          void loadContent(false)
-            .then((freshContent) => {
-              if (freshContent.source !== 'local') applyBackgroundFullContent(freshContent);
-            })
-            .catch(() => undefined);
-          return;
-        }
-        if (initialLoad && firstContent.source === 'local') {
-          // The APK already paints a real compact catalog. Keep the heavy index
-          // completely outside the startup/first-interaction window.
-          InteractionManager.runAfterInteractions(() => {
-            void loadContent(false)
-              .then((freshContent) => {
-                if (freshContent.source !== 'local') applyBackgroundFullContent(freshContent);
-              })
-              .catch(() => undefined);
-          });
-        } else if (initialLoad && firstContent.source !== 'remote') {
-          void loadContent(false)
-            .then((freshContent) => {
-              if (freshContent.source !== 'local') applyContent(freshContent);
-            })
-            .catch(() => undefined);
-        }
-        return;
-      }
-
-      if (initialLoad && firstContent.source !== 'remote') {
-        // Keep the branded startup screen visible until the first remote
-        // attempt settles. This avoids flashing an empty Home screen on the
-        // very first launch while the catalog is still being resolved.
-        try {
-          const freshContent = await loadContent(false);
-          if (!applyContent(freshContent)) {
-            setContentReady(false);
-            setContentResolved(true);
-          }
-        } catch {
-          setContentReady(false);
-          setContentResolved(true);
-        } finally {
-          dismissStartup();
-        }
         return;
       }
 

@@ -1,0 +1,45 @@
+name: Publish Complete Mobile Catalog v42
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  publish:
+    if: github.event.issue.title == 'RUN COMPLETE MOBILE CATALOG V42'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 20
+
+      - name: Refresh complete bundled catalog
+        run: node scripts/refresh-bundled-bootstrap.mjs
+
+      - name: Verify complete startup invariant
+        run: node --test scripts/tests/complete-startup-catalog-v42.test.mjs
+
+      - name: Publish snapshot and remove dispatcher
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/publish-complete-mobile-v42-temp.yml
+          git add src/catalogBootstrap.json
+          git commit -m "perf: bundle complete startup catalog"
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              gh issue comment "${{ github.event.issue.number }}" --body "complete-mobile-catalog-v42=published"
+              exit 0
+            fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep $((attempt * 2))
+          done
+          exit 1
