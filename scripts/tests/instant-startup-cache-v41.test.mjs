@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import test from 'node:test';
+
+const app = fs.readFileSync('App.tsx', 'utf8');
+const service = fs.readFileSync('src/contentService.ts', 'utf8');
+const workflow = fs.readFileSync('.github/workflows/android-apk.yml', 'utf8');
+const bootstrap = JSON.parse(fs.readFileSync('src/catalogBootstrap.json', 'utf8'));
+
+test('APK carries a practical current Home snapshot', () => {
+  assert.ok(bootstrap.items.length >= 100);
+  assert.ok(String(bootstrap.clientRevision || '').length >= 32);
+  assert.equal(
+    bootstrap.items.filter((item) => item.categoryKeys?.includes('iranian-series')).length,
+    18,
+  );
+  assert.ok(fs.statSync('src/catalogBootstrap.json').size < 1_500_000);
+});
+
+test('startup is stale-while-revalidate and never network-gated', () => {
+  assert.ok(service.includes("import bundledBootstrapJson from './catalogBootstrap.json';"));
+  assert.ok(service.includes('export async function loadCachedBootstrapContent()'));
+  assert.ok(app.includes('const cachedBootstrap = initialLoad ? await loadCachedBootstrapContent() : null;'));
+  const start = app.indexOf('if (hasBundledCatalog) {');
+  const end = app.indexOf('} else {', start);
+  const block = app.slice(start, end);
+  assert.ok(block.indexOf('dismissStartup();') < block.indexOf('void reloadContent(false);'));
+});
+
+test('large index cannot steal the startup path', () => {
+  assert.ok(app.includes('void loadContent(false)'));
+  const initial = app.slice(
+    app.indexOf('if (initialLoad && online)'),
+    app.indexOf('const firstApplied = applyContent(firstContent);'),
+  );
+  assert.ok(!initial.includes('loadContent(false, true)'));
+  assert.ok(!initial.includes('loadContent(true)'));
+  assert.ok(service.includes('const metadataMatches = Boolean('));
+});
+
+test('release builds refresh their bundled snapshot', () => {
+  assert.ok(workflow.includes('node scripts/refresh-bundled-bootstrap.mjs'));
+});

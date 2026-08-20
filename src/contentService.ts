@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { CATALOG, VERIFIED_IRANIAN_SCHEDULE } from './data';
+import bundledBootstrapJson from './catalogBootstrap.json';
 import {
   CONTENT_REPOSITORY_BASES,
   REMOTE_CONTENT_BOOTSTRAP_URL,
@@ -29,21 +30,27 @@ export type LoadedContent = CatalogPayload & {
   source: 'remote' | 'cache' | 'local';
 };
 
-const LOCAL_PAYLOAD: CatalogPayload = {
-  version: '0.2.0-local',
-  updatedAt: '۱۴۰۵/۰۵/۰۵',
-  items: CATALOG,
-  iranianSchedule: VERIFIED_IRANIAN_SCHEDULE,
-  weeklySchedule: [],
-  featuredPeople: [],
-  imdbTop100: undefined,
-};
+const bundledBootstrap = bundledBootstrapJson as unknown as CatalogPayload;
+const LOCAL_PAYLOAD: CatalogPayload = Array.isArray(bundledBootstrap.items) && bundledBootstrap.items.length
+  ? bundledBootstrap
+  : {
+      version: '0.2.0-local',
+      updatedAt: '۱۴۰۵/۰۵/۰۵',
+      items: CATALOG,
+      iranianSchedule: VERIFIED_IRANIAN_SCHEDULE,
+      weeklySchedule: [],
+      featuredPeople: [],
+      imdbTop100: undefined,
+    };
 
 const REMOTE_CACHE_URI = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v3-cache.json`
   : '';
 const REMOTE_CACHE_META_URI = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v3-cache-meta.json`
+  : '';
+const BOOTSTRAP_CACHE_URI = FileSystem.documentDirectory
+  ? `${FileSystem.documentDirectory}aparatchi-bootstrap-v1-cache.json`
   : '';
 
 type RemoteCacheMetadata = {
@@ -52,6 +59,7 @@ type RemoteCacheMetadata = {
   manifestRevision?: string;
   catalogVersion?: string;
   catalogUpdatedAt?: string;
+  bootstrapRevision?: string;
 };
 
 type RemoteCatalogManifest = {
@@ -68,6 +76,7 @@ type RemoteCatalogManifest = {
 };
 
 let memoryContent: CatalogPayload | null = null;
+let memoryBootstrapContent: CatalogPayload | null = null;
 let cacheMetadataLoaded = false;
 let cacheMetadata: RemoteCacheMetadata = {};
 const detailMemoryCache = new Map<string, CatalogItem>();
@@ -1566,30 +1575,52 @@ export const getBundledContent = (): LoadedContent => ({
   source: 'local',
 });
 
+const readCachedBootstrapPayload = async (): Promise<CatalogPayload | null> => {
+  if (memoryBootstrapContent) return memoryBootstrapContent;
+  if (!BOOTSTRAP_CACHE_URI) return null;
+  try {
+    const info = await FileSystem.getInfoAsync(BOOTSTRAP_CACHE_URI);
+    if (!info.exists) return null;
+    const parsed = parsePayload(JSON.parse(await FileSystem.readAsStringAsync(BOOTSTRAP_CACHE_URI)));
+    if (parsed?.items.length) memoryBootstrapContent = parsed;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedBootstrapPayload = async (rawPayload: string, parsed: CatalogPayload) => {
+  memoryBootstrapContent = parsed;
+  if (!BOOTSTRAP_CACHE_URI) return;
+  try {
+    await FileSystem.writeAsStringAsync(BOOTSTRAP_CACHE_URI, rawPayload);
+  } catch {
+    // A bootstrap cache write must never delay or reject the visible catalog.
+  }
+};
+
+export async function loadCachedBootstrapContent(): Promise<LoadedContent | null> {
+  const cached = await readCachedBootstrapPayload();
+  return cached?.items.length ? { ...cached, source: 'cache' } : null;
+}
+
 /**
- * Fetch the current Home/navigation bootstrap before the large index. Startup
- * first resolves the tiny manifest and only accepts a bootstrap whose catalog
- * timestamp matches it. This prevents a CDN/Raw race from painting a valid but
- * older Home for several seconds.
+ * Fetch the current Home/navigation bootstrap while the already bundled/cached
+ * snapshot remains visible. Manifest and bootstrap start together; the result
+ * is accepted only when their revisions match.
  */
 export async function loadBootstrapContent(): Promise<LoadedContent | null> {
   const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();
   if (!remoteUrl) return null;
   await readCacheMetadata();
 
-  // Manifest mirrors are raced internally. This keeps the exact clientRevision
-  // truth check without paying Raw + CDN timeout costs one after another.
-  let manifest: RemoteCatalogManifest | null = null;
-  try {
-    manifest = await fetchRemoteManifest();
-  } catch {
-    // A current bootstrap is still preferable to the bundled emergency catalog
-    // if both manifest mirrors are temporarily unavailable.
-  }
+  // Bootstrap and manifest are both small. Start them together so the manifest
+  // truth check does not add another 2–3 seconds before the first catalog byte.
+  const manifestPromise = fetchRemoteManifest().catch(() => null);
 
   const candidates = remoteRepositoryUrlCandidates(remoteUrl);
   if (!candidates.length) return null;
-  const revisionToken = manifest?.bootstrapRevision || manifest?.clientRevision || manifest?.revision || String(Date.now());
+  const revisionToken = String(Date.now());
   const controllers = candidates.map(() => new AbortController());
 
   return await new Promise<LoadedContent | null>((resolve) => {
@@ -1612,10 +1643,12 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
           );
           if (!response.ok) return;
 
-          const rawBootstrap = JSON.parse(await response.text());
+          const rawBootstrapText = await response.text();
+          const rawBootstrap = JSON.parse(rawBootstrapText);
           const bootstrapRecord = rawBootstrap && typeof rawBootstrap === 'object'
             ? rawBootstrap as Record<string, unknown>
             : {};
+          const manifest = await manifestPromise;
           const payloadClientRevision = asString(
             bootstrapRecord.clientRevision ?? bootstrapRecord.client_revision,
           );
@@ -1633,6 +1666,11 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
           controllers.forEach((other, otherIndex) => {
             if (otherIndex !== index) other.abort();
           });
+          void writeCachedBootstrapPayload(rawBootstrapText, parsed);
+          if (manifest?.bootstrapRevision) {
+            cacheMetadata = { ...cacheMetadata, bootstrapRevision: manifest.bootstrapRevision };
+            void writeCacheMetadata(cacheMetadata);
+          }
           resolve({ ...parsed, source: 'remote' });
         } catch {
           // Another public mirror may still return the current revision.
@@ -1676,6 +1714,7 @@ const readCacheMetadata = async () => {
         ...(asString(value.manifestRevision) ? { manifestRevision: asString(value.manifestRevision) } : {}),
         ...(asString(value.catalogVersion) ? { catalogVersion: asString(value.catalogVersion) } : {}),
         ...(asString(value.catalogUpdatedAt) ? { catalogUpdatedAt: asString(value.catalogUpdatedAt) } : {}),
+        ...(asString(value.bootstrapRevision) ? { bootstrapRevision: asString(value.bootstrapRevision) } : {}),
       };
     }
   } catch {
@@ -1865,25 +1904,44 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
   }
 
   await readCacheMetadata();
-  const cached = forceRemote ? null : await readCachedContent();
+  let cached: CatalogPayload | null = null;
+  let cachedResolved = forceRemote;
+  const resolveCachedContent = async () => {
+    if (cachedResolved) return cached;
+    cachedResolved = true;
+    cached = await readCachedContent();
+    return cached;
+  };
   let manifest: RemoteCatalogManifest | null = null;
 
   try {
     manifest = await fetchRemoteManifest();
-    if (!forceRemote && manifest && cached && manifestMatchesCachedContent(manifest, cached)) {
-      cacheMetadata = {
-        ...cacheMetadata,
-        manifestRevision: manifest.clientRevision || manifest.revision,
-        ...(manifest.catalogVersion ? { catalogVersion: manifest.catalogVersion } : {}),
-        ...(manifest.catalogUpdatedAt ? { catalogUpdatedAt: manifest.catalogUpdatedAt } : {}),
-      };
-      void writeCacheMetadata(cacheMetadata);
-      return { ...cached, source: 'remote' };
+    if (!forceRemote && manifest) {
+      const revision = manifest.clientRevision || manifest.revision;
+      const metadataMatches = Boolean(
+        cacheMetadata.manifestRevision && cacheMetadata.manifestRevision === revision,
+      );
+      // A changed manifest means the old 20+ MB cache cannot be the answer.
+      // Skip parsing it entirely and go straight to the new remote index.
+      const cachedCandidate = metadataMatches || !manifest.clientRevision
+        ? await resolveCachedContent()
+        : null;
+      if (cachedCandidate && manifestMatchesCachedContent(manifest, cachedCandidate)) {
+        cacheMetadata = {
+          ...cacheMetadata,
+          manifestRevision: revision,
+          ...(manifest.catalogVersion ? { catalogVersion: manifest.catalogVersion } : {}),
+          ...(manifest.catalogUpdatedAt ? { catalogUpdatedAt: manifest.catalogUpdatedAt } : {}),
+        };
+        void writeCacheMetadata(cacheMetadata);
+        return { ...cachedCandidate, source: 'remote' };
+      }
     }
   } catch {
     // A temporary manifest/CDN error must not trigger another multi-megabyte
     // download. Keep the last valid catalog and retry the tiny check later.
-    if (cached && !forceRemote) return { ...cached, source: 'cache' };
+    const cachedCandidate = await resolveCachedContent();
+    if (cachedCandidate && !forceRemote) return { ...cachedCandidate, source: 'cache' };
   }
 
   try {
@@ -1924,7 +1982,8 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
         });
 
         if (nextResponse.status === 304) {
-          if (cached) return { ...cached, source: 'remote' };
+          const cachedCandidate = await resolveCachedContent();
+          if (cachedCandidate) return { ...cachedCandidate, source: 'remote' };
           cacheMetadata = {};
           if (REMOTE_CACHE_META_URI) {
             void FileSystem.writeAsStringAsync(REMOTE_CACHE_META_URI, '{}').catch(() => undefined);
@@ -2006,7 +2065,8 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
     void writeCachedContent(rawText, cacheMetadata);
     return { ...parsed, source: 'remote' };
   } catch {
-    if (cached) return { ...cached, source: 'cache' };
+    const cachedCandidate = await resolveCachedContent();
+    if (cachedCandidate) return { ...cachedCandidate, source: 'cache' };
     return {
       ...normalizedLocalPayload(),
       source: 'local',

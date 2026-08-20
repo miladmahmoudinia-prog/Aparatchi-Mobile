@@ -5,19 +5,29 @@ import test from 'node:test';
 const app = fs.readFileSync('App.tsx','utf8');
 const service = fs.readFileSync('src/contentService.ts','utf8');
 
-test('online cold start asks for current bootstrap before any persisted full-index fallback', () => {
+test('cold start reveals bundled/cache bootstrap before remote work', () => {
+  const effectStart = app.indexOf('if (hasBundledCatalog) {');
+  const effectEnd = app.indexOf('} else {', effectStart);
+  const effect = app.slice(effectStart, effectEnd);
+  assert.ok(effect.indexOf('dismissStartup();') >= 0);
+  assert.ok(effect.indexOf('dismissStartup();') < effect.indexOf('void reloadContent(false);'));
+
   const start = app.indexOf('if (initialLoad && online)');
   const end = app.indexOf('const firstApplied = applyContent(firstContent);', start);
   const block = app.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.ok(block.indexOf('await loadBootstrapContent()') >= 0);
-  assert.ok(block.indexOf('await loadBootstrapContent()') < block.indexOf('firstContent = await loadContent(true)'));
-  assert.ok(block.includes('loadContent(false, true)'));
+  assert.ok(app.includes('const cachedBootstrap = initialLoad ? await loadCachedBootstrapContent() : null;'));
+  assert.ok(!block.includes('firstContent = await loadContent(true)'));
+  assert.ok(block.includes('loadContent(false)'));
+  assert.ok(!block.includes('loadContent(false, true)'));
   assert.ok(block.includes('InteractionManager.runAfterInteractions'));
 });
 
-test('forced current-index fetch bypasses full persisted cache parsing', () => {
-  assert.ok(service.includes('const cached = forceRemote ? null : await readCachedContent();'));
+test('changed manifest skips parsing the stale full-index cache', () => {
+  assert.ok(service.includes('const metadataMatches = Boolean('));
+  assert.ok(service.includes('const cachedCandidate = metadataMatches || !manifest.clientRevision'));
+  assert.ok(service.includes('const resolveCachedContent = async () =>'));
 });
 
 test('manifest cannot downgrade below already accepted catalog and Raw gets bounded truth window', () => {

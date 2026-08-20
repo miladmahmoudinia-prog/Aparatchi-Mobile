@@ -69,6 +69,9 @@ jobs:
       - name: Install dependencies
         run: npm install --include=dev
 
+      - name: Refresh bundled startup catalog
+        run: node scripts/refresh-bundled-bootstrap.mjs
+
       - name: Type-check application
         run: npm run typecheck
 

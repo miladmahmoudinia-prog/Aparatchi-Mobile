@@ -39,7 +39,7 @@ import {
 import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
-import { getBundledContent, loadBootstrapContent, loadCatalogItemDetail, loadContent, LoadedContent } from './src/contentService';
+import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCatalogItemDetail, loadContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
   checkMobileOperatorAccess,
@@ -7794,6 +7794,13 @@ function AppContent() {
       // this prevents the brief false "catalog is empty" screen at startup.
       let foregroundBootstrapUsed = false;
       let firstContent: LoadedContent;
+      const cachedBootstrap = initialLoad ? await loadCachedBootstrapContent() : null;
+
+      if (cachedBootstrap?.items.length) {
+        startupFallbackContentRef.current = cachedBootstrap;
+        applyContent(cachedBootstrap);
+        dismissStartup();
+      }
 
       if (initialLoad && online) {
         // A true cold start must never parse the previous multi-megabyte cache
@@ -7812,9 +7819,9 @@ function AppContent() {
             dismissStartup();
             // The bootstrap already contains the complete navigation catalog.
             // Fetch/parse the larger index only after first paint and bypass the
-            // old disk cache entirely; merge it without rebuilding visible rails.
+            // visible startup path; merge it without rebuilding visible rails.
             InteractionManager.runAfterInteractions(() => {
-              void loadContent(false, true)
+              void loadContent(false)
                 .then((freshContent) => {
                   if (freshContent.source === 'remote') applyBackgroundFullContent(freshContent);
                 })
@@ -7824,18 +7831,10 @@ function AppContent() {
           }
         }
 
-        // If bootstrap mirrors are unavailable, try source truth directly. Only
-        // after both current-network paths fail may the old disk cache be parsed.
-        try {
-          const freshContent = await loadContent(false, true);
-          if (freshContent.source === 'remote' && applyContent(freshContent)) {
-            dismissStartup();
-            return;
-          }
-        } catch {
-          // Persisted cache is the emergency offline fallback below.
-        }
-        firstContent = await loadContent(true);
+        // A failed compact request must not promote the 20+ MB full index onto
+        // the startup thread. Keep the already visible bundled/cache snapshot;
+        // the large index gets one idle background attempt below.
+        firstContent = cachedBootstrap || contentRef.current;
       } else if (!initialLoad && force && online) {
         const bootstrapContent = await loadBootstrapContent();
         if (bootstrapContent?.items.length) {
@@ -7844,8 +7843,13 @@ function AppContent() {
         } else {
           firstContent = await loadContent(false);
         }
+      } else if (initialLoad) {
+        // Never parse the old multi-megabyte full index on the startup thread.
+        // The bundled/current compact snapshot is already visible and the
+        // persisted compact bootstrap is the offline upgrade path.
+        firstContent = cachedBootstrap || contentRef.current;
       } else {
-        firstContent = await loadContent(initialLoad);
+        firstContent = await loadContent(false);
       }
 
       const firstApplied = applyContent(firstContent);
@@ -7863,19 +7867,15 @@ function AppContent() {
           return;
         }
         if (initialLoad && firstContent.source === 'local') {
-          // A fresh install used to expose the nine-item emergency catalog while
-          // the full index downloaded. Paint the small real Home bootstrap first,
-          // then replace it with the complete catalog in the same async sequence.
-          void (async () => {
-            // Start the complete catalog at the same instant as the lightweight
-            // bootstrap. The bootstrap may paint Home first, but it must never
-            // postpone the full catalog/category refresh.
-            const freshContentPromise = loadContent(false);
-            const bootstrapContent = await loadBootstrapContent();
-            if (bootstrapContent) applyContent(bootstrapContent);
-            const freshContent = await freshContentPromise;
-            if (freshContent.source !== 'local') applyContent(freshContent);
-          })().catch(() => undefined);
+          // The APK already paints a real compact catalog. Keep the heavy index
+          // completely outside the startup/first-interaction window.
+          InteractionManager.runAfterInteractions(() => {
+            void loadContent(false)
+              .then((freshContent) => {
+                if (freshContent.source !== 'local') applyBackgroundFullContent(freshContent);
+              })
+              .catch(() => undefined);
+          });
         } else if (initialLoad && firstContent.source !== 'remote') {
           void loadContent(false)
             .then((freshContent) => {
@@ -7932,8 +7932,9 @@ function AppContent() {
     };
 
     if (hasBundledCatalog) {
-      // Paint Home from the bundled catalog first; network/cache refreshes must
-      // never hold the branded startup screen for 15–25 seconds.
+      // The APK carries a real compact Home snapshot. Reveal it on the first
+      // React frame; network/cache refreshes must never own the startup cover.
+      dismissStartup();
       // Keep the first Home interaction free of multi-megabyte catalog parsing.
       // The real bootstrap refresh must start immediately on first install;
       // InteractionManager remains reserved for later periodic/app-state refreshes.
