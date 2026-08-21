@@ -52,11 +52,20 @@ assert(!stable.includes('setTimeout(() => resolve(null), 450)'), 'Obsolete 450ms
 assert(!stable.includes('for (const candidate of candidates)'), 'Stable pointer mirrors are still sequential inside a mirror class');
 assert(stable.includes('_aparatchi_pointer=${Date.now()}'), 'Mutable stable pointer lost cache busting');
 
+const detailLoaderStart = service.indexOf('export async function loadCatalogItemDetail');
+const detailLoader = service.slice(detailLoaderStart);
+const exactPath = detailLoader.indexOf('const detailPath = summaryDetailPath;');
+const firstFetch = detailLoader.indexOf('const firstValid = await new Promise');
+const recoveryGate = detailLoader.indexOf('if (!resolvedDetail) {');
+const pointerRecovery = detailLoader.indexOf('await resolveStableDetailPath(summary, detailPath)', recoveryGate);
+assert(exactPath >= 0 && exactPath < firstFetch, 'Exact immutable detail path is not the first load path');
+assert(recoveryGate > firstFetch && pointerRecovery > recoveryGate, 'Stable pointer is not restricted to failed-shard recovery');
+
 console.log(JSON.stringify({
   episodeArtwork: 'cached-fallback-no-video-decoder',
   episodeTapPath: 'no-thumbnail-work-on-mount',
   episodeLabels: 'series-name-number-boilerplate-hidden',
   detailSummary: 'visible-during-media-hydration',
-  stablePointer: 'github-raw-first-with-bounded-cdn-fallback',
+  stablePointer: 'exact-shard-first-raw-pointer-on-miss',
   nextEpisodeOverlay: 'video-frame',
 }, null, 2));

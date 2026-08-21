@@ -2410,9 +2410,11 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
   const summaryDetailPath = asString(summary?.detailPath);
   if (!summaryDetailPath || summary.detailLoaded) return { ...summary, detailLoaded: true };
 
-  // Resolve the mutable stable pointer before trusting a cached/immutable shard.
-  // A cached catalog-index may legally be older than the latest media links.
-  const detailPath = await resolveStableDetailPath(summary, summaryDetailPath);
+  // The live/bootstrap summary already names an immutable content-addressed
+  // shard. Read that exact shard first; waiting up to 1.8 seconds for a mutable
+  // pointer before even checking memory/disk made every Detail open feel stuck.
+  // The stable pointer remains the recovery path below when this shard is gone.
+  const detailPath = summaryDetailPath;
   const memoryKey = `${summary.type}:${summary.id}:${detailPath}`;
   const memory = detailMemoryCache.get(memoryKey);
   if (memory) return memory;
@@ -2494,15 +2496,6 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
     let resolvedDetail = firstValid;
 
     if (!resolvedDetail) {
-      // A CDN may serve an older catalog-index.json after its content-addressed
-      // detail shard has already rotated out of the repository. The first 12
-      // hex chars in every detail filename are the permanent title identity.
-      // Resolve that identity through a tiny stable pointer, then fetch the
-      // current immutable detail shard. This works even when the index itself
-      // is stale and avoids publishing duplicate full detail JSON files.
-      const identityMatch = detailPath.match(/(?:^|\/)([a-f0-9]{12})-[a-f0-9]{12}\.json$/i);
-      const stablePath = identityMatch ? `catalog-stable/${identityMatch[1].toLowerCase()}.json` : '';
-
       const fetchFirstRawPath = async (targetPath: string): Promise<string | null> => {
         if (!targetPath || targetPath.includes('..')) return null;
         const targetUrl = detailUrlFor(targetPath);
@@ -2547,34 +2540,24 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
         });
       };
 
-      if (stablePath) {
-        const pointerRaw = await fetchFirstRawPath(stablePath);
-        if (pointerRaw) {
+      // A stale cached summary can point to a shard that has rotated out. Only
+      // after the fast exact-path attempt fails do we pay for the Raw-first
+      // stable pointer lookup and fetch its verified current shard.
+      const recoveredDetailPath = await resolveStableDetailPath(summary, detailPath);
+      if (recoveredDetailPath !== detailPath) {
+        const currentRaw = await fetchFirstRawPath(recoveredDetailPath);
+        if (currentRaw) {
           try {
-            const pointer = JSON.parse(pointerRaw) as Record<string, unknown>;
-            const pointerType = asString(pointer.type);
-            const pointerId = asString(pointer.id);
-            const currentDetailPath = asString(pointer.detailPath);
-            const pointerMatchesSummary =
-              pointerType === asString(summary.type) &&
-              pointerId === asString(summary.id);
-            const currentPathSafe = /^catalog-items\/[a-f0-9]{12}-[a-f0-9]{12}\.json$/i.test(currentDetailPath);
-
-            if (pointerMatchesSummary && currentPathSafe) {
-              const currentRaw = await fetchFirstRawPath(currentDetailPath);
-              if (currentRaw) {
-                const parsed = parseDetail(JSON.parse(currentRaw));
-                if (
-                  parsed &&
-                  asString(parsed.type) === asString(summary.type) &&
-                  asString(parsed.id) === asString(summary.id)
-                ) {
-                  resolvedDetail = { parsed, raw: currentRaw };
-                }
-              }
+            const parsed = parseDetail(JSON.parse(currentRaw));
+            if (
+              parsed &&
+              asString(parsed.type) === asString(summary.type) &&
+              asString(parsed.id) === asString(summary.id)
+            ) {
+              resolvedDetail = { parsed, raw: currentRaw };
             }
           } catch {
-            // Invalid/stale pointer: the forced index refresh remains the final fallback.
+            // Invalid recovered detail: the forced index refresh is the final fallback.
           }
         }
       }

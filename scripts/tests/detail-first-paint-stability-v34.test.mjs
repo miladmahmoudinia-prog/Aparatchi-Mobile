@@ -4,14 +4,15 @@ import test from 'node:test';
 
 const app = await fs.readFile('App.tsx', 'utf8');
 
-test('open Detail keeps its visible banner, overview and cast during enrichment', () => {
+test('open Detail keeps its visible banner/overview and extends cast without replacing it', () => {
   assert.ok(app.includes('const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): CatalogItem => {'));
   assert.ok(app.includes("const visiblePoster = current.poster || current.posterFallback || '';"));
   assert.ok(app.includes('const visibleBackdrop = current.backdrop || current.backdropFallback || visiblePoster;'));
   assert.ok(app.includes("const visibleOverview = String(current.overview || '').trim();"));
   assert.ok(app.includes('const visiblePeople = Array.isArray(current.people) && current.people.length ? current.people : null;'));
   assert.ok(app.includes('...(visibleOverview ? { overview: current.overview } : {})'));
-  assert.ok(app.includes('...(visiblePeople ? { people: visiblePeople } : {})'));
+  assert.ok(app.includes('const mergedPeople = visiblePeople ? [...visiblePeople] : [];'));
+  assert.ok(app.includes('...(mergedPeople.length ? { people: mergedPeople } : {})'));
 });
 
 test('every Detail replacement path uses the stable visible snapshot', () => {

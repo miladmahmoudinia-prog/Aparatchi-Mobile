@@ -1485,7 +1485,6 @@ const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
 const catalogFilterCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem[]>>();
 const catalogListScrollOffsets = new Map<string, number>();
 let categoriesScreenScrollOffset = 0;
-const detailScrollOffsets = new Map<string, number>();
 const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
   'korean-movies', 'korean-series', 'indian-movies',
@@ -1811,6 +1810,14 @@ const CatalogArtwork = memo(function CatalogArtwork({
     </View>
   );
 });
+
+const warmDetailArtwork = (item: CatalogItem) => {
+  const url = catalogArtworkCandidates(
+    item.backdrop || item.backdropFallback || item.poster,
+    'backdrop',
+  )[0];
+  if (url) void Image.prefetch(url).catch(() => undefined);
+};
 
 const localArtworkForItem = (_item: CatalogItem) => undefined;
 
@@ -2499,6 +2506,7 @@ const PosterCard = memo(function PosterCard({
   return (
     <Pressable
       onPress={onOpen}
+      onPressIn={() => warmDetailArtwork(item)}
       unstable_pressDelay={0}
       hitSlop={12}
       pressRetentionOffset={{ top: 24, right: 24, bottom: 24, left: 24 }}
@@ -5841,11 +5849,25 @@ function DetailModal({
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
   const [downloadInitialGroup, setDownloadInitialGroup] = useState<string | null>(null);
   const [relatedSelectionSeed, setRelatedSelectionSeed] = useState(0);
+  const [secondaryDetailReady, setSecondaryDetailReady] = useState(false);
+  const detailScrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     setDownloadSheetOpen(false);
     setDownloadInitialGroup(null);
-    if (visible && item?.id) setRelatedSelectionSeed((seed) => seed + 1);
+    setSecondaryDetailReady(false);
+    if (!visible || !item?.id) return undefined;
+
+    setRelatedSelectionSeed((seed) => seed + 1);
+    // Detail is a fresh navigation destination every time it opens. Keeping a
+    // process-wide offset made a closed title reopen halfway down the page.
+    detailScrollRef.current?.scrollTo({ y: 0, animated: false });
+    const frame = requestAnimationFrame(() => detailScrollRef.current?.scrollTo({ y: 0, animated: false }));
+    const task = InteractionManager.runAfterInteractions(() => setSecondaryDetailReady(true));
+    return () => {
+      cancelAnimationFrame(frame);
+      task.cancel();
+    };
   }, [item?.id, visible]);
   if (!item) return null;
 
@@ -5872,12 +5894,9 @@ function DetailModal({
       <SafeAreaView style={styles.detailScreen} edges={['top','right','bottom','left']}>
         <StatusBar style="light" />
         <ScrollView
+          ref={detailScrollRef}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.detailContent}
-          contentOffset={{ x: 0, y: detailScrollOffsets.get(String(item.id)) || 0 }}
-          scrollEventThrottle={48}
-          onScrollEndDrag={(event) => detailScrollOffsets.set(String(item.id), Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
-          onMomentumScrollEnd={(event) => detailScrollOffsets.set(String(item.id), Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)))}
         >
           <View style={styles.detailHero}>
             <CatalogArtwork primary={item.backdrop || item.backdropFallback || item.poster} fallback={item.backdropFallback || item.poster} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} imageKind="backdrop" />
@@ -5925,6 +5944,7 @@ function DetailModal({
                     <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
                   </>
                 ) : null}
+                <PeopleSection item={item} onOpen={onOpenPerson} />
                 {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile || hasDownloads) ? (
                   <View style={styles.detailActions}>
                     {(hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
@@ -5963,7 +5983,6 @@ function DetailModal({
               </>
             ) : null}
             <PeopleSection item={item} onOpen={onOpenPerson} />
-            <MovieCollectionSection item={item} catalog={catalog} onOpen={onOpenRelated} />
             {item.type === 'series' && episodeGroups.length ? (
               <SeriesEpisodeShowcase
                 item={item}
@@ -5972,7 +5991,12 @@ function DetailModal({
                 onOpenOperator={(file) => onOperatorOpen(item, file)}
               />
             ) : null}
-            <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} selectionSeed={relatedSelectionSeed} />
+            {secondaryDetailReady ? (
+              <>
+                <MovieCollectionSection item={item} catalog={catalog} onOpen={onOpenRelated} />
+                <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} selectionSeed={relatedSelectionSeed} />
+              </>
+            ) : null}
               </>
             )}
           </View>
@@ -7555,6 +7579,18 @@ const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): C
   const visibleBackdrop = current.backdrop || current.backdropFallback || visiblePoster;
   const visibleOverview = String(current.overview || '').trim();
   const visiblePeople = Array.isArray(current.people) && current.people.length ? current.people : null;
+  const mergedPeople = visiblePeople ? [...visiblePeople] : [];
+  const visiblePersonKeys = new Set(mergedPeople.map((person) => person.tmdbId
+    ? `${person.role}:tmdb:${person.tmdbId}`
+    : `${person.role}:name:${normalizeComparableText(person.nameFa || person.name || '')}`));
+  for (const person of incoming.people || []) {
+    const key = person.tmdbId
+      ? `${person.role}:tmdb:${person.tmdbId}`
+      : `${person.role}:name:${normalizeComparableText(person.nameFa || person.name || '')}`;
+    if (!key || visiblePersonKeys.has(key)) continue;
+    visiblePersonKeys.add(key);
+    mergedPeople.push(person);
+  }
   return {
     ...incoming,
     ...(visiblePoster ? {
@@ -7566,7 +7602,7 @@ const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): C
       backdropFallback: current.backdropFallback || incoming.backdropFallback,
     } : {}),
     ...(visibleOverview ? { overview: current.overview } : {}),
-    ...(visiblePeople ? { people: visiblePeople } : {}),
+    ...(mergedPeople.length ? { people: mergedPeople } : {}),
   };
 };
 
