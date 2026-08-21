@@ -14,14 +14,18 @@ test('APK carries the complete current startup navigation snapshot', () => {
   assert.ok(fs.statSync('src/catalogBootstrap.json').size < 10_000_000);
 });
 
-test('startup is stale-while-revalidate and never network-gated', () => {
+test('startup merges the uncapped live delta before revealing Home', () => {
   assert.ok(service.includes("import bundledBootstrapJson from './catalogBootstrap.json';"));
   assert.ok(service.includes('export async function loadCachedLiveContent(base: LoadedContent)'));
   assert.ok(app.includes('const cachedLive = initialLoad ? await loadCachedLiveContent(contentRef.current) : null;'));
   const start = app.indexOf('if (hasBundledCatalog) {');
   const end = app.indexOf('} else {', start);
   const block = app.slice(start, end);
-  assert.ok(block.indexOf('dismissStartup();') < block.indexOf('void reloadContent(false);'));
+  assert.ok(!block.includes('dismissStartup();'));
+  assert.ok(block.includes('void reloadContent(false);'));
+  const cachedStart = app.indexOf('if (cachedLive?.items.length) {', app.indexOf('const reloadContent = async'));
+  const onlineStart = app.indexOf('if (online) {', cachedStart);
+  assert.ok(!app.slice(cachedStart, onlineStart).includes('dismissStartup();'));
 });
 
 test('large index cannot steal the startup path', () => {

@@ -7785,7 +7785,6 @@ function AppContent() {
       if (cachedLive?.items.length) {
         startupFallbackContentRef.current = cachedLive;
         applyContent(cachedLive);
-        dismissStartup();
       }
 
       if (online) {
@@ -7850,12 +7849,11 @@ function AppContent() {
     };
 
     if (hasBundledCatalog) {
-      // The APK carries a real compact Home snapshot. Reveal it on the first
-      // React frame; network/cache refreshes must never own the startup cover.
-      dismissStartup();
-      // Keep the first Home interaction free of multi-megabyte catalog parsing.
-      // The real bootstrap refresh must start immediately on first install;
-      // InteractionManager remains reserved for later periodic/app-state refreshes.
+      // Keep the complete APK snapshot mounted behind Startup, then reveal Home
+      // only after the small cumulative live delta has been merged. Otherwise a
+      // build-time title count is visibly replaced by newer syncs a few seconds
+      // after Home appears. Offline launches still reveal the APK snapshot from
+      // reloadContent as soon as network state is known.
       void reloadContent(false);
     } else {
       void reloadContent();

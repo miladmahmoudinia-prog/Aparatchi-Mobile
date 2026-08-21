@@ -21,15 +21,15 @@ test('bootstrap mirrors race instead of stacking timeout costs', async () => {
   assert.ok(bootstrap.indexOf('const manifestPromise =') < bootstrap.indexOf('candidates.forEach((candidate, index) => {'));
 });
 
-test('first install has a real bundled catalog instead of a network-owned splash', async () => {
+test('first install keeps a real bundled fallback without flashing stale Home', async () => {
   const app = await fs.readFile('App.tsx', 'utf8');
   const bundled = JSON.parse(await fs.readFile('src/catalogBootstrap.json', 'utf8'));
   const start = app.indexOf('if (hasBundledCatalog) {');
   const end = app.indexOf('} else {', start);
   const block = app.slice(start, end);
   assert.ok(bundled.items.length >= 100);
-  assert.ok(block.indexOf('dismissStartup();') >= 0);
-  assert.ok(block.indexOf('dismissStartup();') < block.indexOf('void reloadContent(false);'));
+  assert.ok(!block.includes('dismissStartup();'));
+  assert.ok(block.includes('void reloadContent(false);'));
 });
 
 test('manifest Raw and CDN requests start together with a bounded source-truth window', async () => {
