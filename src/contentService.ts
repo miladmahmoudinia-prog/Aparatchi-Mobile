@@ -6,6 +6,7 @@ import {
   REMOTE_CONTENT_BOOTSTRAP_URL,
   REMOTE_CONTENT_DETAIL_BASE_URL,
   REMOTE_CONTENT_INDEX_URL,
+  REMOTE_CONTENT_LIVE_URL,
   REMOTE_CONTENT_MANIFEST_URL,
   REMOTE_CONTENT_URL,
 } from './config';
@@ -52,6 +53,9 @@ const REMOTE_CACHE_META_URI = FileSystem.documentDirectory
 const BOOTSTRAP_CACHE_URI = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}aparatchi-bootstrap-v1-cache.json`
   : '';
+const LIVE_CACHE_URI = FileSystem.documentDirectory
+  ? `${FileSystem.documentDirectory}aparatchi-live-v1-cache.json`
+  : '';
 
 type RemoteCacheMetadata = {
   etag?: string;
@@ -81,6 +85,7 @@ type RemoteCatalogManifest = {
 
 let memoryContent: CatalogPayload | null = null;
 let memoryBootstrapContent: CatalogPayload | null = null;
+let memoryLiveDelta: unknown = null;
 let memoizedLocalPayload: CatalogPayload | null = null;
 let cacheMetadataLoaded = false;
 let cacheMetadata: RemoteCacheMetadata = {};
@@ -1552,6 +1557,56 @@ const normalizePeopleWorks = (value: unknown): Record<string, PersonWorkRef[]> =
   return Object.fromEntries(entries);
 };
 
+const liveCatalogItemKey = (item: Pick<CatalogItem, 'type' | 'id'>) => `${item.type}:${item.id}`;
+
+export const mergeLiveCatalogDelta = (
+  base: CatalogPayload,
+  value: unknown,
+): CatalogPayload | null => {
+  if (!value || typeof value !== 'object') return null;
+  const live = value as Record<string, unknown>;
+  const clientRevision = asString(live.clientRevision ?? live.client_revision);
+  const itemOrder = Array.isArray(live.itemOrder)
+    ? live.itemOrder.map((key) => asString(key)).filter(Boolean)
+    : [];
+  const declaredItemCount = asNumber(live.itemCount ?? live.item_count, 0);
+  if (!clientRevision || !itemOrder.length || declaredItemCount !== itemOrder.length) return null;
+  if (new Set(itemOrder).size !== itemOrder.length) return null;
+
+  const liveUpdatedAt = asString(live.updatedAt ?? live.updated_at);
+  const baseTime = Date.parse(asString(base.updatedAt));
+  const liveTime = Date.parse(liveUpdatedAt);
+  if (Number.isFinite(baseTime) && Number.isFinite(liveTime) && baseTime > liveTime) return null;
+
+  const byKey = new Map<string, CatalogItem>();
+  for (const item of base.items || []) byKey.set(liveCatalogItemKey(item), item);
+  for (const rawItem of Array.isArray(live.upserts) ? live.upserts : []) {
+    const item = normalizeCatalogItem(rawItem);
+    if (item) byKey.set(liveCatalogItemKey(item), item);
+  }
+
+  const items: CatalogItem[] = [];
+  for (const key of itemOrder) {
+    const item = byKey.get(key);
+    if (!item) return null;
+    items.push(item);
+  }
+  if (items.length !== declaredItemCount) return null;
+
+  const updatedAt = liveUpdatedAt || asString(base.updatedAt);
+  return {
+    version: asString(live.version, base.version),
+    updatedAt,
+    clientRevision,
+    items,
+    iranianSchedule: normalizeSchedule(live.iranianSchedule ?? base.iranianSchedule),
+    weeklySchedule: normalizeSchedule(live.weeklySchedule ?? base.weeklySchedule),
+    featuredPeople: normalizeFeaturedPeople(live.featuredPeople ?? base.featuredPeople),
+    peopleWorks: {},
+    imdbTop100: normalizeImdbTop100(live.imdbTop100 ?? base.imdbTop100, items, updatedAt),
+  };
+};
+
 const normalizedLocalPayload = (): CatalogPayload => {
   if (memoizedLocalPayload) return memoizedLocalPayload;
   const items = LOCAL_PAYLOAD.items
@@ -1627,6 +1682,35 @@ export async function loadCachedBootstrapContent(): Promise<LoadedContent | null
   if (cached.items.length < LOCAL_PAYLOAD.items.length) return null;
   if (cacheMetadata.bootstrapItemCount && cached.items.length !== cacheMetadata.bootstrapItemCount) return null;
   return { ...cached, source: 'cache' };
+}
+
+const readCachedLiveDelta = async () => {
+  if (memoryLiveDelta) return memoryLiveDelta;
+  if (!LIVE_CACHE_URI) return null;
+  try {
+    const info = await FileSystem.getInfoAsync(LIVE_CACHE_URI);
+    if (!info.exists) return null;
+    memoryLiveDelta = JSON.parse(await FileSystem.readAsStringAsync(LIVE_CACHE_URI));
+    return memoryLiveDelta;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedLiveDelta = async (rawPayload: string, parsed: unknown) => {
+  memoryLiveDelta = parsed;
+  if (!LIVE_CACHE_URI) return;
+  try {
+    await FileSystem.writeAsStringAsync(LIVE_CACHE_URI, rawPayload);
+  } catch {
+    // Live cache is an optimization; the bundled catalog remains complete.
+  }
+};
+
+export async function loadCachedLiveContent(base: LoadedContent): Promise<LoadedContent | null> {
+  const live = await readCachedLiveDelta();
+  const merged = mergeLiveCatalogDelta(base, live);
+  return merged ? { ...merged, source: 'cache' } : null;
 }
 
 /**
@@ -1915,6 +1999,80 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
   if (second) return second;
   throw new Error('Catalog manifest is unavailable from all mirrors');
 };
+
+/**
+ * Apply the current cumulative catalog changes to the complete snapshot that is
+ * already visible. Transport stays proportional to changed titles instead of
+ * re-downloading/parsing the complete navigation file after every hourly sync.
+ */
+export async function loadLiveContent(base: LoadedContent): Promise<LoadedContent | null> {
+  const remoteUrl = REMOTE_CONTENT_LIVE_URL.trim();
+  if (!remoteUrl || !base.items.length) return null;
+
+  const candidates = remoteRepositoryUrlCandidates(remoteUrl);
+  if (!candidates.length) return null;
+  const manifestPromise = fetchRemoteManifest().catch(() => null);
+  const controllers = candidates.map(() => new AbortController());
+  const revisionToken = String(Date.now());
+
+  return await new Promise<LoadedContent | null>((resolve) => {
+    let pending = candidates.length;
+    let settled = false;
+
+    void manifestPromise.then((manifest) => {
+      if (
+        settled ||
+        !manifest?.clientRevision ||
+        base.clientRevision !== manifest.clientRevision ||
+        (manifest.clientItemCount && base.items.length !== manifest.clientItemCount)
+      ) return;
+      settled = true;
+      controllers.forEach((controller) => controller.abort());
+      resolve({ ...base, source: 'remote' });
+    });
+
+    candidates.forEach((candidate, index) => {
+      const controller = controllers[index];
+      const timeout = setTimeout(() => controller.abort(), 6500);
+      const separator = candidate.includes('?') ? '&' : '?';
+
+      void (async () => {
+        try {
+          const response = await fetch(
+            candidate + separator + '_aparatchi_live=' + encodeURIComponent(revisionToken),
+            {
+              headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+              signal: controller.signal,
+            },
+          );
+          if (!response.ok) return;
+          const rawText = await response.text();
+          const live = JSON.parse(rawText) as Record<string, unknown>;
+          const manifest = await manifestPromise;
+          if (!manifest?.clientRevision || asString(live.clientRevision) !== manifest.clientRevision) return;
+          const merged = mergeLiveCatalogDelta(base, live);
+          if (!merged) return;
+          if (manifest.clientItemCount && merged.items.length !== manifest.clientItemCount) return;
+          if (manifest.catalogUpdatedAt && merged.updatedAt !== manifest.catalogUpdatedAt) return;
+          if (settled) return;
+
+          settled = true;
+          controllers.forEach((other, otherIndex) => {
+            if (otherIndex !== index) other.abort();
+          });
+          void writeCachedLiveDelta(rawText, live);
+          resolve({ ...merged, source: 'remote' });
+        } catch {
+          // Another mirror may still have the manifest-matching live revision.
+        } finally {
+          clearTimeout(timeout);
+          pending -= 1;
+          if (!pending && !settled) resolve(null);
+        }
+      })();
+    });
+  });
+}
 
 const manifestMatchesCachedContent = (
   manifest: RemoteCatalogManifest,

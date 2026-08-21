@@ -24,6 +24,13 @@ export const REMOTE_CONTENT_BOOTSTRAP_URL =
   `${CONTENT_REPOSITORY_BASES[0]}catalog-bootstrap.json`;
 
 /**
+ * تغییرات تجمعی کاتالوگ نسبت به snapshot داخل APK. این فایل همهٔ شناسه‌ها را
+ * برای ترتیب دقیق دارد، اما فقط عنوان‌های تازه/تغییرکرده را دوباره حمل می‌کند.
+ */
+export const REMOTE_CONTENT_LIVE_URL =
+  `${CONTENT_REPOSITORY_BASES[0]}catalog-live.json`;
+
+/**
  * نسخهٔ کامل قدیمی فقط برای سازگاری با اولین اجرای مهاجرت نگه داشته شده است.
  * برنامه در حالت عادی آن را دانلود نمی‌کند.
  */

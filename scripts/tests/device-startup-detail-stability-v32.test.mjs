@@ -4,13 +4,13 @@ import test from 'node:test';
 
 test('cold online start keeps compact snapshots ahead of the full index', async () => {
   const source = await fs.readFile('App.tsx', 'utf8');
-  const start = source.indexOf('if (initialLoad && online)');
+  const start = source.indexOf('if (online) {', source.indexOf('const reloadContent = async'));
   const end = source.indexOf('const firstApplied = applyContent(firstContent);', start);
   const block = source.slice(start, end);
   assert.ok(start >= 0 && end > start);
-  assert.ok(block.includes('bootstrapContent = await loadBootstrapContent();'));
-  assert.ok(source.includes('const cachedBootstrap = initialLoad ? await loadCachedBootstrapContent() : null;'));
-  assert.ok(block.includes('firstContent = cachedBootstrap || contentRef.current;'));
+  assert.ok(block.includes('liveContent = await loadLiveContent(contentRef.current);'));
+  assert.ok(source.includes('const cachedLive = initialLoad ? await loadCachedLiveContent(contentRef.current) : null;'));
+  assert.ok(block.includes('firstContent = cachedLive || contentRef.current;'));
   assert.ok(!block.includes('loadContent('));
   assert.ok(!block.includes('loadContent(false, true)'));
 });

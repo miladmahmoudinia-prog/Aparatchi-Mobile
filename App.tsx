@@ -39,7 +39,7 @@ import {
 import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
-import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCatalogItemDetail, loadContent, LoadedContent } from './src/contentService';
+import { getBundledContent, loadBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, loadContent, loadLiveContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
   checkMobileOperatorAccess,
@@ -7740,48 +7740,44 @@ function AppContent() {
     };
 
     try {
-      // The bundled and persisted startup catalogs both contain every current
-      // navigation title. Network refreshes replace that complete snapshot;
-      // the detail-rich 20+ MB index is never part of app start or app resume.
+      // The APK snapshot remains visible while a small cumulative live delta
+      // inserts every title added/changed by later syncs. The complete 8+ MB
+      // bootstrap is only a compatibility fallback, never the normal refresh.
       let firstContent: LoadedContent;
-      const cachedBootstrap = initialLoad ? await loadCachedBootstrapContent() : null;
+      const cachedLive = initialLoad ? await loadCachedLiveContent(contentRef.current) : null;
 
-      if (cachedBootstrap?.items.length) {
-        startupFallbackContentRef.current = cachedBootstrap;
-        applyContent(cachedBootstrap);
+      if (cachedLive?.items.length) {
+        startupFallbackContentRef.current = cachedLive;
+        applyContent(cachedLive);
         dismissStartup();
       }
 
-      if (initialLoad && online) {
-        // A true cold start must never parse the previous multi-megabyte cache
-        // before asking for the current revision-bound bootstrap. That old path
-        // blocked Android's JS thread and could reveal an older Home after Splash.
-        let bootstrapContent: LoadedContent | null = null;
+      if (online) {
+        let liveContent: LoadedContent | null = null;
         try {
-          bootstrapContent = await loadBootstrapContent();
+          liveContent = await loadLiveContent(contentRef.current);
         } catch {
-          bootstrapContent = null;
+          liveContent = null;
         }
 
-        if (bootstrapContent?.items.length) {
-          startupFallbackContentRef.current = bootstrapContent;
-          if (applyContent(bootstrapContent)) {
+        if (liveContent?.items.length) {
+          startupFallbackContentRef.current = liveContent;
+          if (applyContent(liveContent)) {
             dismissStartup();
             return;
           }
         }
 
-        // A failed complete-navigation request keeps the already visible
-        // bundled/cache snapshot. It must never promote the 20+ MB index.
-        firstContent = cachedBootstrap || contentRef.current;
-      } else if (!initialLoad && online) {
-        const bootstrapContent = await loadBootstrapContent();
-        firstContent = bootstrapContent?.items.length ? bootstrapContent : contentRef.current;
-      } else if (initialLoad) {
-        // Offline startup still has the whole bundled/current navigation set.
-        firstContent = cachedBootstrap || contentRef.current;
+        // Compatibility fallback for an APK older than the immutable live
+        // baseline. Keep the current screen interactive while it downloads.
+        void loadBootstrapContent().then((bootstrapContent) => {
+          if (!bootstrapContent?.items.length) return;
+          startupFallbackContentRef.current = bootstrapContent;
+          applyContent(bootstrapContent);
+        }).catch(() => undefined);
+        firstContent = cachedLive || contentRef.current;
       } else {
-        firstContent = contentRef.current;
+        firstContent = cachedLive || contentRef.current;
       }
 
       const firstApplied = applyContent(firstContent);
