@@ -1,0 +1,37 @@
+name: Dispatch Android APK v45
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+
+jobs:
+  dispatch:
+    if: github.event.issue.title == 'RUN ANDROID APK V45'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Dispatch APK build and remove this temporary trigger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run android-apk.yml --ref main
+          gh issue comment "$ISSUE_NUMBER" --body "android-apk-v45=dispatched"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/dispatch-android-apk-v45-temp.yml
+          git commit -m "chore: remove Android APK v45 dispatcher"
+          git push origin HEAD:main
