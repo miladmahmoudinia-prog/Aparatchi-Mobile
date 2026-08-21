@@ -4164,7 +4164,9 @@ const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGr
       const firstFa = String(first?.nameFa || '').trim();
       const titleFa = rawFa && hasPersianScript(rawFa)
         ? rawFa
-        : `مجموعه ${firstFa || 'فیلم‌ها'}`;
+        : firstFa && hasPersianScript(firstFa)
+          ? `مجموعه ${firstFa}`
+          : 'مجموعه فیلم‌ها';
       return {
         id,
         titleFa,
@@ -6326,6 +6328,52 @@ function VideoPlayerModal({
     instance.timeUpdateEventInterval = 0.5;
     instance.play();
   });
+  const requestIdentity = `${request.itemId || 'local'}:${request.episodeId || 'main'}:${request.resumeKey}`;
+  const previousRequestIdentityRef = useRef(requestIdentity);
+  const previousRequestRef = useRef(request);
+
+  // A related-title selection changes the media inside the existing player.
+  // Keeping this component mounted preserves the user's current orientation;
+  // only closing the player is allowed to lock Android back to portrait.
+  useEffect(() => {
+    if (previousRequestIdentityRef.current === requestIdentity) {
+      previousRequestRef.current = request;
+      return;
+    }
+    const previousRequest = previousRequestRef.current;
+    const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+    const previousDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+    onProgress(previousRequest, previousTime, previousDuration, false);
+    previousRequestIdentityRef.current = requestIdentity;
+    previousRequestRef.current = request;
+    resumeAppliedRef.current = false;
+    latestTimeRef.current = Math.max(0, Number(request.resumeAt || 0));
+    latestDurationRef.current = 0;
+    setCurrentTime(latestTimeRef.current);
+    setDuration(0);
+    setFirstFrameReady(false);
+    setSettingsOpen(false);
+    setEpisodesOpen(false);
+    setQualityExpanded(false);
+    setSwitchingQuality(false);
+    setEndRecommendationsDismissed(false);
+    setNextEpisodeDismissed(false);
+    setNextEpisodeCountdown(15);
+    setActiveSource(initialSource);
+    let cancelled = false;
+    void (async () => {
+      try {
+        player.pause();
+        await player.replaceAsync(initialSource.url);
+        if (cancelled) return;
+        if (latestTimeRef.current > 0) player.currentTime = latestTimeRef.current;
+        player.play();
+      } catch {
+        if (!cancelled) Alert.alert('پخش آنلاین', 'فیلم پیشنهادی آماده نشد. دوباره تلاش کنید.');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [initialSource, onProgress, player, request, requestIdentity]);
 
   useEffect(() => {
     const controlledPlayer = player as typeof player & { muted: boolean; volume: number };
@@ -9050,7 +9098,6 @@ function AppContent() {
       />
       {videoRequest ? (
         <VideoPlayerModal
-          key={`${videoRequest.itemId || 'local'}:${videoRequest.episodeId || 'main'}:${videoRequest.language || 'default'}`}
           request={videoRequest}
           item={
             selectedItem && selectedItem.id === videoRequest.itemId && selectedItem.detailLoaded === true

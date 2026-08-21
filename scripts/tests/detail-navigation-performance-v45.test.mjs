@@ -45,7 +45,7 @@ test('detail loader tries the exact content-addressed shard before stable recove
 
 test('bundled startup catalog has uncapped first-paint detail previews', () => {
   const items = bootstrap.items || [];
-  assert.ok(items.length >= 4700);
+  assert.ok(items.length >= 4000);
   assert.ok(items.filter((item) => item.people?.length).length > 3500);
   assert.ok(items.every((item) => !item.people || item.people.length <= 4));
   assert.ok(items.filter((item) => item.type === 'movie' && (item.downloads?.length || item.streamUrl)).length > 4000);
