@@ -378,8 +378,6 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 - Artifact `Aparatchi-Android-Release` با id `9323508208` و size `41841685` bytes ثبت شد؛ digest برابر `sha256:19593054d25ac344bb4e4cb55f88dafae47883574aea69d2526b020a74490879` است.
 - Release tag همان `android-latest` و فایل منتشرشده `Aparatchi-Android-Release.apk` است.
 
----
-
 # milestone Final device + category truth v31 — 2026-08-19
 
 ## Mobile
@@ -403,3 +401,24 @@ Workflow `Fix Home and detail render v2` در attempt 5 همه مراحل زیر
 - full Content suite روی Batch: ۱۳۲/۱۳۲ سبز.
 - diagnostic مستقل v32 روی HEAD جدید همه مراحل را success ثبت کرد: `tests`, `sync`, `tmdb`, `persian`, `truth`, `imdb`. بنابراین تا زمانی که failure جدید با log مشخص دیده نشود، Sync/TMDB اصلی نباید حدسی بازنویسی شوند.
 - PR diagnostic #24 بسته و merge نشد؛ workflow موقت `refine-program-classification-v31.yml` از main حذف شد.
+
+---
+
+# milestone Detail first-frame stability v47 — 2026-08-21
+- در ضبط دستگاه `XRecorder_20260821_06.mp4`، Detail حدود ۰٫۷ ثانیه بعد از بازشدن به‌اندازهٔ inset بالای Android پایین می‌پرید.
+- `DetailModal` دیگر برای شروع از بالا دو فرمان imperative `scrollTo` اجرا نمی‌کند؛ `ScrollView` با هویت عنوان remount می‌شود و از اولین layout روی صفر است.
+- `SafeAreaView` داخل native Modal با insetهای از قبل آمادهٔ provider جایگزین شد تا top inset از همان اولین frame اعمال شود و layout دوم صفحه را جابه‌جا نکند.
+- بخش «عوامل و بازیگران» همچنان قبل از کارهای ثانویهٔ Detail رندر می‌شود. در همان ضبط عنوان بخش فوری و چهره‌ها حدود ۰٫۵ ثانیه بعد ظاهر شدند؛ bootstrap فعلی نیز برای ۳۹۲۹ عنوان preview عوامل دارد.
+- `npm run typecheck` و هر ۶۴ تست فعلی `scripts/tests/*.test.mjs` سبز شدند؛ APK جدید برای این اصلاح ساخته نشد.
+
+---
+
+# milestone Reported content integrity v48 — 2026-08-21
+- operator-onlyهای فاقد هویت قطعی دیگر تا زمان دسته‌بندی خودکار در خروجی Mobile منتشر نمی‌شوند؛ جست‌وجوی TMDB هم‌زمان با نمای فارسی و انگلیسی انجام می‌شود و IMDb ID موجود همچنان مسیر تطبیق دقیق است.
+- lane سریال ایرانی قبل از cursor آرشیو، صفحهٔ تازه‌ها را بررسی می‌کند؛ سریال ایرانی سال جاری حتی با `isAiring` اشتباه منبع، در refresh ساعتی قسمت‌ها می‌ماند. ظرفیت کشف سریال تازه نیز از ۴ به ۶ عنوان در هر اجرا افزایش یافت.
+- زمان کامل‌شدن آرشیو دیگر freshness عنوان نیست؛ فقط کشف واقعی یا قسمت واقعاً تازه می‌تواند عنوانی مانند Spider Noir را بالای قفسه ببرد.
+- آثار دارای هر دو بازیگر Stan Laurel و Oliver Hardy به `classic:laurel-and-hardy` و آثار داستانی Charlie Chaplin به `classic:charlie-chaplin` می‌روند؛ این کالکشن‌ها از shelf فیلم کوتاه خارج و در Movies/Collections قرار می‌گیرند.
+- «۲۰۷۳» حتی با اشارهٔ خلاصه به یک فیلم کوتاه و با category قدیمی، فیلم بلند باقی می‌ماند؛ runtime معتبر ۴۰ دقیقه به بالا نیز short-film را رد می‌کند.
+- نام فارسی فیلم و `collectionNameFa` دیگر با fallback انگلیسی جایگزین نمی‌شوند. bootstrap نام فارسی/انگلیسی کالکشن را هر دو حمل می‌کند و fallbackهای انگلیسی/مختلط به خط فارسی تبدیل می‌شوند.
+- در شبیه‌سازی روی catalog فعلی، ۴۴ عنوان انگلیسی اعضای کالکشن و ۱۹۹ label مختلط کالکشن پس از قاعدهٔ جدید به صفر رسیدند.
+- APK جدید فقط با دستور صریح کاربر ساخته شود.

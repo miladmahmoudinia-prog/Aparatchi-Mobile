@@ -1067,7 +1067,7 @@ const catalogItemTimestamp = (item: CatalogItem) => {
     (firstSeenTimestamp <= 0 || newestEpisodeSourceTimestamp <= 0 || newestEpisodeSourceTimestamp >= firstSeenTimestamp - 6 * 60 * 60 * 1000)
   );
   const value = item.type === 'series'
-    ? (credibleSeriesUpdate ? item.meaningfulUpdatedAt : '') || item.publishedAt || item.firstSeenAt || item.sourceCreatedAt || item.createdAt || ''
+    ? (credibleSeriesUpdate ? item.meaningfulUpdatedAt : '') || item.firstSeenAt || item.sourceCreatedAt || item.createdAt || ''
     : item.firstSeenAt || item.sourceCreatedAt || item.createdAt || '';
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : 0;
@@ -5850,7 +5850,11 @@ function DetailModal({
   const [downloadInitialGroup, setDownloadInitialGroup] = useState<string | null>(null);
   const [relatedSelectionSeed, setRelatedSelectionSeed] = useState(0);
   const [secondaryDetailReady, setSecondaryDetailReady] = useState(false);
-  const detailScrollRef = useRef<ScrollView>(null);
+  // DetailModal stays mounted while hidden, so these provider-level insets are
+  // already known before the native Modal's first frame. SafeAreaView inside a
+  // freshly presented Modal can report zero first and apply the top inset on a
+  // later layout pass, which visibly nudges the whole page downward.
+  const detailInsets = useSafeAreaInsets();
 
   useEffect(() => {
     setDownloadSheetOpen(false);
@@ -5859,13 +5863,8 @@ function DetailModal({
     if (!visible || !item?.id) return undefined;
 
     setRelatedSelectionSeed((seed) => seed + 1);
-    // Detail is a fresh navigation destination every time it opens. Keeping a
-    // process-wide offset made a closed title reopen halfway down the page.
-    detailScrollRef.current?.scrollTo({ y: 0, animated: false });
-    const frame = requestAnimationFrame(() => detailScrollRef.current?.scrollTo({ y: 0, animated: false }));
     const task = InteractionManager.runAfterInteractions(() => setSecondaryDetailReady(true));
     return () => {
-      cancelAnimationFrame(frame);
       task.cancel();
     };
   }, [item?.id, visible]);
@@ -5891,10 +5890,20 @@ function DetailModal({
 
   return (
     <Modal visible={visible} animationType="none" hardwareAccelerated statusBarTranslucent={false} onRequestClose={() => downloadSheetOpen ? setDownloadSheetOpen(false) : onClose()}>
-      <SafeAreaView style={styles.detailScreen} edges={['top','right','bottom','left']}>
+      <View
+        style={[
+          styles.detailScreen,
+          {
+            paddingTop: detailInsets.top,
+            paddingRight: detailInsets.right,
+            paddingBottom: detailInsets.bottom,
+            paddingLeft: detailInsets.left,
+          },
+        ]}
+      >
         <StatusBar style="light" />
         <ScrollView
-          ref={detailScrollRef}
+          key={`detail-scroll:${item.type}:${item.id}`}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.detailContent}
         >
@@ -6012,7 +6021,7 @@ function DetailModal({
           vpnActive={vpnActive}
           onVpnRetry={onVpnRetry}
         />
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
