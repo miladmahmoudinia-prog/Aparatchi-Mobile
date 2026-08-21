@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 122580)
-Total output lines: 10045
-
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import * as Network from 'expo-network';
@@ -3002,7 +2999,5735 @@ function HomeStarsSectionBase({
           getItemLayout={(_data, index) => ({ length: 113, offset: 113 * index, index })}
           initialNumToRender={6}
           maxToRenderPerBatch={6}
-          updateCellsBatchingPeriod={35…62580 tokens truncated…rogress: 1,
+          updateCellsBatchingPeriod={35}
+          windowSize={5}
+          removeClippedSubviews={false}
+          nestedScrollEnabled
+          renderItem={renderStarWork}
+        />
+      </View>
+    </LinearGradient>
+  );
+}
+
+const HomeStarsSection = memo(HomeStarsSectionBase);
+
+const imdbRankColor = (rank: number) =>
+  rank === 1 ? '#D9B24C' : rank === 2 ? '#AEB7C2' : rank === 3 ? '#B87845' : COLORS.gold;
+
+
+const IMDB_PERSIAN_TITLE_OVERRIDES: Record<string, string> = {
+  'breaking bad': 'بریکینگ بد',
+  'steel ball run jojo s bizarre adventure': 'استیل بال ران: ماجراجویی عجیب جوجو',
+  'band of brothers': 'جوخه برادران',
+  'planet earth': 'سیاره زمین',
+  'sapne vs everyone': 'رویاها در برابر همه',
+  'the world at war': 'جهان در جنگ',
+  'bb ki vines': 'بی بی کی واینز',
+  'the chaos class': 'کلاس شلوغ',
+  'punjab 95': 'پنجاب ۹۵',
+  'david attenborough a life on our planet': 'دیوید اتنبرو: یک زندگی روی سیاره ما',
+  'tosun pasha': 'توسون پاشا',
+  'rocketry the nambi effect': 'راکتری: اثر نامبی',
+  'anbe sivam': 'آنبه سیوام',
+  'nayakan': 'نایاکان',
+  'jai bhim': 'جای بهیم',
+  'soorarai pottru': 'سورارای پوترو',
+  'baraka': 'باراکا',
+  'jersey': 'جرسی',
+  'mahavatar narsimha': 'ماهاواتار نارسیما',
+  'dear zachary a letter to a son about his father': 'زکری عزیز: نامه ای به پسری درباره پدرش',
+  '96': '۹۶',
+  '777 charlie': 'چارلی ۷۷۷',
+  'mirror game': 'بازی آینه',
+  '20 days in mariupol': '۲۰ روز در ماریوپل',
+  'the kashmir files': 'پرونده های کشمیر',
+};
+
+const findImdbTopItem = (
+  entry: ImdbTopEntry,
+  byId: Map<string, CatalogItem>,
+  byImdb: Map<string, CatalogItem>,
+) => entry.itemId
+  ? byId.get(String(entry.itemId)) || null
+  : entry.imdb
+    ? byImdb.get(String(entry.imdb).toLowerCase()) || null
+    : null;
+
+const imdbEntryTitles = (entry: ImdbTopEntry, item?: CatalogItem | null) => {
+  const rawTitle = String(entry.title || '').trim();
+  const rawTitleFa = String(entry.titleFa || '').trim();
+  const rawTitleIsPersian = /[\u0600-\u06FF]/.test(rawTitle);
+  const itemTitleFa = /[\u0600-\u06FF]/.test(String(item?.nameFa || '')) ? String(item?.nameFa || '').trim() : '';
+  const entryTitleFa = /[\u0600-\u06FF]/.test(rawTitleFa) ? rawTitleFa : '';
+  const title = String(item?.name || (!rawTitleIsPersian ? rawTitle : '')).trim();
+  const verifiedOverrideFa = IMDB_PERSIAN_TITLE_OVERRIDES[normalizeComparableText(title || rawTitle)] || '';
+  // Never invent a Persian-looking label from Latin text. Prefer a real Persian
+  // title from the catalog/ranking or a manually verified override; otherwise
+  // display the original English title unchanged.
+  const titleFa = itemTitleFa || entryTitleFa || (rawTitleIsPersian ? rawTitle : '') || verifiedOverrideFa;
+  const primary = titleFa || title || rawTitle;
+  const secondary = title && normalizeComparableText(title) !== normalizeComparableText(primary)
+    ? title
+    : '';
+  return { primary, secondary };
+};
+
+function ImdbTopPoster({
+  entry,
+  item,
+  compact = false,
+}: {
+  entry: ImdbTopEntry;
+  item?: CatalogItem | null;
+  compact?: boolean;
+}) {
+  const poster = entry.poster || item?.poster || item?.posterFallback || item?.backdrop;
+  return (
+    <View style={[styles.imdbPosterBlock, compact && styles.imdbPosterBlockCompact]}>
+      <View style={[styles.imdbRankBadge, { backgroundColor: imdbRankColor(entry.rank) }]}>
+        <Text style={styles.imdbRankBadgeText}>{toPersianDigits(entry.rank)}</Text>
+      </View>
+      <View style={[styles.imdbPosterWrap, compact && styles.imdbPosterWrapCompact]}>
+        {poster ? (
+          <CatalogArtwork primary={poster} fallback={item?.posterFallback || item?.poster || item?.backdrop} style={styles.imdbPoster} contentFit="cover" />
+        ) : (
+          <View style={styles.imdbPosterFallback}>
+            <Ionicons name={entry.type === 'movie' ? 'film-outline' : 'tv-outline'} color={COLORS.gold} size={compact ? 23 : 28} />
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function ImdbTop100Section({
+  ranking,
+  catalog,
+  onOpen,
+}: {
+  ranking?: ImdbTop100;
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+}) {
+  const [selectedType, setSelectedType] = useState<CatalogItem['type']>('movie');
+  const [fullVisible, setFullVisible] = useState(false);
+  const fullScrollOffsetsRef = useRef<Record<CatalogItem['type'], number>>({ movie: 0, series: 0 });
+  const fullListRef = useRef<FlatList<ImdbTopEntry>>(null);
+  const byId = useMemo(() => new Map(catalog.map((item) => [String(item.id), item])), [catalog]);
+  const byImdb = useMemo(() => new Map(
+    catalog.filter((item) => Boolean(item.imdb)).map((item) => [String(item.imdb).toLowerCase(), item]),
+  ), [catalog]);
+  const entries = selectedType === 'movie' ? ranking?.movies || [] : ranking?.series || [];
+  const rememberFullListOffset = useCallback((event: any) => {
+    fullScrollOffsetsRef.current[selectedType] = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
+  }, [selectedType]);
+
+  useEffect(() => {
+    if (!fullVisible) return undefined;
+    const offset = fullScrollOffsetsRef.current[selectedType] || 0;
+    const frame = requestAnimationFrame(() => fullListRef.current?.scrollToOffset({ offset, animated: false }));
+    const retry = setTimeout(() => fullListRef.current?.scrollToOffset({ offset, animated: false }), 70);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(retry);
+    };
+  }, [fullVisible, selectedType]);
+
+  const openEntry = useCallback((entry: ImdbTopEntry, closeFull = false) => {
+    const item = findImdbTopItem(entry, byId, byImdb);
+    if (!item) {
+      const titles = imdbEntryTitles(entry);
+      Alert.alert(
+        'هنوز در آپاراتچی نیست',
+        `«${titles.primary}» هنوز به آپاراتچی اضافه نشده است. بعد از اضافه‌شدن، همین پوستر مستقیم صفحهٔ آن را باز می‌کند.`,
+      );
+      return;
+    }
+    // Keep the full ranking mounted underneath the detail modal so Back returns
+    // to the exact same IMDb tab and scroll position.
+    onOpen(item);
+  }, [byId, byImdb, onOpen]);
+
+  const rankingReady = Boolean(ranking?.movies?.length || ranking?.series?.length);
+
+  // The emergency bundled catalog has no IMDb payload. Do not show a large
+  // indefinite loader while the real bootstrap/full index is resolving; mount
+  // the section atomically as soon as truthful ranking data exists.
+  if (!rankingReady || entries.length === 0) return null;
+
+  const topThree = entries.slice(0, 3);
+  const previewRows = entries.slice(3, 5);
+
+  return (
+    <View style={styles.imdbSection}>
+      <View style={styles.imdbSectionHeader}>
+        <View style={styles.imdbSectionIcon}>
+          <Text style={styles.imdbLogoText}>IMDb</Text>
+        </View>
+        <View style={styles.imdbSectionHeaderText}>
+          <Text style={styles.imdbSectionEyebrow}>رتبه‌بندی جهانی</Text>
+          <Text style={styles.imdbSectionTitle}>۱۰۰ برتر IMDb</Text>
+          <Text style={styles.imdbSectionSubtitle}>روزانه به‌روزرسانی می‌شود؛ عنوان‌های موجود مستقیم باز می‌شوند.</Text>
+        </View>
+      </View>
+
+      <View style={styles.imdbTabs}>
+        {(['movie', 'series'] as const).map((type) => {
+          const active = selectedType === type;
+          return (
+            <Pressable
+              key={type}
+              onPress={() => setSelectedType(type)}
+              style={[styles.imdbTab, active && styles.imdbTabActive]}
+            >
+              <Ionicons name={type === 'movie' ? 'film-outline' : 'tv-outline'} color={active ? '#090B0F' : COLORS.muted} size={16} />
+              <Text style={[styles.imdbTabText, active && styles.imdbTabTextActive]}>
+                {type === 'movie' ? 'فیلم‌ها' : 'سریال‌ها'}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {!entries.length ? (
+        <View style={styles.imdbLoadingState}>
+          <ActivityIndicator color={COLORS.gold} size="small" />
+          <Text style={styles.imdbLoadingText}>در حال آماده‌سازی رتبه‌بندی IMDb…</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.imdbPodiumRow}>
+        {topThree.map((entry) => {
+          const availableItem = findImdbTopItem(entry, byId, byImdb);
+          const available = Boolean(availableItem);
+          const titles = imdbEntryTitles(entry, availableItem);
+          return (
+            <Pressable key={`${entry.type}-${entry.imdb || entry.rank}`} onPress={() => openEntry(entry)} style={styles.imdbPodiumCard}>
+              <ImdbTopPoster entry={entry} item={availableItem} />
+              <Text numberOfLines={2} style={styles.imdbPodiumTitle}>{titles.primary}</Text>
+              {titles.secondary ? <Text numberOfLines={2} style={styles.imdbPodiumEnglish}>{titles.secondary}</Text> : null}
+              <View style={styles.imdbRatingRow}>
+                <Ionicons name="star" color="#F4C84D" size={12} />
+                <Text style={styles.imdbRatingText}>{toPersianDigits(entry.rating)}</Text>
+              </View>
+              <Text style={[styles.imdbAvailability, available && styles.imdbAvailabilityReady]}>
+                {available ? 'موجود در اپ' : 'به‌زودی'}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={styles.imdbPreviewList}>
+        {previewRows.map((entry) => {
+          const availableItem = findImdbTopItem(entry, byId, byImdb);
+          const available = Boolean(availableItem);
+          const titles = imdbEntryTitles(entry, availableItem);
+          return (
+            <Pressable key={`${entry.type}-${entry.imdb || entry.rank}`} onPress={() => openEntry(entry)} style={styles.imdbPreviewRow}>
+              <Text style={styles.imdbPreviewRank}>{toPersianDigits(entry.rank)}</Text>
+              <View style={styles.imdbPreviewText}>
+                <Text numberOfLines={1} style={styles.imdbPreviewTitle}>{titles.primary}</Text>
+                {titles.secondary ? <Text numberOfLines={1} style={styles.imdbPreviewEnglish}>{titles.secondary}</Text> : null}
+                <Text style={styles.imdbPreviewMeta}>
+                  {[
+                    entry.year ? toPersianDigits(entry.year) : '',
+                    `IMDb ${toPersianDigits(entry.rating)}`,
+                    available ? 'موجود' : 'هنوز اضافه نشده',
+                  ].filter(Boolean).join(' • ')}
+                </Text>
+              </View>
+              <Ionicons name="chevron-back" color={available ? COLORS.gold : COLORS.muted} size={17} />
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <Pressable
+        disabled={!rankingReady}
+        onPress={() => setFullVisible(true)}
+        style={[styles.imdbFullButton, !rankingReady && { opacity: 0.45 }]}
+      >
+        <Ionicons name="trophy-outline" color="#090B0F" size={18} />
+        <Text style={styles.imdbFullButtonText}>مشاهده رتبه‌های ۱ تا ۱۰۰</Text>
+      </Pressable>
+
+      <Modal visible={fullVisible} animationType="slide" onRequestClose={() => setFullVisible(false)}>
+        <SafeAreaView style={styles.imdbFullScreen} edges={['top', 'right', 'bottom', 'left']}>
+          <StatusBar style="light" />
+          <View style={styles.imdbFullHeader}>
+            <Pressable onPress={() => setFullVisible(false)} style={styles.detailCircleButton}>
+              <Ionicons name="arrow-forward" color="#fff" size={21} />
+            </Pressable>
+            <View style={styles.imdbFullHeaderText}>
+              <Text style={styles.imdbFullTitle}>۱۰۰ برتر IMDb</Text>
+              <Text style={styles.imdbFullSubtitle}>رتبه‌بندی کامل {selectedType === 'movie' ? 'فیلم‌ها' : 'سریال‌ها'}</Text>
+            </View>
+            <View style={styles.imdbFullHeaderLogo}><Text style={styles.imdbLogoText}>IMDb</Text></View>
+          </View>
+          <View style={[styles.imdbTabs, styles.imdbFullTabs]}>
+            {(['movie', 'series'] as const).map((type) => {
+              const active = selectedType === type;
+              return (
+                <Pressable key={type} onPress={() => setSelectedType(type)} style={[styles.imdbTab, active && styles.imdbTabActive]}>
+                  <Text style={[styles.imdbTabText, active && styles.imdbTabTextActive]}>{type === 'movie' ? '۱۰۰ فیلم' : '۱۰۰ سریال'}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <FlatList
+            ref={fullListRef}
+            key={`imdb-full-${selectedType}`}
+            data={entries}
+            keyExtractor={(entry) => `${entry.type}-${entry.imdb || entry.rank}`}
+            scrollEventThrottle={96}
+            onScroll={rememberFullListOffset}
+            onScrollEndDrag={rememberFullListOffset}
+            onMomentumScrollEnd={rememberFullListOffset}
+            contentContainerStyle={styles.imdbFullList}
+            showsVerticalScrollIndicator={false}
+            initialNumToRender={8}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            renderItem={({ item: entry }) => {
+              const availableItem = findImdbTopItem(entry, byId, byImdb);
+              const available = Boolean(availableItem);
+              const titles = imdbEntryTitles(entry, availableItem);
+              return (
+                <Pressable onPress={() => openEntry(entry, true)} style={styles.imdbFullRow}>
+                  <ImdbTopPoster entry={entry} item={availableItem} compact />
+                  <View style={styles.imdbFullRowText}>
+                    <Text numberOfLines={2} style={styles.imdbFullRowTitle}>{titles.primary}</Text>
+                    {titles.secondary ? <Text numberOfLines={1} style={styles.imdbFullRowEnglish}>{titles.secondary}</Text> : null}
+                    <Text style={styles.imdbFullRowMeta}>
+                      {[entry.year ? toPersianDigits(entry.year) : '', `امتیاز ${toPersianDigits(entry.rating)}`].filter(Boolean).join(' • ')}
+                    </Text>
+                    <View style={[styles.imdbFullAvailabilityBadge, available && styles.imdbFullAvailabilityBadgeReady]}>
+                      <Text style={[styles.imdbFullAvailabilityText, available && styles.imdbFullAvailabilityTextReady]}>
+                        {available ? 'موجود در آپاراتچی' : 'هنوز اضافه نشده'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons name={available ? 'play-circle-outline' : 'information-circle-outline'} color={available ? COLORS.gold : COLORS.muted} size={24} />
+                </Pressable>
+              );
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
+}
+
+type HomeCatalogRow = {
+  filter: SearchFilter;
+  title: string;
+  items: CatalogItem[];
+};
+
+const HOME_CATALOG_ROWS: Array<Omit<HomeCatalogRow, 'items'>> = [
+  { filter: 'latest', title: 'جدیدترین‌ها' },
+  { filter: 'updated', title: 'به‌روزشده‌ها' },
+  { filter: 'mobile-operator', title: 'ویژه اینترنت همراه' },
+  { filter: 'iranian-movies', title: 'فیلم‌های ایرانی' },
+  { filter: 'foreign-movies', title: 'فیلم‌های خارجی' },
+  { filter: 'iranian-series', title: 'سریال‌های ایرانی' },
+  { filter: 'foreign-series', title: 'سریال‌های خارجی' },
+  { filter: 'korean-movies', title: 'فیلم‌های کره‌ای' },
+  { filter: 'korean-series', title: 'سریال‌های کره‌ای' },
+  { filter: 'indian-movies', title: 'فیلم‌های هندی' },
+  { filter: 'anime-movies', title: 'انیمه‌های سینمایی' },
+  { filter: 'anime-series', title: 'انیمه‌های سریالی' },
+  { filter: 'animation-movies', title: 'انیمیشن‌های سینمایی' },
+  { filter: 'animation-series', title: 'انیمیشن‌های سریالی' },
+  { filter: 'kids', title: 'کودکان' },
+  { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها' },
+  { filter: 'religious', title: 'مذهبی و مناسبتی' },
+  { filter: 'documentaries', title: 'مستندها' },
+  { filter: 'short-films', title: 'فیلم کوتاه' },
+];
+
+const summaryMatchesHomeFilter = (item: CatalogItem, filter: SearchFilter) => {
+  if (filter === 'latest') return true;
+  if (filter === 'updated') {
+    return isUpdatedEpisodicItem(item);
+  }
+  if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
+
+  // The Content job writes categoryKeys once on the server. Reading those keys
+  // is intentionally O(1) compared with re-running country/genre/title
+  // classification for every Home row on every phone.
+  const keys = item.categoryKeys || [];
+  if (keys.length) return keys.includes(filter);
+
+  // Tiny bundled fallback from older APKs may not have categoryKeys yet.
+  return matchesCatalogFilter(item, filter);
+};
+
+const buildHomeCatalogRows = (catalog: CatalogItem[]): HomeCatalogRow[] => {
+  const buckets = new Map<SearchFilter, CatalogItem[]>();
+  for (const row of HOME_CATALOG_ROWS) buckets.set(row.filter, []);
+
+  const updatedCandidates: CatalogItem[] = [];
+  for (const item of catalog) {
+    for (const row of HOME_CATALOG_ROWS) {
+      const bucket = buckets.get(row.filter)!;
+      if (row.filter === 'updated') {
+        if (summaryMatchesHomeFilter(item, row.filter)) updatedCandidates.push(item);
+        continue;
+      }
+      if (bucket.length >= 10) continue;
+      if (summaryMatchesHomeFilter(item, row.filter)) bucket.push(item);
+    }
+  }
+
+  updatedCandidates
+    .sort((a, b) => catalogItemTimestamp(b) - catalogItemTimestamp(a))
+    .slice(0, 10)
+    .forEach((item) => buckets.get('updated')!.push(item));
+
+  return HOME_CATALOG_ROWS.map((row) => ({ ...row, items: buckets.get(row.filter) || [] }));
+};
+
+const HomeCatalogSection = memo(function HomeCatalogSection({
+  row,
+  featuredPeople,
+  catalog,
+  onOpen,
+  onBrowse,
+}: {
+  row: HomeCatalogRow;
+  featuredPeople: FeaturedPerson[];
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+  onBrowse: (filter: SearchFilter) => void;
+}) {
+  if (!row.items.length) return null;
+
+  return (
+    <View>
+      <View style={styles.catalogSection}>
+        <SectionTitle title={row.title} action="مشاهده همه" onAction={() => onBrowse(row.filter)} />
+        <HorizontalCatalog items={row.items} onOpen={onOpen} />
+      </View>
+      {row.filter === 'foreign-movies' ? (
+        <HomeStarsSection people={featuredPeople} catalog={catalog} onOpen={onOpen} />
+      ) : null}
+    </View>
+  );
+});
+
+const HomeScreen = memo(function HomeScreen({
+  catalog,
+  imdbTop100,
+  featuredPeople,
+  onReloadContent,
+  onOpen,
+  onBrowse,
+  onMenu,
+  initialScrollOffset,
+  onScrollOffset,
+  scrollToTopSignal,
+  isActive,
+  contentResolved,
+  contentOffline,
+}: {
+  catalog: CatalogItem[];
+  imdbTop100?: ImdbTop100;
+  featuredPeople: FeaturedPerson[];
+  onReloadContent: () => void;
+  onOpen: (item: CatalogItem) => void;
+  onBrowse: (filter: SearchFilter) => void;
+  onMenu: () => void;
+  initialScrollOffset: number;
+  onScrollOffset: (offset: number) => void;
+  scrollToTopSignal: number;
+  isActive: boolean;
+  contentResolved: boolean;
+  contentOffline: boolean;
+}) {
+  const listRef = useRef<FlatList<HomeCatalogRow>>(null);
+  // One linear pass builds every Home preview. Previously each visible section
+  // filtered and sorted the complete catalog independently, which multiplied
+  // startup work as the archive grew and blocked taps on the JS thread.
+  const rows = useMemo(() => buildHomeCatalogRows(catalog), [catalog]);
+  const newest = rows[0]?.items || [];
+  // Empty configured categories must not consume the four eager native slots.
+  // The first four *real* rails are mounted in the header immediately; only
+  // later populated rails stay virtualized.
+  const populatedRows = useMemo(() => rows.filter((row) => row.items.length > 0), [rows]);
+  const eagerRows = useMemo(() => populatedRows.slice(0, 4), [populatedRows]);
+  const deferredRows = useMemo(() => populatedRows.slice(4), [populatedRows]);
+
+  // Visible artwork is loaded and cached by expo-image itself. Avoid a parallel
+  // prefetch flood so taps and the first on-screen posters get priority.
+
+  useEffect(() => {
+    if (initialScrollOffset > 0) {
+      requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: initialScrollOffset, animated: false }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!scrollToTopSignal) return;
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    onScrollOffset(0);
+  }, [onScrollOffset, scrollToTopSignal]);
+
+  const homeHeader = useMemo(() => (
+    <>
+      <HeroSlider items={newest.slice(0, 5)} onOpen={onOpen} isActive={isActive} />
+      <ImdbTop100Section
+        ranking={imdbTop100}
+        catalog={catalog}
+        onOpen={onOpen}
+      />
+      {eagerRows.map((row) => (
+        <HomeCatalogSection
+          key={`home-eager-${row.filter}`}
+          row={row}
+          featuredPeople={featuredPeople}
+          catalog={catalog}
+          onOpen={onOpen}
+          onBrowse={onBrowse}
+        />
+      ))}
+    </>
+  ), [catalog, eagerRows, featuredPeople, imdbTop100, isActive, newest, onBrowse, onOpen]);
+
+  const renderHomeRow = useCallback(({ item: row }: { item: HomeCatalogRow }) => (
+    <HomeCatalogSection
+      row={row}
+      featuredPeople={featuredPeople}
+      catalog={catalog}
+      onOpen={onOpen}
+      onBrowse={onBrowse}
+    />
+  ), [catalog, featuredPeople, onBrowse, onOpen]);
+
+  const rememberVisibleOffset = useCallback((event: any) => {
+    onScrollOffset(event.nativeEvent.contentOffset.y);
+  }, [onScrollOffset]);
+
+  if (!catalog.length) {
+    if (!contentResolved) {
+      // Cold first install: expose the real Home shell immediately. The remote
+      // catalog can finish in the background without a second full-screen
+      // "restoring catalog" gate after Splash.
+      return (
+        <View style={styles.screen}>
+          <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
+          <ScrollView contentContainerStyle={styles.homeColdSkeleton} showsVerticalScrollIndicator={false}>
+            {[0, 1, 2].map((row) => (
+              <View key={`cold-row-${row}`} style={styles.homeColdSkeletonSection}>
+                <View style={styles.homeColdSkeletonHeading} />
+                <View style={styles.homeColdSkeletonRail}>
+                  {[0, 1, 2].map((card) => <View key={`cold-${row}-${card}`} style={styles.homeColdSkeletonCard} />)}
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      );
+    }
+    return (
+      <View style={styles.screen}>
+        <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
+        <View style={[styles.screen, styles.contentUnavailable]}>
+          <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={42} />
+          <Text style={styles.largeEmptyTitle}>{contentOffline ? 'اتصال اینترنت برقرار نیست' : 'فهرست محتوا خالی است'}</Text>
+          {contentOffline ? <Text style={styles.largeEmptyText}>برای دریافت فهرست فیلم‌ها و سریال‌ها، اینترنت را روشن کنید.</Text> : null}
+          <Pressable onPress={onReloadContent} hitSlop={10} style={styles.retryButton}><Text style={styles.retryButtonText}>تلاش دوباره</Text></Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.screen}>
+      <Header onMenu={onMenu} onSearch={() => onBrowse('all')} onNotifications={() => Alert.alert('اعلان‌ها', 'فعلاً اعلان جدیدی ندارید.')} />
+      <FlatList
+        ref={listRef}
+        data={deferredRows}
+        keyExtractor={(row) => row.filter}
+        style={styles.homeScroll}
+        contentContainerStyle={styles.homeContent}
+        showsVerticalScrollIndicator={false}
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
+        updateCellsBatchingPeriod={40}
+        windowSize={5}
+        removeClippedSubviews={false}
+        keyboardShouldPersistTaps="always"
+        onScrollEndDrag={rememberVisibleOffset}
+        onMomentumScrollEnd={rememberVisibleOffset}
+        ListHeaderComponent={homeHeader}
+        renderItem={renderHomeRow}
+        ListFooterComponent={<View style={styles.homeListFooter} />}
+      />
+    </View>
+  );
+});
+
+type CategoryCardConfig = { filter: SearchFilter; title: string; subtitle: string; icon: keyof typeof Ionicons.glyphMap };
+
+const CATEGORY_CARDS: CategoryCardConfig[] = [
+  { filter: 'movie', title: 'همه فیلم‌ها', subtitle: 'سینمایی ایرانی و خارجی', icon: 'film-outline' },
+  { filter: 'series', title: 'همه سریال‌ها', subtitle: 'ایرانی، خارجی و در حال پخش', icon: 'tv-outline' },
+  { filter: 'anime-movies', title: 'انیمه سینمایی', subtitle: 'آثار ژاپنی سینمایی', icon: 'sparkles-outline' },
+  { filter: 'anime-series', title: 'انیمه سریالی', subtitle: 'مجموعه‌های ژاپنی', icon: 'sparkles-outline' },
+  { filter: 'animation-movies', title: 'انیمیشن سینمایی', subtitle: 'انیمیشن‌های غیرانیمه', icon: 'color-palette-outline' },
+  { filter: 'animation-series', title: 'انیمیشن سریالی', subtitle: 'مجموعه‌های غیرانیمه', icon: 'albums-outline' },
+  { filter: 'iranian-movies', title: 'فیلم‌های ایرانی', subtitle: 'سینمای ایران', icon: 'flag-outline' },
+  { filter: 'foreign-movies', title: 'فیلم‌های خارجی', subtitle: 'سینمای جهان', icon: 'earth-outline' },
+  { filter: 'iranian-series', title: 'سریال‌های ایرانی', subtitle: 'مجموعه‌های داخلی', icon: 'videocam-outline' },
+  { filter: 'foreign-series', title: 'سریال‌های خارجی', subtitle: 'مجموعه‌های جهان', icon: 'globe-outline' },
+  { filter: 'dubbed', title: 'آثار دوبله فارسی', subtitle: 'فیلم، سریال و انیمیشن دوبله فارسی', icon: 'volume-high-outline' },
+  { filter: 'subtitled', title: 'آثار زیرنویس فارسی', subtitle: 'فیلم، سریال و انیمیشن با زیرنویس فارسی', icon: 'chatbox-ellipses-outline' },
+  { filter: 'updated', title: 'به‌روزشده‌ها', subtitle: 'قسمت یا نسخه تازه', icon: 'refresh-outline' },
+  { filter: 'mobile-operator', title: 'ویژه اینترنت همراه', subtitle: 'محتوای اپراتوری', icon: 'phone-portrait-outline' },
+  { filter: 'korean-movies', title: 'فیلم‌های کره‌ای', subtitle: 'سینمای کره جنوبی', icon: 'location-outline' },
+  { filter: 'korean-series', title: 'سریال‌های کره‌ای', subtitle: 'مجموعه‌های کره جنوبی', icon: 'tv-outline' },
+  { filter: 'indian-movies', title: 'فیلم‌های هندی', subtitle: 'سینمای هند', icon: 'location-outline' },
+  { filter: 'collections', title: 'کالکشن‌ها', subtitle: 'قسمت‌های یک مجموعه', icon: 'layers-outline' },
+  { filter: 'kids', title: 'کودکان', subtitle: 'برنامه‌ها و آثار مخصوص کودکان', icon: 'happy-outline' },
+  { filter: 'programs', title: 'برنامه‌ها و مسابقه‌ها', subtitle: 'مسابقه، رئالیتی و گفت‌وگو', icon: 'mic-outline' },
+  { filter: 'religious', title: 'مذهبی و مناسبتی', subtitle: 'آثار مذهبی، قرآنی و مناسبتی', icon: 'book-outline' },
+  { filter: 'documentaries', title: 'مستندها', subtitle: 'آثار مستند', icon: 'camera-outline' },
+  { filter: 'short-films', title: 'فیلم کوتاه', subtitle: 'فیلم‌های کوتاه و آثار جشنواره‌ای', icon: 'film-outline' },
+  { filter: 'wildlife', title: 'حیات وحش', subtitle: 'مستندهای طبیعت و حیات وحش', icon: 'leaf-outline' },
+];
+
+
+const stableArtworkHash = (value: string) => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+};
+
+const categoryPreviewScore = (item: CatalogItem) => {
+  const remoteBackdrop = isSafeHttpUrl(item.backdrop) && !isPlaceholderUrl(item.backdrop);
+  const remotePoster = isSafeHttpUrl(item.poster) && !isPlaceholderUrl(item.poster);
+  const remoteFallback = isSafeHttpUrl(item.backdropFallback) || isSafeHttpUrl(item.posterFallback);
+  return (
+    (remoteBackdrop ? 180 : 0) +
+    (remotePoster ? 90 : 0) +
+    (remoteFallback ? 25 : 0) +
+    Math.max(0, Math.min(10, Number(item.rate || 0))) * 9 +
+    (stableArtworkHash(`${item.type}:${item.id}`) % 1000) / 1000
+  );
+};
+
+const relatedCategoryFilters = (filter: SearchFilter): SearchFilter[] => {
+  const map: Partial<Record<SearchFilter, SearchFilter[]>> = {
+    movie: ['foreign-movies', 'iranian-movies'],
+    series: ['foreign-series', 'iranian-series'],
+    'anime-movies': ['anime-series', 'foreign-movies', 'movie'],
+    'anime-series': ['anime-movies', 'foreign-series', 'series'],
+    'animation-movies': ['animation-series', 'movie'],
+    'animation-series': ['animation-movies', 'series'],
+    'iranian-movies': ['iranian-series', 'movie'],
+    'foreign-movies': ['foreign-series', 'movie'],
+    'iranian-series': ['iranian-movies', 'series'],
+    'foreign-series': ['foreign-movies', 'series'],
+    dubbed: ['foreign-movies', 'foreign-series', 'movie'],
+    subtitled: ['foreign-movies', 'foreign-series', 'movie'],
+    updated: ['series', 'movie'],
+    'mobile-operator': ['movie', 'series'],
+    'korean-movies': ['korean-series', 'foreign-movies'],
+    'korean-series': ['korean-movies', 'foreign-series'],
+    'indian-movies': ['movie'],
+    collections: ['movie', 'series'],
+    documentaries: ['movie', 'series'],
+    'short-films': ['movie', 'documentaries'],
+    wildlife: ['documentaries', 'movie'],
+    programs: ['series', 'foreign-series'],
+    kids: ['animation-series', 'series'],
+    religious: ['series', 'iranian-series'],
+  };
+  return map[filter] || ['movie', 'series'];
+};
+
+const hasFastCategoryArtwork = (item: CatalogItem) =>
+  [item.backdrop, item.poster, item.backdropFallback, item.posterFallback]
+    .some((value) => Boolean(optimizedImageUrl(value, 'backdrop')));
+
+const CategoriesScreen = memo(function CategoriesScreen({
+  catalog,
+  peopleWorks,
+  onBrowse,
+  onOpen,
+  isActive,
+}: {
+  catalog: CatalogItem[];
+  peopleWorks?: Record<string, PersonWorkRef[]>;
+  onBrowse: (filter: SearchFilter) => void;
+  onOpen: (item: CatalogItem) => void;
+  isActive: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const deferredQuery = normalizeComparableText(useDebouncedText(query, 220));
+  const { width: screenWidth } = useWindowDimensions();
+  const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
+  const liveCategoriesOffsetRef = useRef(categoriesScreenScrollOffset);
+  const usableCatalog = catalog;
+  const categoryPreviewPool = useMemo(
+    () => usableCatalog.slice(0, 1200),
+    [usableCatalog],
+  );
+
+  const categoryPreviewItems = useMemo(() => {
+    const result = new Map<SearchFilter, CatalogItem>();
+    const scoreByFilter = new Map<SearchFilter, number>();
+    const previewFilters = CATEGORY_CARDS.map((card) => card.filter);
+
+    for (const item of categoryPreviewPool) {
+      if (!hasFastCategoryArtwork(item)) continue;
+      const keys = item.categoryKeys || [];
+      for (const filter of previewFilters) {
+        const matches = SERVER_CATEGORY_FILTERS.has(filter) && keys.length
+          ? keys.includes(filter)
+          : fastCatalogFilterMatch(item, filter);
+        if (!matches) continue;
+        const score = categoryPreviewScore(item);
+        if (score <= (scoreByFilter.get(filter) ?? Number.NEGATIVE_INFINITY)) continue;
+        result.set(filter, item);
+        scoreByFilter.set(filter, score);
+      }
+    }
+
+    // The first 1200 rows keep Categories fast. Only filters with no artwork
+    // get one bounded fallback scan over the complete catalog, so Kids,
+    // Programs and Iranian Series never fall back to a blank icon card merely
+    // because their first matching poster is older than the preview window.
+    const missing = new Set(previewFilters.filter((filter) => !result.has(filter)));
+    if (missing.size) {
+      for (const item of usableCatalog) {
+        if (!hasFastCategoryArtwork(item)) continue;
+        const keys = item.categoryKeys || [];
+        for (const filter of [...missing]) {
+          if (keys.includes(filter) || fastCatalogFilterMatch(item, filter)) {
+            result.set(filter, item);
+            missing.delete(filter);
+          }
+        }
+        if (!missing.size) break;
+      }
+    }
+    return result;
+  }, [categoryPreviewPool, usableCatalog]);
+
+  const categoryActorMatches = useMemo(
+    () => peopleWorkItemIdsMatchingQuery(peopleWorks, usableCatalog, deferredQuery),
+    [deferredQuery, peopleWorks, usableCatalog],
+  );
+  const searchResults = useMemo(() => {
+    if (!deferredQuery) return [];
+    return sortForCatalogFilter(
+      usableCatalog.filter((item) =>
+        categoryActorMatches.has(String(item.id)) ||
+        normalizeComparableText([
+          item.nameFa,
+          item.name,
+          ...(item.genres || []),
+          ...(item.countryLabels || []),
+          ...(item.countryNames || []),
+        ].join(' ')).includes(deferredQuery),
+      ),
+      'latest',
+    ).slice(0, 50);
+  }, [categoryActorMatches, deferredQuery, usableCatalog]);
+
+  const topGenres = useMemo(() => [...new Set(usableCatalog.flatMap((item) => item.genres || []))].filter(Boolean).slice(0, 14), [usableCatalog]);
+  const topCountries = useMemo(() => [...new Set(usableCatalog.flatMap((item) => item.countryCodes || []))].filter((code) => String(code).toUpperCase() !== 'JP').slice(0, 12), [usableCatalog]);
+  const years = useMemo(() => [...new Set(usableCatalog.map((item) => item.year))].filter((year) => year > 1900).sort((a,b)=>b-a).slice(0, 12), [usableCatalog]);
+  const gridGap = 10;
+  const columnCount = screenWidth >= 760 ? 3 : 2;
+  const categoryWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
+  const posterWidth = Math.max(132, Math.floor((screenWidth - 36 - 12) / 2));
+
+  useEffect(() => {
+    if (!isActive || deferredQuery || categoriesScreenScrollOffset <= 0) return undefined;
+    const frame = requestAnimationFrame(() => {
+      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
+    });
+    const retry = setTimeout(() => {
+      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
+    }, 120);
+    const settle = setTimeout(() => {
+      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
+    }, 420);
+    return () => { cancelAnimationFrame(frame); clearTimeout(retry); clearTimeout(settle); };
+  }, [columnCount, deferredQuery, isActive]);
+
+  const rememberCategoriesOffset = useCallback((event: any) => {
+    if (deferredQuery) return;
+    const next = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
+    liveCategoriesOffsetRef.current = next;
+    categoriesScreenScrollOffset = next;
+  }, [deferredQuery]);
+
+  const searchHeader = (
+    <>
+      <View style={styles.simpleHeader}><Logo /><Text style={styles.simpleHeaderTitle}>دسته‌بندی</Text></View>
+      <View style={styles.searchBox}>
+        <Ionicons name="search-outline" size={21} color={COLORS.muted} />
+        <TextInput value={query} onChangeText={setQuery} placeholder="جست‌وجوی فیلم، سریال یا بازیگر…" placeholderTextColor={COLORS.muted} style={styles.searchInput} textAlign="right" />
+        {query ? <Pressable onPress={() => setQuery('')} hitSlop={8}><Ionicons name="close-circle" size={19} color={COLORS.muted} /></Pressable> : null}
+      </View>
+    </>
+  );
+
+  if (deferredQuery) {
+    return (
+      <FlatList
+        key="category-search-results"
+        data={searchResults}
+        numColumns={2}
+        keyExtractor={(item) => item.id}
+        style={styles.screen}
+        contentContainerStyle={styles.tabScreenContent}
+        columnWrapperStyle={styles.searchGridRow}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={(
+          <>
+            {searchHeader}
+            <Text style={styles.resultCount}>{toPersianDigits(searchResults.length)} نتیجه</Text>
+          </>
+        )}
+        ListEmptyComponent={(
+          <View style={styles.searchEmptyState}>
+            <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
+            <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
+            <Text style={styles.largeEmptyText}>نام فیلم، سریال یا بازیگر را دوباره بررسی کنید.</Text>
+          </View>
+        )}
+        renderItem={({ item }) => (
+          <View style={{ width: posterWidth, marginBottom: 18 }}>
+            <PosterCard item={item} width={posterWidth} onOpen={() => onOpen(item)} />
+          </View>
+        )}
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        updateCellsBatchingPeriod={20}
+        windowSize={6}
+        removeClippedSubviews
+      />
+    );
+  }
+
+  return (
+    <FlatList
+      ref={categoriesListRef}
+      key={`category-grid-${columnCount}`}
+      data={CATEGORY_CARDS}
+      numColumns={columnCount}
+      keyExtractor={(card) => card.filter}
+      style={styles.screen}
+      contentContainerStyle={styles.tabScreenContent}
+      columnWrapperStyle={{ gap: gridGap }}
+      keyboardShouldPersistTaps="handled"
+      ListHeaderComponent={searchHeader}
+      renderItem={({ item: card }) => {
+        const preview = categoryPreviewItems.get(card.filter);
+        return (
+          <Pressable
+            onPress={() => {
+              categoriesScreenScrollOffset = liveCategoriesOffsetRef.current;
+              onBrowse(card.filter);
+            }}
+            unstable_pressDelay={0}
+            hitSlop={10}
+            android_ripple={{ color: 'rgba(216,180,90,0.16)' }}
+            style={({ pressed }) => [
+              styles.categoryCard,
+              { width: categoryWidth, marginBottom: gridGap },
+              pressed && styles.categoryCardPressed,
+            ]}
+          >
+            {preview ? (
+              <CatalogArtwork
+                primary={preview.poster || preview.backdrop}
+                fallback={preview.posterFallback || preview.backdrop || preview.backdropFallback}
+                style={StyleSheet.absoluteFill}
+                imageKind="poster"
+                transition={0}
+              />
+            ) : (
+              <View style={[StyleSheet.absoluteFill, styles.catalogArtworkFallback]}>
+                <Ionicons name={card.icon} color="rgba(216,180,90,0.55)" size={58} />
+              </View>
+            )}
+            <LinearGradient
+              colors={['rgba(6,8,11,0.00)', 'rgba(6,8,11,0.08)', 'rgba(6,8,11,0.88)']}
+              locations={[0, 0.42, 1]}
+              style={styles.categoryTextShade}
+            />
+            <View style={styles.categoryCardIcon}><Ionicons name={card.icon} color={COLORS.gold} size={22} /></View>
+            <View style={styles.categoryCardTextWrap}>
+              <Text numberOfLines={1} style={styles.categoryCardTitle}>{card.title}</Text>
+              <Text numberOfLines={1} style={styles.categoryCardSubtitle}>{card.subtitle}</Text>
+            </View>
+          </Pressable>
+        );
+      }}
+      ListFooterComponent={(
+        <View>
+          <SectionTitle title="ژانرها" />
+          <View style={styles.dynamicChips}>{topGenres.map((genre) => <Pressable key={genre} onPress={() => onBrowse(genreFilter(genre))} hitSlop={6} style={({ pressed }) => [styles.dynamicChip, pressed && styles.dynamicChipPressed]}><Text style={styles.dynamicChipText}>{genre}</Text></Pressable>)}</View>
+          <SectionTitle title="کشورها" />
+          <View style={styles.dynamicChips}>{topCountries.map((code) => <Pressable key={code} onPress={() => onBrowse(countryFilter(code))} hitSlop={6} style={({ pressed }) => [styles.dynamicChip, pressed && styles.dynamicChipPressed]}><Text style={styles.dynamicChipText}>{countryLabel(code, catalog)}</Text></Pressable>)}</View>
+          <SectionTitle title="سال ساخت" />
+          <View style={styles.dynamicChips}>{years.map((year) => <Pressable key={year} onPress={() => onBrowse(yearFilter(year))} hitSlop={6} style={({ pressed }) => [styles.dynamicChip, pressed && styles.dynamicChipPressed]}><Text style={styles.dynamicChipText}>{toPersianDigits(year)}</Text></Pressable>)}</View>
+        </View>
+      )}
+      initialNumToRender={4}
+      maxToRenderPerBatch={3}
+      updateCellsBatchingPeriod={48}
+      windowSize={4}
+      removeClippedSubviews
+      scrollEventThrottle={96}
+      onScroll={rememberCategoriesOffset}
+      onScrollEndDrag={rememberCategoriesOffset}
+      onMomentumScrollEnd={rememberCategoriesOffset}
+    />
+  );
+});
+
+function CatalogListScreen({
+  catalog,
+  onOpen,
+  initialFilter,
+}: {
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+  initialFilter: SearchFilter;
+}) {
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(normalizeComparableText(query));
+  const { width: screenWidth } = useWindowDimensions();
+  const listRef = useRef<FlatList<CatalogItem>>(null);
+  const scrollKey = String(initialFilter);
+
+  // Filter results are cached per catalog. Waiting for InteractionManager here
+  // made a normal tap feel ignored whenever an image list or slider animation
+  // was active. Open the destination immediately and read the cached list.
+  const baseItems = useMemo(
+    () => catalogItemsForFilter(catalog, initialFilter),
+    [catalog, initialFilter],
+  );
+  const results = useMemo(() => {
+    if (!deferredQuery) return baseItems;
+    return baseItems.filter((item) => normalizeComparableText([
+      item.nameFa,
+      item.name,
+      ...(item.genres || []),
+      ...(item.countryLabels || []),
+      ...(item.countryNames || []),
+      ...(item.people || []).flatMap((person) => [person.nameFa, person.name || '']),
+    ].join(' ')).includes(deferredQuery));
+  }, [baseItems, deferredQuery]);
+  const columnCount = screenWidth >= 720 ? 5 : screenWidth >= 590 ? 4 : screenWidth >= 480 ? 3 : 2;
+  const gridGap = 12;
+  const cardWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
+
+  useEffect(() => {
+    const offset = catalogListScrollOffsets.get(scrollKey) || 0;
+    if (offset <= 0) return undefined;
+    const frame = requestAnimationFrame(() => {
+      listRef.current?.scrollToOffset({ offset, animated: false });
+    });
+    const retry = setTimeout(() => {
+      listRef.current?.scrollToOffset({ offset, animated: false });
+    }, 120);
+    const settle = setTimeout(() => {
+      listRef.current?.scrollToOffset({ offset, animated: false });
+    }, 420);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(retry);
+      clearTimeout(settle);
+    };
+  }, [columnCount, scrollKey]);
+
+  const rememberCatalogOffset = useCallback((event: any) => {
+    if (query) return;
+    catalogListScrollOffsets.set(scrollKey, Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)));
+  }, [query, scrollKey]);
+
+  const header = (
+    <View>
+      <View style={styles.simpleHeader}>
+        <Logo />
+        <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{filterTitle(initialFilter)}</Text>
+      </View>
+      <View style={styles.searchBox}>
+        <Ionicons name="search-outline" color={COLORS.muted} size={21} />
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder={`جست‌وجو در ${filterTitle(initialFilter)}…`}
+          placeholderTextColor="#646A74"
+          style={styles.searchInput}
+          textAlign="right"
+        />
+        {query ? <Pressable onPress={() => setQuery('')} hitSlop={8}><Ionicons name="close-circle" color={COLORS.muted} size={18} /></Pressable> : null}
+      </View>
+      <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text>
+    </View>
+  );
+
+  return (
+    <FlatList
+      ref={listRef}
+      key={`${initialFilter}-${columnCount}`}
+      style={styles.screen}
+      contentContainerStyle={styles.catalogListContent}
+      keyboardShouldPersistTaps="handled"
+      data={results}
+      numColumns={columnCount}
+      keyExtractor={(item) => item.id}
+      columnWrapperStyle={columnCount > 1 ? { gap: gridGap, flexDirection: 'row-reverse' } : undefined}
+      ListHeaderComponent={header}
+      ListEmptyComponent={(
+        <View style={styles.searchEmptyState}>
+          <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
+          <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
+          <Text style={styles.largeEmptyText}>عبارت جست‌وجو را تغییر دهید.</Text>
+        </View>
+      )}
+      renderItem={({ item }) => (
+        <View style={{ width: cardWidth, marginBottom: 16 }}>
+          <PosterCard item={item} width={cardWidth} onOpen={() => onOpen(item)} />
+        </View>
+      )}
+      initialNumToRender={4}
+      maxToRenderPerBatch={3}
+      windowSize={4}
+      updateCellsBatchingPeriod={48}
+      removeClippedSubviews
+      showsVerticalScrollIndicator={false}
+      scrollEventThrottle={96}
+      onScroll={rememberCatalogOffset}
+      onScrollEndDrag={rememberCatalogOffset}
+      onMomentumScrollEnd={rememberCatalogOffset}
+    />
+  );
+}
+
+function SimpleSearchScreen({
+  catalog,
+  peopleWorks,
+  onOpen,
+}: {
+  catalog: CatalogItem[];
+  peopleWorks?: Record<string, PersonWorkRef[]>;
+  onOpen: (item: CatalogItem) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const deferredQuery = normalizeComparableText(useDebouncedText(query, 340));
+  const { width: screenWidth } = useWindowDimensions();
+  const columnCount = screenWidth >= 720 ? 4 : screenWidth >= 520 ? 3 : 2;
+  const gap = 12;
+  const cardWidth = Math.floor((screenWidth - 32 - gap * (columnCount - 1)) / columnCount);
+  const searchIndex = useMemo(
+    () => catalog
+      .map((item) => ({
+        item,
+        text: normalizeComparableText([
+          item.nameFa,
+          item.name,
+          ...(item.genres || []),
+          ...(item.countryLabels || []),
+          ...(item.countryNames || []),
+        ].join(' ')),
+      })),
+    [catalog],
+  );
+  const actorMatchedIds = useMemo(
+    () => peopleWorkItemIdsMatchingQuery(peopleWorks, catalog, deferredQuery),
+    [catalog, deferredQuery, peopleWorks],
+  );
+  const results = useMemo(() => {
+    if (!deferredQuery) return [];
+    const matched: CatalogItem[] = [];
+    for (const entry of searchIndex) {
+      if (!entry.text.includes(deferredQuery) && !actorMatchedIds.has(String(entry.item.id))) continue;
+      matched.push(entry.item);
+      if (matched.length >= 48) break;
+    }
+    return sortForCatalogFilter(matched, 'latest');
+  }, [actorMatchedIds, deferredQuery, searchIndex]);
+
+  return (
+    <View style={styles.screen}>
+      <View style={styles.simpleSearchHeader}>
+        <Logo />
+        <Text style={styles.simpleHeaderTitle}>جست‌وجو</Text>
+      </View>
+      <View style={styles.simpleSearchBoxWrap}>
+        <View style={styles.searchBox}>
+          <Ionicons name="search-outline" color={COLORS.muted} size={21} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="نام فیلم، سریال یا بازیگر…"
+            placeholderTextColor="#646A74"
+            style={styles.searchInput}
+            textAlign="right"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {query ? (
+            <Pressable onPress={() => setQuery('')} hitSlop={12}>
+              <Ionicons name="close-circle" color={COLORS.muted} size={20} />
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+      {!deferredQuery ? (
+        <View style={styles.searchEmptyState}>
+          <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
+          <Text style={styles.largeEmptyTitle}>نام فیلم یا سریال را بنویسید</Text>
+          <Text style={styles.largeEmptyText}>جست‌وجو بدون فیلتر و با نمایش سبک نتایج انجام می‌شود.</Text>
+        </View>
+      ) : results.length ? (
+        <FlatList
+          key={columnCount}
+          data={results}
+          numColumns={columnCount}
+          keyExtractor={(item) => `${item.type}:${item.id}`}
+          contentContainerStyle={styles.simpleSearchResults}
+          columnWrapperStyle={columnCount > 1 ? { gap } : undefined}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          initialNumToRender={8}
+          maxToRenderPerBatch={6}
+          updateCellsBatchingPeriod={45}
+          windowSize={5}
+          removeClippedSubviews
+          renderItem={({ item }) => (
+            <View style={{ width: cardWidth, marginBottom: 19 }}>
+              <PosterCard item={item} width={cardWidth} onOpen={() => onOpen(item)} />
+            </View>
+          )}
+          ListHeaderComponent={<Text style={styles.simpleSearchResultCount}>{toPersianDigits(results.length)} نتیجه</Text>}
+        />
+      ) : (
+        <View style={styles.searchEmptyState}>
+          <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
+          <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
+          <Text style={styles.largeEmptyText}>املای نام را بررسی کنید.</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+type CatalogCollectionGroup = {
+  id: string;
+  titleFa: string;
+  titleEn: string;
+  members: CatalogItem[];
+  cover: string;
+};
+
+const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGroup[] => {
+  const byCollection = new Map<string, CatalogItem[]>();
+  for (const item of catalog) {
+    if (item.type !== 'movie' || !item.collectionId) continue;
+    const current = byCollection.get(item.collectionId) || [];
+    current.push(item);
+    byCollection.set(item.collectionId, current);
+  }
+  return [...byCollection.entries()]
+    .map(([id, rawMembers]) => {
+      const members = [...rawMembers].sort((a, b) => {
+        const aOrder = Number(a.collectionOrder || 0);
+        const bOrder = Number(b.collectionOrder || 0);
+        if (aOrder > 0 && bOrder > 0 && aOrder !== bOrder) return aOrder - bOrder;
+        if (a.year !== b.year) return a.year - b.year;
+        return a.id.localeCompare(b.id);
+      });
+      const first = members[0];
+      const rawFa = String(first?.collectionNameFa || '').trim();
+      const rawEn = String(first?.collectionName || '').trim();
+      const titleEn = rawEn && !hasPersianScript(rawEn)
+        ? rawEn
+        : String(first?.name || '').trim() || rawFa || `Collection ${id}`;
+      // Never show an English-only collection name as the Persian line. If TMDB
+      // does not provide a Persian collection title, use a deterministic local
+      // label based on the first Persian movie title instead of bad machine text.
+      const firstFa = String(first?.nameFa || '').trim();
+      const titleFa = rawFa && hasPersianScript(rawFa)
+        ? rawFa
+        : firstFa && hasPersianScript(firstFa)
+          ? `مجموعه ${firstFa}`
+          : 'مجموعه فیلم‌ها';
+      return {
+        id,
+        titleFa,
+        titleEn,
+        members,
+        cover: first?.poster || first?.backdrop || '',
+      };
+    })
+    .filter((group) => group.members.length >= 2)
+    .sort((a, b) => b.members.length - a.members.length || a.titleFa.localeCompare(b.titleFa, 'fa'));
+};
+
+function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (item: CatalogItem) => void }) {
+  const groups = useMemo(() => collectionGroupsForCatalog(catalog), [catalog]);
+  const [selectedCollectionId, setSelectedCollectionIdState] = useState<string | null>(() => collectionBrowserSelectedId);
+  const collectionFoldersRef = useRef<FlatList<any>>(null);
+  const { width: screenWidth } = useWindowDimensions();
+  const selected = groups.find((group) => group.id === selectedCollectionId) || null;
+  const columns = screenWidth >= 720 ? 4 : screenWidth >= 520 ? 3 : 2;
+  const gap = 12;
+  const cardWidth = Math.floor((screenWidth - 32 - gap * (columns - 1)) / columns);
+
+  const setSelectedCollectionId = useCallback((next: string | null) => {
+    collectionBrowserSelectedId = next;
+    setSelectedCollectionIdState(next);
+  }, []);
+
+  const rememberCollectionFolderOffset = useCallback((event: any) => {
+    collectionBrowserScrollOffset = Math.max(0, Number(event?.nativeEvent?.contentOffset?.y || 0));
+  }, []);
+
+  useEffect(() => {
+    if (selectedCollectionId) return undefined;
+    const offset = Math.max(0, collectionBrowserScrollOffset);
+    const restore = () => collectionFoldersRef.current?.scrollToOffset({ offset, animated: false });
+    const frame = requestAnimationFrame(restore);
+    const retry = setTimeout(restore, 60);
+    const finalRetry = setTimeout(restore, 180);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(retry);
+      clearTimeout(finalRetry);
+    };
+  }, [selectedCollectionId, groups.length, columns]);
+
+  useEffect(() => {
+    const handler = () => {
+      if (!collectionBrowserSelectedId) return false;
+      collectionBrowserSelectedId = null;
+      setSelectedCollectionIdState(null);
+      return true;
+    };
+    collectionBrowserBackHandler = handler;
+    return () => {
+      if (collectionBrowserBackHandler === handler) collectionBrowserBackHandler = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedCollectionId && !groups.some((group) => group.id === selectedCollectionId)) {
+      setSelectedCollectionId(null);
+    }
+  }, [groups, selectedCollectionId, setSelectedCollectionId]);
+
+  if (selected) {
+    return (
+      <FlatList
+        key={`collection-members-${selected.id}-${columns}`}
+        data={selected.members}
+        numColumns={columns}
+        keyExtractor={(item) => item.id}
+        style={styles.screen}
+        contentContainerStyle={styles.catalogListContent}
+        columnWrapperStyle={columns > 1 ? { gap, flexDirection: 'row-reverse' } : undefined}
+        ListHeaderComponent={(
+          <View>
+            <View style={styles.simpleHeader}>
+              <Logo />
+              <View style={styles.collectionMemberHeaderTitle}>
+                <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{selected.titleFa}</Text>
+                <Text numberOfLines={1} style={styles.collectionFolderEnglish}>{selected.titleEn}</Text>
+                <Text style={styles.collectionFolderCount}>{toPersianDigits(selected.members.length)} فیلم</Text>
+              </View>
+              <Pressable onPress={() => setSelectedCollectionId(null)} hitSlop={12} style={styles.detailCircleButton}>
+                <Ionicons name="arrow-forward" color="#fff" size={21} />
+              </Pressable>
+            </View>
+          </View>
+        )}
+        renderItem={({ item }) => (
+          <View style={{ width: cardWidth, marginBottom: 16 }}>
+            <PosterCard item={item} width={cardWidth} onOpen={() => onOpen(item)} />
+          </View>
+        )}
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        windowSize={5}
+        removeClippedSubviews={false}
+        showsVerticalScrollIndicator={false}
+      />
+    );
+  }
+
+  return (
+    <FlatList
+      ref={collectionFoldersRef}
+      key={`collection-folders-${columns}`}
+      data={groups}
+      numColumns={columns}
+      keyExtractor={(group) => group.id}
+      style={styles.screen}
+      contentOffset={{ x: 0, y: collectionBrowserScrollOffset }}
+      scrollEventThrottle={16}
+      onScroll={rememberCollectionFolderOffset}
+      onScrollEndDrag={rememberCollectionFolderOffset}
+      onMomentumScrollEnd={rememberCollectionFolderOffset}
+      contentContainerStyle={styles.catalogListContent}
+      columnWrapperStyle={columns > 1 ? { gap, flexDirection: 'row-reverse' } : undefined}
+      ListHeaderComponent={(
+        <View>
+          <View style={styles.simpleHeader}>
+            <Logo />
+            <Text numberOfLines={1} style={styles.simpleHeaderTitle}>کالکشن‌ها</Text>
+          </View>
+          <Text style={styles.resultCount}>{toPersianDigits(groups.length)} کالکشن با حداقل ۲ فیلم</Text>
+        </View>
+      )}
+      ListEmptyComponent={(
+        <View style={styles.searchEmptyState}>
+          <Ionicons name="layers-outline" color={COLORS.gold} size={34} />
+          <Text style={styles.largeEmptyTitle}>هنوز کالکشن کاملی نداریم</Text>
+          <Text style={styles.largeEmptyText}>با اضافه‌شدن فیلم دوم هر مجموعه، پوشه آن خودکار اینجا ظاهر می‌شود.</Text>
+        </View>
+      )}
+      renderItem={({ item: group }) => (
+        <View style={{ width: cardWidth, marginBottom: 16 }}>
+          <Pressable onPress={() => setSelectedCollectionId(group.id)} style={[styles.collectionFolderCard, { width: cardWidth }]}>
+            <CatalogArtwork primary={group.cover} fallback={group.members[1]?.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="poster" />
+            <LinearGradient colors={['rgba(5,7,10,0.05)', 'rgba(5,7,10,0.94)']} style={StyleSheet.absoluteFill} />
+            <View style={styles.collectionFolderIcon}><Ionicons name="folder-open-outline" color={COLORS.gold} size={20} /></View>
+            <View style={styles.collectionFolderText}>
+              <Text numberOfLines={2} style={styles.collectionFolderTitle}>{group.titleFa}</Text>
+              <Text numberOfLines={2} style={styles.collectionFolderEnglish}>{group.titleEn}</Text>
+              <Text style={styles.collectionFolderCount}>{toPersianDigits(group.members.length)} فیلم</Text>
+            </View>
+          </Pressable>
+        </View>
+      )}
+      initialNumToRender={6}
+      maxToRenderPerBatch={4}
+      windowSize={5}
+      removeClippedSubviews={false}
+      showsVerticalScrollIndicator={false}
+    />
+  );
+}
+
+function SearchScreen(props: {
+  catalog: CatalogItem[];
+  peopleWorks?: Record<string, PersonWorkRef[]>;
+  onOpen: (item: CatalogItem) => void;
+  initialFilter: SearchFilter;
+}) {
+  if (props.initialFilter === 'all') return <SimpleSearchScreen catalog={props.catalog} peopleWorks={props.peopleWorks} onOpen={props.onOpen} />;
+  if (props.initialFilter === 'collections') return <CollectionBrowserScreen catalog={props.catalog} onOpen={props.onOpen} />;
+  return <CatalogListScreen {...props} />;
+}
+
+function AdvancedSearchScreen({
+  catalog,
+  onOpen,
+  initialFilter,
+}: {
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+  initialFilter: SearchFilter;
+}) {
+  const initialCountry = countryCodeFromFilter(initialFilter);
+  const initialGenre = genreFromFilter(initialFilter);
+  const initialYear = yearFromFilter(initialFilter);
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDebouncedText(query, 260);
+  const [filter, setFilter] = useState<SearchFilter>((initialCountry || initialGenre || initialYear) ? 'all' : initialFilter);
+  const [advancedOpen, setAdvancedOpen] = useState(Boolean(initialCountry || initialGenre || initialYear));
+  const [selectedCountry, setSelectedCountry] = useState(initialCountry);
+  const [selectedGenre, setSelectedGenre] = useState(initialGenre);
+  const [selectedYear, setSelectedYear] = useState<number | null>(initialYear || null);
+  const [personQuery, setPersonQuery] = useState('');
+  const deferredPersonQuery = useDebouncedText(personQuery, 220);
+  const [selectedPersonId, setSelectedPersonId] = useState('');
+  const [personRole, setPersonRole] = useState<PersonRoleFilter>('all');
+  const { width: screenWidth } = useWindowDimensions();
+  const searchableCatalog = catalog;
+
+  useEffect(() => {
+    const nextCountry = countryCodeFromFilter(initialFilter);
+    const nextGenre = genreFromFilter(initialFilter);
+    const nextYear = yearFromFilter(initialFilter);
+    setFilter((nextCountry || nextGenre || nextYear) ? 'all' : initialFilter);
+    setSelectedCountry(nextCountry);
+    setSelectedGenre(nextGenre);
+    setSelectedYear(nextYear || null);
+    setPersonQuery('');
+    setSelectedPersonId('');
+    setPersonRole('all');
+    setAdvancedOpen(Boolean(nextCountry || nextGenre || nextYear));
+    setQuery('');
+  }, [initialFilter]);
+
+  const normalizedQuery = normalizeComparableText(deferredQuery);
+  const normalizedPersonQuery = normalizeComparableText(deferredPersonQuery);
+  const searchReady = Boolean(
+    normalizedQuery ||
+    filter !== 'all' ||
+    selectedCountry ||
+    selectedGenre ||
+    selectedYear ||
+    normalizedPersonQuery ||
+    selectedPersonId ||
+    personRole !== 'all'
+  );
+
+  const availableCountryCodes = useMemo(() => advancedOpen ? [...new Set(
+    searchableCatalog.flatMap((item) => item.countryCodes || []),
+  )].filter((code) => String(code).toUpperCase() !== 'JP').sort((a, b) => {
+    const aIndex = COUNTRY_FILTER_PRIORITY.indexOf(a);
+    const bIndex = COUNTRY_FILTER_PRIORITY.indexOf(b);
+    if (aIndex >= 0 || bIndex >= 0) {
+      if (aIndex < 0) return 1;
+      if (bIndex < 0) return -1;
+      return aIndex - bIndex;
+    }
+    return countryLabel(a, catalog).localeCompare(countryLabel(b, catalog), 'fa');
+  }) : [], [advancedOpen, catalog]);
+
+  const availableGenres = useMemo(() => {
+    if (!advancedOpen) return [];
+    const counts = new Map<string, number>();
+    for (const item of searchableCatalog) {
+      for (const genre of item.genres || []) {
+        const cleaned = genre.trim();
+        if (!cleaned) continue;
+        counts.set(cleaned, (counts.get(cleaned) || 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'fa'))
+      .map(([genre]) => genre);
+  }, [advancedOpen, catalog, searchableCatalog]);
+
+  const availableYears = useMemo(() => advancedOpen ? [...new Set(
+    searchableCatalog
+      .map((item) => Number(item.year))
+      .filter((year) => Number.isFinite(year) && year > 1800),
+  )].sort((a, b) => b - a) : [], [advancedOpen, catalog]);
+
+  const availablePeople = useMemo(() => {
+    if (!advancedOpen) return [];
+    const people = new Map<string, { person: CatalogPerson; count: number }>();
+    for (const item of searchableCatalog) {
+      for (const person of item.people || []) {
+        const current = people.get(person.id);
+        people.set(person.id, {
+          person: current?.person || person,
+          count: (current?.count || 0) + 1,
+        });
+      }
+    }
+    return [...people.values()].sort((a, b) =>
+      b.count - a.count || personName(a.person).localeCompare(personName(b.person), 'fa'),
+    );
+  }, [advancedOpen, searchableCatalog]);
+
+  const personSuggestions = useMemo(() => {
+    if (!normalizedPersonQuery) return [];
+    return availablePeople
+      .filter(({ person }) => {
+        if (personRole !== 'all' && person.role !== personRole) return false;
+        return [person.nameFa, person.name]
+          .filter(Boolean)
+          .some((name) => String(name).toLowerCase().includes(normalizedPersonQuery));
+      })
+      .slice(0, 12);
+  }, [availablePeople, normalizedPersonQuery, personRole]);
+
+  const results = useMemo(() => {
+    if (!searchReady) return [];
+    return sortForCatalogFilter(
+    searchableCatalog.filter((item) => {
+      const searchableText = normalizeComparableText([
+        item.nameFa,
+        item.name,
+        ...(item.genres || []),
+        ...(item.countryLabels || []),
+        ...(item.countryNames || []),
+        ...(item.people || []).flatMap((person) => [person.nameFa, person.name || '']),
+      ].join(' '));
+      const matchesQuery = !normalizedQuery || searchableText.includes(normalizedQuery);
+
+      const matchesCountry =
+        !selectedCountry || item.countryCodes?.includes(selectedCountry);
+      const matchesGenre =
+        !selectedGenre || item.genres.includes(selectedGenre);
+      const matchesYear =
+        !selectedYear || item.year === selectedYear;
+
+      const eligiblePeople = (item.people || []).filter((person) =>
+        personRole === 'all' || person.role === personRole,
+      );
+      const matchesPersonRole = personRole === 'all' || eligiblePeople.length > 0;
+      const matchesPerson = selectedPersonId
+        ? eligiblePeople.some((person) => person.id === selectedPersonId)
+        : !normalizedPersonQuery || eligiblePeople.some((person) =>
+          normalizeComparableText(`${person.nameFa} ${person.name || ''}`).includes(normalizedPersonQuery),
+        );
+
+      return (
+        matchesQuery &&
+        matchesCatalogFilter(item, filter) &&
+        matchesCountry &&
+        matchesGenre &&
+        matchesYear &&
+        matchesPersonRole &&
+        matchesPerson
+      );
+    }),
+    filter,
+  ).slice(0, 80);
+  }, [
+    catalog,
+    searchableCatalog,
+    searchReady,
+    filter,
+    normalizedPersonQuery,
+    normalizedQuery,
+    personRole,
+    selectedCountry,
+    selectedGenre,
+    selectedPersonId,
+    selectedYear,
+  ]);
+
+  const basicFilters: { id: SearchFilter; label: string }[] = [
+    { id: 'all', label: 'همه' },
+    { id: 'movie', label: 'فیلم' },
+    { id: 'series', label: 'سریال' },
+    { id: 'mobile-operator', label: 'ویژه همراه' },
+    { id: 'dubbed', label: 'دوبله فارسی' },
+    { id: 'subtitled', label: 'زیرنویس فارسی' },
+  ];
+  const categoryLocked = initialFilter !== 'all';
+  const visibleFilters = categoryLocked
+    ? []
+    : (basicFilters.some((entry) => entry.id === filter) ? basicFilters : [{ id: filter, label: filterTitle(filter) }, ...basicFilters]);
+
+  const activeAdvancedCount = [
+    Boolean(selectedCountry),
+    Boolean(selectedGenre),
+    Boolean(selectedYear),
+    Boolean(normalizedPersonQuery || selectedPersonId),
+    personRole !== 'all',
+  ].filter(Boolean).length;
+
+  const clearAdvancedFilters = () => {
+    setSelectedCountry('');
+    setSelectedGenre('');
+    setSelectedYear(null);
+    setPersonQuery('');
+    setSelectedPersonId('');
+    setPersonRole('all');
+  };
+
+  const columnCount = screenWidth >= 720 ? 5 : screenWidth >= 590 ? 4 : screenWidth >= 480 ? 3 : 2;
+  const gridGap = 12;
+  const cardWidth = Math.floor(
+    (screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount,
+  );
+  const screenTitle = selectedCountry
+    ? `آثار ${countryLabel(selectedCountry, catalog)}`
+    : selectedGenre || (filter === 'all' ? 'جست‌وجو' : filterTitle(filter));
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
+      <View style={styles.simpleHeader}>
+        <Logo />
+        <Text numberOfLines={1} style={styles.simpleHeaderTitle}>{screenTitle}</Text>
+      </View>
+      <View style={styles.searchBox}>
+        <Ionicons name="search-outline" color={COLORS.muted} size={21} />
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="نام فیلم، سریال یا شخص…"
+          placeholderTextColor="#646A74"
+          style={styles.searchInput}
+          textAlign="right"
+        />
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.searchFilters}
+      >
+        {visibleFilters.map(({ id, label }) => (
+          <Pressable
+            key={id}
+            onPress={() => setFilter(id)}
+            style={[styles.filterChip, filter === id && styles.filterChipActive]}
+          >
+            <Text style={[styles.filterChipText, filter === id && styles.filterChipTextActive]}>{label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      <Pressable
+        onPress={() => setAdvancedOpen((current) => !current)}
+        style={[styles.advancedFilterToggle, advancedOpen && styles.advancedFilterToggleOpen]}
+      >
+        <View style={styles.advancedFilterToggleMain}>
+          <View style={styles.advancedFilterIcon}>
+            <Ionicons name="options-outline" color={COLORS.gold} size={19} />
+          </View>
+          <View style={styles.advancedFilterToggleText}>
+            <Text style={styles.advancedFilterTitle}>فیلتر پیشرفته</Text>
+            <Text style={styles.advancedFilterHint}>
+              {activeAdvancedCount
+                ? `${toPersianDigits(activeAdvancedCount)} فیلتر فعال`
+                : 'کشور، ژانر، سال، بازیگر و کارگردان'}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.advancedFilterToggleSide}>
+          {activeAdvancedCount ? (
+            <View style={styles.activeFilterBadge}>
+              <Text style={styles.activeFilterBadgeText}>{toPersianDigits(activeAdvancedCount)}</Text>
+            </View>
+          ) : null}
+          <Ionicons
+            name={advancedOpen ? 'chevron-up' : 'chevron-down'}
+            color={COLORS.muted}
+            size={18}
+          />
+        </View>
+      </Pressable>
+
+      {advancedOpen ? (
+        <View style={styles.advancedFilterPanel}>
+          <View style={styles.advancedFilterSection}>
+            <Text style={styles.advancedFilterSectionTitle}>کشور سازنده</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.advancedFilterChips}
+            >
+              <Pressable
+                onPress={() => setSelectedCountry('')}
+                style={[styles.filterChip, !selectedCountry && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, !selectedCountry && styles.filterChipTextActive]}>همه کشورها</Text>
+              </Pressable>
+              {availableCountryCodes.map((code) => (
+                <Pressable
+                  key={code}
+                  onPress={() => setSelectedCountry(code)}
+                  style={[styles.filterChip, selectedCountry === code && styles.filterChipActive]}
+                >
+                  <Text style={[styles.filterChipText, selectedCountry === code && styles.filterChipTextActive]}>
+                    {countryLabel(code, catalog)}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.advancedFilterSection}>
+            <Text style={styles.advancedFilterSectionTitle}>ژانر</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.advancedFilterChips}
+            >
+              <Pressable
+                onPress={() => setSelectedGenre('')}
+                style={[styles.filterChip, !selectedGenre && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, !selectedGenre && styles.filterChipTextActive]}>همه ژانرها</Text>
+              </Pressable>
+              {availableGenres.map((genre) => (
+                <Pressable
+                  key={genre}
+                  onPress={() => setSelectedGenre(genre)}
+                  style={[styles.filterChip, selectedGenre === genre && styles.filterChipActive]}
+                >
+                  <Text style={[styles.filterChipText, selectedGenre === genre && styles.filterChipTextActive]}>{genre}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.advancedFilterSection}>
+            <Text style={styles.advancedFilterSectionTitle}>سال انتشار</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.advancedFilterChips}
+            >
+              <Pressable
+                onPress={() => setSelectedYear(null)}
+                style={[styles.filterChip, !selectedYear && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, !selectedYear && styles.filterChipTextActive]}>همه سال‌ها</Text>
+              </Pressable>
+              {availableYears.map((year) => (
+                <Pressable
+                  key={year}
+                  onPress={() => setSelectedYear(year)}
+                  style={[styles.filterChip, selectedYear === year && styles.filterChipActive]}
+                >
+                  <Text style={[styles.filterChipText, selectedYear === year && styles.filterChipTextActive]}>
+                    {toPersianDigits(year)}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.advancedFilterSection}>
+            <Text style={styles.advancedFilterSectionTitle}>بازیگر یا کارگردان</Text>
+            <View style={styles.personFilterRoleRow}>
+              {([
+                ['all', 'همه عوامل'],
+                ['actor', 'بازیگران'],
+                ['director', 'کارگردان‌ها'],
+              ] as [PersonRoleFilter, string][]).map(([role, label]) => (
+                <Pressable
+                  key={role}
+                  onPress={() => {
+                    setPersonRole(role);
+                    setSelectedPersonId('');
+                  }}
+                  style={[styles.personRoleChip, personRole === role && styles.personRoleChipActive]}
+                >
+                  <Text style={[styles.personRoleChipText, personRole === role && styles.filterChipTextActive]}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.personFilterSearchBox}>
+              <Ionicons name="person-outline" color={COLORS.muted} size={18} />
+              <TextInput
+                value={personQuery}
+                onChangeText={(value) => {
+                  setPersonQuery(value);
+                  setSelectedPersonId('');
+                }}
+                placeholder="نام بازیگر یا کارگردان را بنویسید…"
+                placeholderTextColor="#646A74"
+                style={styles.personFilterInput}
+                textAlign="right"
+              />
+              {personQuery ? (
+                <Pressable
+                  onPress={() => {
+                    setPersonQuery('');
+                    setSelectedPersonId('');
+                  }}
+                  hitSlop={8}
+                >
+                  <Ionicons name="close-circle" color={COLORS.muted} size={18} />
+                </Pressable>
+              ) : null}
+            </View>
+            {personSuggestions.length ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.personSuggestions}
+              >
+                {personSuggestions.map(({ person, count }) => (
+                  <Pressable
+                    key={person.id}
+                    onPress={() => {
+                      setSelectedPersonId(person.id);
+                      setPersonQuery(personName(person));
+                    }}
+                    style={[
+                      styles.personSuggestionChip,
+                      selectedPersonId === person.id && styles.personSuggestionChipActive,
+                    ]}
+                  >
+                    <Text style={styles.personSuggestionName}>{personName(person)}</Text>
+                    <Text style={styles.personSuggestionMeta}>
+                      {personRoleTitle(person)} • {toPersianDigits(count)} اثر
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
+          </View>
+
+          {activeAdvancedCount ? (
+            <Pressable onPress={clearAdvancedFilters} style={styles.clearAdvancedFiltersButton}>
+              <Ionicons name="refresh-outline" color={COLORS.red} size={17} />
+              <Text style={styles.clearAdvancedFiltersText}>پاک‌کردن فیلترهای پیشرفته</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+      {searchReady ? <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text> : null}
+      {!searchReady ? (
+        <View style={styles.searchEmptyState}>
+          <View style={styles.largeEmptyIcon}>
+            <Ionicons name="search-outline" color={COLORS.gold} size={30} />
+          </View>
+          <Text style={styles.largeEmptyTitle}>دنبال چه چیزی می‌گردید؟</Text>
+          <Text style={styles.largeEmptyText}>نام فیلم، سریال یا بازیگر را بنویسید تا نتایج نمایش داده شوند.</Text>
+        </View>
+      ) : results.length ? (
+        <View style={[styles.searchGrid, { columnGap: gridGap }]}>
+          {results.map((item) => (
+            <PosterCard
+              key={item.id}
+              item={item}
+              width={cardWidth}
+              onOpen={() => onOpen(item)}
+            />
+          ))}
+        </View>
+      ) : (
+        <View style={styles.searchEmptyState}>
+          <View style={styles.largeEmptyIcon}>
+            <Ionicons name="search-outline" color={COLORS.gold} size={30} />
+          </View>
+          <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
+          <Text style={styles.largeEmptyText}>عبارت جست‌وجو یا یکی از فیلترها را تغییر دهید.</Text>
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+function FavoritesScreen({
+  catalog,
+  favorites,
+  watchHistory,
+  onOpen,
+  onOpenHistory,
+  onRemoveHistory,
+  onClearHistory,
+}: {
+  catalog: CatalogItem[];
+  favorites: string[];
+  watchHistory: WatchHistoryRecord[];
+  onOpen: (item: CatalogItem) => void;
+  onOpenHistory: (record: WatchHistoryRecord) => void;
+  onRemoveHistory: (id: string) => void;
+  onClearHistory: () => void;
+}) {
+  const [view, setView] = useState<'favorites' | 'history'>('favorites');
+  const items = catalog.filter(
+    (item) => favorites.includes(item.id),
+  );
+  const history = watchHistory
+    .filter((record) =>
+      catalog.some((item) => item.id === record.itemId) ||
+      record.downloadId,
+    )
+    .slice(0, 100);
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
+      <View style={styles.simpleHeader}>
+        <Logo />
+        <Text style={styles.simpleHeaderTitle}>کتابخانه من</Text>
+      </View>
+
+      <View style={styles.libraryTabs}>
+        <Pressable
+          onPress={() => setView('favorites')}
+          style={[styles.libraryTab, view === 'favorites' && styles.libraryTabActive]}
+        >
+          <Ionicons
+            name={view === 'favorites' ? 'bookmark' : 'bookmark-outline'}
+            color={view === 'favorites' ? COLORS.gold : COLORS.muted}
+            size={17}
+          />
+          <Text style={[styles.libraryTabText, view === 'favorites' && styles.libraryTabTextActive]}>
+            نشان‌شده‌ها ({toPersianDigits(items.length)})
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setView('history')}
+          style={[styles.libraryTab, view === 'history' && styles.libraryTabActive]}
+        >
+          <Ionicons
+            name={view === 'history' ? 'time' : 'time-outline'}
+            color={view === 'history' ? COLORS.gold : COLORS.muted}
+            size={17}
+          />
+          <Text style={[styles.libraryTabText, view === 'history' && styles.libraryTabTextActive]}>
+            تاریخچه ({toPersianDigits(history.length)})
+          </Text>
+        </Pressable>
+      </View>
+
+      {view === 'favorites' ? (
+        !items.length ? (
+          <View style={styles.largeEmpty}>
+            <View style={styles.largeEmptyIcon}>
+              <Ionicons name="bookmark-outline" color={COLORS.gold} size={34} />
+            </View>
+            <Text style={styles.largeEmptyTitle}>فهرستت هنوز خالی است</Text>
+            <Text style={styles.largeEmptyText}>فیلم‌ها و سریال‌های مورد علاقه‌ات را نشان کن تا اینجا بمانند.</Text>
+          </View>
+        ) : (
+          <View style={styles.searchGrid}>
+            {items.map((item) => <PosterCard key={item.id} item={item} onOpen={() => onOpen(item)} />)}
+          </View>
+        )
+      ) : (
+        <>
+          {history.length ? (
+            <View style={styles.historyToolbar}>
+              <Text style={styles.historyToolbarText}>آخرین {toPersianDigits(history.length)} مورد تماشا</Text>
+              <Pressable onPress={onClearHistory} style={styles.historyClearButton}>
+                <Ionicons name="trash-outline" color={COLORS.red} size={15} />
+                <Text style={styles.historyClearText}>پاک‌کردن تاریخچه</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {!history.length ? (
+            <View style={styles.largeEmpty}>
+              <View style={styles.largeEmptyIcon}>
+                <Ionicons name="time-outline" color={COLORS.gold} size={35} />
+              </View>
+              <Text style={styles.largeEmptyTitle}>تاریخچه‌ای ثبت نشده</Text>
+              <Text style={styles.largeEmptyText}>بعد از حداقل ۱۵ ثانیه تماشا، سابقه پخش اینجا نمایش داده می‌شود.</Text>
+            </View>
+          ) : (
+            <View style={styles.historyList}>
+              {history.map((record) => {
+                const catalogItem = catalog.find((item) => item.id === record.itemId);
+                const artwork = record.artwork || catalogItem?.backdrop || catalogItem?.poster;
+                const percent = watchProgressPercent(record);
+                return (
+                  <Pressable key={record.id} onPress={() => onOpenHistory(record)} style={styles.historyCard}>
+                    <View style={styles.historyArtworkWrap}>
+                      {artwork ? (
+                        <Image source={{ uri: artwork }} style={styles.historyArtwork} contentFit="cover" transition={180} />
+                      ) : (
+                        <View style={styles.historyArtworkFallback}>
+                          <Ionicons name="film-outline" color={COLORS.gold} size={23} />
+                        </View>
+                      )}
+                      <View style={styles.historyArtworkPlay}>
+                        <Ionicons name={record.completed ? 'refresh' : 'play'} color="#fff" size={14} />
+                      </View>
+                    </View>
+                    <View style={styles.historyBody}>
+                      <View style={styles.historyTitleRow}>
+                        <Text numberOfLines={1} style={styles.historyTitle}>{record.title}</Text>
+                        <Pressable
+                          onPress={(event) => {
+                            event.stopPropagation();
+                            onRemoveHistory(record.id);
+                          }}
+                          hitSlop={8}
+                          style={styles.historyRemoveButton}
+                        >
+                          <Ionicons name="close" color={COLORS.muted} size={15} />
+                        </Pressable>
+                      </View>
+                      <Text numberOfLines={1} style={styles.historySubtitle}>
+                        {[record.sourceQuality, historyDateLabel(record.updatedAt)].filter(Boolean).join(' • ')}
+                      </Text>
+                      <Text style={[styles.historyStatus, record.completed && styles.historyStatusCompleted]}>
+                        {record.completed
+                          ? 'تماشا شده؛ برای مشاهده دوباره بزنید'
+                          : `آخرین توقف: ${formatPlaybackTime(record.position)}`}
+                      </Text>
+                      {!record.completed && record.duration > 0 ? (
+                        <View style={styles.historyProgressTrack}>
+                          <View style={[styles.historyProgressFill, { width: `${percent}%` }]} />
+                        </View>
+                      ) : null}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+const downloadLanguageLabel = (language?: MediaLanguage) =>
+  language === 'dubbed' ? 'دوبله فارسی' : language === 'subtitled' ? 'زیرنویس فارسی' : '';
+
+const downloadDisplayMeta = (record: DownloadRecord, catalogItem?: CatalogItem) => {
+  const matchedGroup = catalogItem?.downloads?.find((group) =>
+    (group.files || []).some((file) =>
+      file.url === record.sourceUrl || record.id.endsWith(`-${file.id}`),
+    ),
+  );
+  const matchedFile = matchedGroup?.files?.find((file) =>
+    file.url === record.sourceUrl || record.id.endsWith(`-${file.id}`),
+  );
+  const mediaType = record.mediaType || catalogItem?.type;
+  const seasonNumber = Number(record.seasonNumber || matchedGroup?.seasonNumber || 0);
+  const episodeNumber = Number(record.episodeNumber || matchedGroup?.episodeNumber || 0);
+  const language = record.language || matchedFile?.language;
+  const artwork = record.artwork || catalogItem?.poster || catalogItem?.backdrop;
+  const episodeTitle = record.episodeTitle || cleanMediaLabel(matchedGroup?.subtitle);
+
+  return {
+    artwork,
+    mediaType,
+    seasonNumber,
+    episodeNumber,
+    language,
+    episodeTitle,
+    episodeLabel: mediaType === 'series' && episodeNumber > 0
+      ? `فصل ${toPersianDigits(seasonNumber || 1)} • قسمت ${toPersianDigits(episodeNumber)}`
+      : '',
+  };
+};
+
+function DownloadsScreen({
+  downloads,
+  catalog,
+  onPlay,
+  onPause,
+  onResume,
+  onMenu,
+  onClearIncomplete,
+  onClearCompleted,
+}: {
+  downloads: DownloadRecord[];
+  catalog: CatalogItem[];
+  onPlay: (record: DownloadRecord) => void;
+  onPause: (record: DownloadRecord) => void;
+  onResume: (record: DownloadRecord) => void;
+  onMenu: (record: DownloadRecord) => void;
+  onClearIncomplete: () => void;
+  onClearCompleted: () => void;
+}) {
+  const completedCount = downloads.filter((record) => record.status === 'completed').length;
+  const incompleteCount = downloads.length - completedCount;
+  const storedBytes = downloads.reduce((total, record) => total + Math.max(0, Number(record.status === 'completed' ? (record.totalBytes || record.bytesWritten || 0) : (record.bytesWritten || 0))), 0);
+  const expectedBytes = downloads.reduce((total, record) => total + Math.max(0, Number(record.totalBytes || 0)), 0);
+  const remainingBytes = downloads.reduce((total, record) => total + Math.max(0, Number(record.totalBytes || 0) - Number(record.bytesWritten || 0)), 0);
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.tabScreenContent}>
+      <View style={styles.simpleHeader}>
+        <Logo />
+        <Text style={styles.simpleHeaderTitle}>دریافت‌ها</Text>
+      </View>
+      <View style={styles.storageSummary}>
+        <View style={styles.storageSummaryMain}>
+          <View style={styles.storageSummaryIcon}>
+            <Ionicons name="phone-portrait-outline" color={COLORS.gold} size={23} />
+          </View>
+          <View style={styles.storageSummaryText}>
+            <Text style={styles.storageSummaryTitle}>حافظه مصرف‌شده داخل برنامه</Text>
+            <Text style={styles.storageSummaryValue}>{formatStorageSize(storedBytes)}</Text>
+          </View>
+        </View>
+        {expectedBytes > 0 ? <View style={styles.storageTotals}><Text style={styles.storageTotalText}>حجم کل فایل‌ها: {formatStorageSize(expectedBytes)}</Text><Text style={styles.storageTotalText}>باقی‌مانده: {formatStorageSize(remainingBytes)}</Text></View> : null}
+        <View style={styles.storageStatsRow}>
+          <View style={styles.storageStat}>
+            <Text style={styles.storageStatValue}>{toPersianDigits(completedCount)}</Text>
+            <Text style={styles.storageStatLabel}>فایل کامل</Text>
+          </View>
+          <View style={styles.storageStatDivider} />
+          <View style={styles.storageStat}>
+            <Text style={styles.storageStatValue}>{toPersianDigits(incompleteCount)}</Text>
+            <Text style={styles.storageStatLabel}>ناتمام</Text>
+          </View>
+        </View>
+        {downloads.length ? (
+          <View style={styles.storageActions}>
+            {incompleteCount ? (
+              <Pressable onPress={onClearIncomplete} style={styles.storageActionButton}>
+                <Ionicons name="close-circle-outline" color={COLORS.muted} size={16} />
+                <Text style={styles.storageActionText}>حذف دانلودهای ناتمام</Text>
+              </Pressable>
+            ) : null}
+            {completedCount ? (
+              <Pressable onPress={onClearCompleted} style={[styles.storageActionButton, styles.storageActionDanger]}>
+                <Ionicons name="trash-outline" color={COLORS.red} size={16} />
+                <Text style={[styles.storageActionText, styles.storageActionDangerText]}>حذف فایل‌های کامل</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+      {!downloads.length ? (
+        <View style={styles.largeEmpty}>
+          <View style={styles.largeEmptyIcon}>
+            <Ionicons name="cloud-download-outline" color={COLORS.gold} size={36} />
+          </View>
+          <Text style={styles.largeEmptyTitle}>هنوز فایلی دریافت نشده</Text>
+          <Text style={styles.largeEmptyText}>
+            فایل‌های دریافتی همراه با وضعیت و درصد پیشرفت در این بخش نگه‌داری می‌شوند.
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.downloadLibrary}>
+          {downloads.map((record) => {
+            const percent = Math.round(record.progress * 100);
+            const canPlay = record.status === 'completed' && Boolean(record.localUri);
+            const canResume = record.status === 'paused' || record.status === 'failed';
+            const catalogItem = catalog.find((item) => item.id === record.itemId);
+            const display = downloadDisplayMeta(record, catalogItem);
+            const languageLabel = downloadLanguageLabel(display.language);
+            const compactMeta = [display.episodeLabel, languageLabel, record.quality]
+              .filter(Boolean)
+              .join(' • ');
+
+            return (
+              <View key={record.id} style={styles.downloadLibraryCard}>
+                <Pressable
+                  disabled={!canPlay}
+                  onPress={() => canPlay && onPlay(record)}
+                  style={styles.downloadLibraryArtworkWrap}
+                >
+                  {display.artwork ? (
+                    <Image
+                      source={{ uri: display.artwork }}
+                      style={styles.downloadLibraryArtwork}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                      transition={160}
+                    />
+                  ) : (
+                    <View style={styles.downloadLibraryArtworkFallback}>
+                      <Ionicons name={display.mediaType === 'series' ? 'tv-outline' : 'film-outline'} color={COLORS.gold} size={24} />
+                    </View>
+                  )}
+                  {canPlay ? (
+                    <View style={styles.downloadLibraryArtworkPlay}>
+                      <Ionicons name="play" color="#fff" size={15} />
+                    </View>
+                  ) : null}
+                </Pressable>
+
+                <View style={styles.downloadLibraryInfo}>
+                  <Text numberOfLines={1} style={styles.downloadLibraryTitle}>{record.title}</Text>
+                  {record.subtitle ? (
+                    <Text numberOfLines={1} style={styles.downloadLibraryEnglish}>{record.subtitle}</Text>
+                  ) : null}
+                  {compactMeta ? (
+                    <Text numberOfLines={1} style={styles.downloadLibraryMeta}>{compactMeta}</Text>
+                  ) : null}
+                  {display.episodeTitle && display.episodeTitle !== record.title ? (
+                    <Text numberOfLines={1} style={styles.downloadLibraryEpisodeTitle}>{display.episodeTitle}</Text>
+                  ) : null}
+                  {record.status !== 'completed' ? (
+                    <View style={styles.progressTrack}>
+                      <View style={[styles.progressFill, { width: `${percent}%` }]} />
+                    </View>
+                  ) : null}
+                  <Text style={styles.downloadLibraryBytes}>{record.totalBytes ? `${formatStorageSize(record.bytesWritten || 0)} از ${formatStorageSize(record.totalBytes)}` : isNetworkFailure(record.error) ? 'در انتظار اتصال به اینترنت' : 'حجم در حال محاسبه'}</Text>
+                  <Text style={styles.downloadLibraryStatus}>
+                    {record.status === 'completed'
+                      ? 'دانلود کامل شده و آماده پخش است'
+                      : record.status === 'downloading'
+                        ? `${toPersianDigits(percent)}٪ در حال دریافت`
+                        : record.status === 'paused'
+                          ? friendlyNetworkError(record.error) || `${toPersianDigits(percent)}٪ متوقف شده`
+                          : friendlyNetworkError(record.error) || 'دریافت ناموفق بود'}
+                  </Text>
+                </View>
+
+                <View style={styles.downloadLibraryActions}>
+                  {record.status === 'downloading' ? (
+                    <Pressable onPress={() => onPause(record)} style={styles.downloadLibraryControl}>
+                      <Ionicons name="pause" color={COLORS.text} size={18} />
+                    </Pressable>
+                  ) : null}
+                  {canResume ? (
+                    <Pressable onPress={() => onResume(record)} style={styles.downloadLibraryControl}>
+                      <Ionicons name="play" color={COLORS.text} size={18} />
+                    </Pressable>
+                  ) : null}
+                  <Pressable onPress={() => onMenu(record)} style={styles.downloadLibraryMenu}>
+                    <Ionicons name="ellipsis-vertical" color={COLORS.muted} size={20} />
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+function DownloadGroup({
+  group,
+  open,
+  onToggle,
+  onOpenFile,
+  onPlay,
+}: {
+  group: DownloadSection;
+  open: boolean;
+  onToggle: () => void;
+  onOpenFile: (file: DownloadFile) => void;
+  onPlay?: () => void;
+}) {
+  const files = sortedDownloadFiles(group.files);
+  if (!files.length) return null;
+
+  return (
+    <View style={[styles.downloadGroup, open && styles.downloadGroupOpen]}>
+      <Pressable onPress={onToggle} style={styles.downloadGroupHead}>
+        <View style={styles.downloadGroupText}>
+          <Text style={styles.downloadGroupTitle}>{group.title}</Text>
+          <Text style={styles.downloadGroupSubtitle}>
+            {group.subtitle || `${toPersianDigits(files.length)} کیفیت دانلود مستقیم`}
+          </Text>
+        </View>
+        <View style={styles.downloadGroupBadge}>
+          <Text style={styles.downloadGroupBadgeText}>
+            {group.language === 'dubbed' ? 'دوبله فارسی' : group.language === 'subtitled' ? 'زیرنویس فارسی' : group.badge || 'دریافت'}
+          </Text>
+        </View>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} color={COLORS.gold} size={19} />
+      </Pressable>
+      {open ? (
+        <View style={styles.qualityList}>
+          {onPlay ? (
+            <Pressable onPress={onPlay} style={styles.languagePlayButton}>
+              <Ionicons name="play" color="#fff" size={17} />
+              <Text style={styles.languagePlayButtonText}>پخش آنلاین</Text>
+            </Pressable>
+          ) : null}
+          {files.map((file) => {
+            const label = cleanMediaLabel(file.label);
+            const purchase = downloadModeFor(file) === 'purchase';
+            return (
+              <View key={file.id} style={styles.qualityRow}>
+                <View style={styles.qualityInfo}>
+                  <Text style={styles.qualityName}>{cleanQualityLabel(file.quality)}</Text>
+                  <Text style={styles.qualityMeta}>
+                    {[label, file.size].filter(Boolean).join(' • ') || (purchase ? 'دریافت از منبع' : 'فایل آماده دریافت')}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => onOpenFile(file)}
+                  style={styles.downloadButton}
+                >
+                  <Ionicons name={purchase ? 'open-outline' : 'download-outline'} color="#fff" size={16} />
+                  <Text style={styles.downloadButtonText}>{purchase ? 'خرید / دریافت' : 'دریافت'}</Text>
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function OperatorAccessGroup({
+  group,
+  open,
+  onToggle,
+  onOpenFile,
+}: {
+  group: DownloadSection;
+  open: boolean;
+  onToggle: () => void;
+  onOpenFile: (file: DownloadFile) => void;
+}) {
+  const files = operatorFilesFor(group.files);
+  if (!files.length) return null;
+
+  return (
+    <View style={[styles.operatorGroup, open && styles.operatorGroupOpen]}>
+      <Pressable onPress={onToggle} style={styles.downloadGroupHead}>
+        <View style={styles.downloadGroupText}>
+          <Text style={styles.downloadGroupTitle}>ویژه اینترنت همراه</Text>
+          <Text style={styles.downloadGroupSubtitle}>
+            وای‌فای و فیلترشکن را خاموش کنید و با اینترنت سیم‌کارت وارد شوید.
+          </Text>
+        </View>
+        <View style={styles.operatorGroupBadge}>
+          <Text style={styles.operatorGroupBadgeText}>همراه</Text>
+        </View>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} color={COLORS.gold} size={19} />
+      </Pressable>
+      {open ? (
+        <View style={styles.operatorActionList}>
+          <View style={styles.operatorNotice}>
+            <Ionicons name="phone-portrait-outline" color={COLORS.gold} size={20} />
+            <Text style={styles.operatorNoticeText}>
+              این لینک فقط روی اینترنت همراهِ اپراتورهای پشتیبانی‌شده باز می‌شود.
+            </Text>
+          </View>
+          {files.map((file) => {
+            const isPlay = downloadModeFor(file) === 'operator-play';
+            return (
+              <Pressable
+                key={file.id}
+                onPress={() => onOpenFile(file)}
+                style={styles.operatorActionButton}
+              >
+                <Ionicons
+                  name={isPlay ? 'play' : 'download-outline'}
+                  color="#fff"
+                  size={17}
+                />
+                <View style={styles.operatorActionText}>
+                  <Text style={styles.operatorActionTitle}>
+                    {isPlay ? 'پخش با اینترنت همراه' : 'دریافت با اینترنت همراه'}
+                  </Text>
+                  <Text style={styles.operatorActionSubtitle}>
+                    {cleanMediaLabel(file.label) || 'ویژه همراه اول، ایرانسل، رایتل و اپراتورهای همراه'}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function EpisodeDownloadGroup({
+  group,
+  open,
+  openLanguage,
+  onToggle,
+  onToggleLanguage,
+  onOpenFile,
+  onPlayLanguage,
+  onOpenOperator,
+  iranian,
+  showPlayActions = false,
+  episodeNoun = 'قسمت',
+}: {
+  group: DownloadSection;
+  open: boolean;
+  openLanguage: string | null;
+  onToggle: (defaultLanguageId: string | null) => void;
+  onToggleLanguage: (id: string) => void;
+  onOpenFile: (file: DownloadFile, group: DownloadSection) => void;
+  onPlayLanguage: (language?: MediaLanguage) => void;
+  onOpenOperator: (file: DownloadFile) => void;
+  iranian: boolean;
+  showPlayActions?: boolean;
+  episodeNoun?: string;
+}) {
+  const languageGroups = languageSectionsForFiles(group.files, group.id, iranian);
+  const operatorFiles = operatorFilesFor(group.files);
+  if (!languageGroups.length && !operatorFiles.length) return null;
+  const operatorGroupId = `${group.id}-operator`;
+
+  return (
+    <View style={[styles.episodeGroup, open && styles.episodeGroupOpen]}>
+      <Pressable
+        onPress={() => onToggle(languageGroups[0]?.id || (operatorFiles.length ? operatorGroupId : null))}
+        style={styles.episodeGroupHead}
+      >
+        <View style={styles.episodeGroupText}>
+          <Text style={styles.episodeGroupTitle}>
+            {episodeNoun} {toPersianDigits(group.episodeNumber || 0)}
+          </Text>
+          <Text numberOfLines={1} style={styles.episodeGroupSubtitle}>
+            {`${toPersianDigits(languageGroups.length + (operatorFiles.length ? 1 : 0))} گزینه پخش یا دریافت`}
+          </Text>
+        </View>
+        <View style={styles.episodeNumberBadge}>
+          <Text style={styles.episodeNumberBadgeText}>{episodeNoun === 'جزء' ? `جزء ${toPersianDigits(group.episodeNumber || 0)}` : `E${toPersianDigits(group.episodeNumber || 0)}`}</Text>
+        </View>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} color={COLORS.gold} size={19} />
+      </Pressable>
+      {open ? (
+        <View style={styles.episodeLanguageList}>
+          {languageGroups.map((languageGroup) => (
+            <DownloadGroup
+              key={languageGroup.id}
+              group={languageGroup}
+              open={openLanguage === languageGroup.id}
+              onToggle={() => onToggleLanguage(languageGroup.id)}
+              onOpenFile={(file) => onOpenFile(file, group)}
+              onPlay={showPlayActions && playbackSourcesForFiles(group.files.filter((file) => file.language === languageGroup.language)).length
+                ? () => onPlayLanguage(languageGroup.language)
+                : undefined}
+            />
+          ))}
+          {operatorFiles.length ? (
+            <OperatorAccessGroup
+              group={group}
+              open={openLanguage === operatorGroupId}
+              onToggle={() => onToggleLanguage(operatorGroupId)}
+              onOpenFile={onOpenOperator}
+            />
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function SeriesEpisodeList({
+  item,
+  openGroup,
+  openLanguage,
+  onToggleEpisode,
+  onToggleLanguage,
+  onOpenFile,
+  onPlayLanguage,
+  onOpenOperator,
+  showPlayActions = false,
+  quran = false,
+}: {
+  item: CatalogItem;
+  openGroup: string | null;
+  openLanguage: string | null;
+  onToggleEpisode: (id: string, defaultLanguageId: string | null) => void;
+  onToggleLanguage: (id: string) => void;
+  onOpenFile: (file: DownloadFile, group: DownloadSection) => void;
+  onPlayLanguage: (group: DownloadSection, language?: MediaLanguage) => void;
+  onOpenOperator: (file: DownloadFile) => void;
+  showPlayActions?: boolean;
+  quran?: boolean;
+}) {
+  const episodeGroups = [...(item.downloads || [])]
+    .filter((group) =>
+      isEpisodeSection(group) &&
+      (
+        languageSectionsForFiles(group.files, group.id, item.ir).length > 0 ||
+        operatorFilesFor(group.files).length > 0
+      ),
+    )
+    .sort(compareEpisodeGroupsOldestFirst);
+
+  const seasons = episodeGroups.reduce<Record<number, DownloadSection[]>>((result, group) => {
+    const seasonNumber = Number(group.seasonNumber || 1);
+    if (!result[seasonNumber]) result[seasonNumber] = [];
+    result[seasonNumber].push(group);
+    return result;
+  }, {});
+
+  const seasonNumbers = Object.keys(seasons)
+    .map(Number)
+    .sort((a, b) => b - a);
+  const latestSeason = seasonNumbers[0] || 1;
+  const seasonKey = `${item.id}:${seasonNumbers.join(',')}`;
+  const [selectedSeason, setSelectedSeason] = useState(latestSeason);
+
+  useEffect(() => {
+    setSelectedSeason(latestSeason);
+  }, [seasonKey, latestSeason]);
+
+  const visibleSeason = seasons[selectedSeason] ? selectedSeason : latestSeason;
+  const visibleGroups = seasons[visibleSeason] || [];
+
+  return (
+    <View style={styles.seriesEpisodes}>
+      {seasonNumbers.length > 1 ? (
+        <View style={styles.seasonSelectorWrap}>
+          <View style={styles.seasonSelectorHeader}>
+            <Text style={styles.seasonSelectorTitle}>{quran ? 'انتخاب بخش' : 'انتخاب فصل'}</Text>
+            <Text style={styles.seasonSelectorMeta}>
+              {toPersianDigits(seasonNumbers.length)} فصل
+            </Text>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.seasonSelector}
+          >
+            {seasonNumbers.map((seasonNumber) => {
+              const active = visibleSeason === seasonNumber;
+              return (
+                <Pressable
+                  key={seasonNumber}
+                  onPress={() => setSelectedSeason(seasonNumber)}
+                  style={[styles.seasonChip, active && styles.seasonChipActive]}
+                >
+                  <Text style={[styles.seasonChipText, active && styles.seasonChipTextActive]}>
+                    {quran ? 'بخش' : 'فصل'} {toPersianDigits(seasonNumber)}
+                  </Text>
+                  <Text style={[styles.seasonChipCount, active && styles.seasonChipCountActive]}>
+                    {toPersianDigits(seasons[seasonNumber]?.length || 0)} قسمت
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
+
+      <View style={styles.seasonBlock}>
+        <View style={styles.seasonTitleRow}>
+          <Text style={styles.seasonTitle}>{quran ? 'اجزای قرآن' : `فصل ${toPersianDigits(visibleSeason)}`}</Text>
+          <Text style={styles.seasonCount}>{toPersianDigits(visibleGroups.length)} قسمت</Text>
+        </View>
+        {visibleGroups.map((group) => (
+          <EpisodeDownloadGroup
+            key={group.id}
+            group={group}
+            open={openGroup === group.id}
+            openLanguage={openLanguage}
+            onToggle={(defaultLanguageId) => onToggleEpisode(group.id, defaultLanguageId)}
+            onToggleLanguage={onToggleLanguage}
+            onOpenFile={onOpenFile}
+            onPlayLanguage={(language) => onPlayLanguage(group, language)}
+            onOpenOperator={onOpenOperator}
+            iranian={isIranianItem(item)}
+            showPlayActions={showPlayActions}
+            episodeNoun={quran ? 'جزء' : 'قسمت'}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const episodeShowcaseLabel = (_item: CatalogItem, group: DownloadSection, quran: boolean) => {
+  const noun = quran ? 'جزء' : 'قسمت';
+  return `${noun} ${toPersianDigits(Number(group.episodeNumber || 0))}`;
+};
+
+function ExactEpisodeArtwork({
+  item,
+  artwork,
+}: {
+  item: CatalogItem;
+  artwork: string;
+}) {
+  // Episode cards are navigation controls, so mounting them must never start
+  // video decoders or thumbnail extraction. Paint artwork already seen on the
+  // detail page immediately, then layer the exact server frame when available.
+  const fallbackArtwork = item.backdrop || item.poster || item.posterFallback || '';
+  const exactArtwork = artwork ? optimizedImageUrl(artwork, 'backdrop') : '';
+
+  return (
+    <View style={styles.episodeShowcaseArtwork}>
+      <CatalogArtwork
+        primary={fallbackArtwork}
+        fallback={item.posterFallback || item.poster || item.backdrop}
+        localFallback={localArtworkForItem(item)}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        imageKind="backdrop"
+      />
+      {exactArtwork ? (
+        <Image
+          source={{ uri: exactArtwork }}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={120}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function SeriesEpisodeShowcase({
+  item,
+  onPlay,
+  onOpenDownloads,
+  onOpenOperator,
+}: {
+  item: CatalogItem;
+  onPlay: (group: DownloadSection) => void;
+  onOpenDownloads: (group: DownloadSection) => void;
+  onOpenOperator: (file: DownloadFile) => void;
+}) {
+  const groups = useMemo(() => [...(item.downloads || [])]
+    .filter((group) => isEpisodeSection(group) && (group.files || []).length > 0)
+    .sort(compareEpisodeGroupsOldestFirst), [item.downloads]);
+  const seasons = useMemo(() => groups.reduce<Record<number, DownloadSection[]>>((result, group) => {
+    const season = Number(group.seasonNumber || 1);
+    result[season] = [...(result[season] || []), group];
+    return result;
+  }, {}), [groups]);
+  const seasonNumbers = useMemo(() => Object.keys(seasons).map(Number).sort((a, b) => b - a), [seasons]);
+  const latestSeason = seasonNumbers[0] || 1;
+  const [selectedSeason, setSelectedSeason] = useState(latestSeason);
+
+  useEffect(() => setSelectedSeason(latestSeason), [item.id, latestSeason]);
+  if (!groups.length) return null;
+  const visibleSeason = seasons[selectedSeason] ? selectedSeason : latestSeason;
+  const visibleGroups = seasons[visibleSeason] || [];
+  const quran = isQuranItem(item);
+
+  return (
+    <View style={styles.episodeShowcase}>
+      <View style={styles.episodeShowcaseHeader}>
+        <View style={styles.episodeShowcaseTitleWrap}>
+          <Text style={styles.detailSectionTitle}>{quran ? 'اجزای قرآن' : 'قسمت‌ها'}</Text>
+          <Text style={styles.episodeShowcaseSubtitle}>برای پخش روی تصویر بزنید؛ دانلود فقط وقتی لینک دانلود واقعی موجود باشد نمایش داده می‌شود.</Text>
+        </View>
+        <Ionicons name="albums-outline" color={COLORS.gold} size={25} />
+      </View>
+      {seasonNumbers.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.episodeShowcaseSeasons}>
+          {seasonNumbers.map((season) => {
+            const active = visibleSeason === season;
+            return (
+              <Pressable key={season} onPress={() => setSelectedSeason(season)} style={[styles.episodeShowcaseSeason, active && styles.episodeShowcaseSeasonActive]}>
+                <Text style={[styles.episodeShowcaseSeasonText, active && styles.episodeShowcaseSeasonTextActive]}>
+                  {quran ? 'بخش' : 'فصل'} {toPersianDigits(season)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+      <View style={styles.episodeShowcaseRail}>
+        {visibleGroups.map((group) => {
+          const canPlay = playableVersionsFor(item, group).length > 0;
+          const operatorPlay = operatorFilesFor(group.files).find((file) => downloadModeFor(file) === 'operator-play');
+          const hasEpisodeDownload = group.files.some((file) =>
+            downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
+          );
+          const artwork = exactEpisodeArtworkFor(group, item);
+          return (
+            <View key={group.id} style={styles.episodeShowcaseCard}>
+              <Pressable
+                onPress={() => canPlay ? onPlay(group) : operatorPlay ? onOpenOperator(operatorPlay) : onOpenDownloads(group)}
+                style={styles.episodeShowcaseArtworkWrap}
+              >
+                <ExactEpisodeArtwork item={item} artwork={artwork} />
+                <LinearGradient colors={['transparent', 'rgba(4,6,9,0.92)']} style={StyleSheet.absoluteFill} />
+                <View style={styles.episodeShowcasePlay}>
+                  <Ionicons name={canPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
+                </View>
+                <Text numberOfLines={2} style={styles.episodeShowcaseNumber}>
+                  {episodeShowcaseLabel(item, group, quran)}
+                </Text>
+              </Pressable>
+              {hasEpisodeDownload ? (
+                <Pressable onPress={() => onOpenDownloads(group)} style={styles.episodeShowcaseDownloadButton}>
+                  <Ionicons name="download-outline" color={COLORS.gold} size={18} />
+                </Pressable>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function DownloadOptionsModal({
+  item,
+  visible,
+  initialGroupId,
+  onClose,
+  onDownload,
+  onStream,
+  onOperatorOpen,
+  vpnActive,
+  onVpnRetry,
+}: {
+  item: CatalogItem;
+  visible: boolean;
+  initialGroupId: string | null;
+  onClose: () => void;
+  onDownload: (item: CatalogItem, file: DownloadFile, episodeGroup?: DownloadSection) => void;
+  onStream: (item: CatalogItem, episodeGroup?: DownloadSection | null, language?: MediaLanguage) => void;
+  onOperatorOpen: (item: CatalogItem, file: DownloadFile) => void;
+  vpnActive: boolean;
+  onVpnRetry: () => void;
+}) {
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [openLanguage, setOpenLanguage] = useState<string | null>(null);
+  const groups = item.downloads || [];
+  const directMovieFiles = groups
+    .filter((group) => !isEpisodeSection(group))
+    .flatMap((group) => group.files || [])
+    .filter((file) => !isOperatorFile(file));
+  const movieGroups = languageSectionsForFiles(directMovieFiles, `movie-${item.id}`, isIranianItem(item));
+  const operatorGroups = groups.filter((group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0);
+  const selectedEpisodeGroup = initialGroupId
+    ? groups.find((group) => group.id === initialGroupId && isEpisodeSection(group)) || null
+    : null;
+  const visibleSeriesItem = selectedEpisodeGroup
+    ? { ...item, downloads: [selectedEpisodeGroup] }
+    : item;
+  const selectedEpisodeLabel = selectedEpisodeGroup
+    ? `${isQuranItem(item) ? 'جزء' : 'قسمت'} ${toPersianDigits(selectedEpisodeGroup.episodeNumber || 0)}`
+    : '';
+
+  useEffect(() => {
+    // Open only the requested episode shell. Language/quality accordions always
+    // start collapsed so the user explicitly chooses dubbed/subtitled/original.
+    setOpenGroup(initialGroupId);
+    setOpenLanguage(null);
+  }, [initialGroupId, item.id, visible]);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" hardwareAccelerated onRequestClose={onClose}>
+      <View style={styles.downloadSheetOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <SafeAreaView style={styles.downloadSheet} edges={['right', 'bottom', 'left']}>
+          <View style={styles.downloadSheetHandle} />
+          <View style={styles.downloadSheetHeader}>
+            <Pressable onPress={onClose} style={styles.downloadSheetClose}>
+              <Ionicons name="close" color={COLORS.text} size={21} />
+            </Pressable>
+            <View style={styles.downloadSheetHeaderText}>
+              <Text style={styles.downloadSheetTitle}>لینک‌های دانلود</Text>
+              <Text numberOfLines={1} style={styles.downloadSheetSubtitle}>
+                {[item.nameFa, selectedEpisodeLabel].filter(Boolean).join(' • ')}
+              </Text>
+            </View>
+            <View style={styles.downloadSheetIcon}><Ionicons name="cloud-download-outline" color={COLORS.gold} size={23} /></View>
+          </View>
+          <ScrollView contentContainerStyle={styles.downloadSheetContent} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+            {vpnActive ? (
+              <View style={styles.vpnLinksHiddenCard}>
+                <View style={styles.vpnLinksHiddenIcon}><Ionicons name="shield-outline" color={COLORS.gold} size={25} /></View>
+                <Text style={styles.vpnLinksHiddenTitle}>لینک‌ها فعلاً مخفی هستند</Text>
+                <Text style={styles.vpnLinksHiddenText}>فیلترشکن را خاموش کنید و دوباره بررسی کنید.</Text>
+                <Pressable onPress={onVpnRetry} style={styles.vpnLinksHiddenButton}>
+                  <Ionicons name="refresh-outline" color="#fff" size={18} />
+                  <Text style={styles.vpnLinksHiddenButtonText}>بررسی مجدد</Text>
+                </Pressable>
+              </View>
+            ) : item.type === 'series' ? (
+              <SeriesEpisodeList
+                item={visibleSeriesItem}
+                openGroup={openGroup}
+                openLanguage={openLanguage}
+                onToggleEpisode={(id, defaultLanguageId) => {
+                  const next = openGroup === id ? null : id;
+                  setOpenGroup(next);
+                  setOpenLanguage(next ? defaultLanguageId : null);
+                }}
+                onToggleLanguage={(id) => setOpenLanguage((current) => current === id ? null : id)}
+                onOpenFile={(file, group) => onDownload(item, file, group)}
+                onPlayLanguage={(group, language) => onStream(item, group, language)}
+                onOpenOperator={(file) => onOperatorOpen(item, file)}
+                showPlayActions={false}
+                quran={isQuranItem(item)}
+              />
+            ) : (
+              <View style={styles.movieDownloads}>
+                {movieGroups.map((group) => (
+                  <DownloadGroup
+                    key={group.id}
+                    group={group}
+                    open={openGroup === group.id}
+                    onToggle={() => setOpenGroup((current) => current === group.id ? null : group.id)}
+                    onOpenFile={(file) => onDownload(item, file)}
+                  />
+                ))}
+                {operatorGroups.map((group) => (
+                  <OperatorAccessGroup
+                    key={`operator-${group.id}`}
+                    group={group}
+                    open={openGroup === `operator-${group.id}`}
+                    onToggle={() => setOpenGroup((current) => current === `operator-${group.id}` ? null : `operator-${group.id}`)}
+                    onOpenFile={(file) => onOperatorOpen(item, file)}
+                  />
+                ))}
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </View>
+    </Modal>
+  );
+}
+
+function RelatedTitlesSection({
+  item,
+  catalog,
+  onOpen,
+  selectionSeed,
+}: {
+  item: CatalogItem;
+  catalog: CatalogItem[];
+  onOpen: (item: CatalogItem) => void;
+  selectionSeed: number;
+}) {
+  const related = useMemo(() => relatedCatalogItems(item, catalog, 5, selectionSeed), [item, catalog, selectionSeed]);
+  const displayedRelated = useMemo(() => [...related].reverse(), [related]);
+  if (!related.length) return null;
+
+  return (
+    <View style={styles.relatedTitlesSection}>
+      <View style={styles.relatedTitlesHeader}>
+        <View style={styles.relatedTitlesAccent} />
+        <Text style={styles.relatedTitlesTitle}>مرتبط‌ها</Text>
+      </View>
+      <FlatList
+        horizontal
+        data={displayedRelated}
+        keyExtractor={(relatedItem) => relatedItem.id}
+        renderItem={({ item: relatedItem }) => (
+          <Pressable style={styles.relatedTitleCard} onPress={() => onOpen(relatedItem)}>
+            <CatalogArtwork
+              primary={relatedItem.poster}
+              fallback={relatedItem.posterFallback}
+              style={styles.relatedTitlePoster}
+              contentFit="cover"
+              imageKind="poster"
+            />
+            <Text numberOfLines={1} style={styles.relatedTitleName}>{relatedItem.nameFa}</Text>
+            {Number(relatedItem.rate || 0) > 0 ? (
+              <View style={styles.relatedTitleRate}>
+                <Ionicons name="star" color={COLORS.gold} size={11} />
+                <Text style={styles.relatedTitleRateText}>{toPersianDigits(Number(relatedItem.rate).toFixed(1))}</Text>
+              </View>
+            ) : null}
+          </Pressable>
+        )}
+        contentContainerStyle={styles.relatedTitlesRail}
+        initialScrollIndex={displayedRelated.length - 1}
+        getItemLayout={(_data, index) => ({ length: 138, offset: 138 * index, index })}
+        showsHorizontalScrollIndicator={false}
+        initialNumToRender={5}
+        maxToRenderPerBatch={5}
+        windowSize={3}
+      />
+    </View>
+  );
+}
+
+function DetailModal({
+  item,
+  catalog,
+  visible,
+  onClose,
+  favorite,
+  onFavorite,
+  episodeAlertEnabled,
+  episodeAlertBusy,
+  onEpisodeAlert,
+  onStream,
+  onDownload,
+  onOperatorOpen,
+  onOpenRelated,
+  onOpenPerson,
+  onBrowse,
+  vpnActive,
+  onVpnRetry,
+}: {
+  item: CatalogItem | null;
+  catalog: CatalogItem[];
+  visible: boolean;
+  onClose: () => void;
+  favorite: boolean;
+  onFavorite: () => void;
+  episodeAlertEnabled: boolean;
+  episodeAlertBusy: boolean;
+  onEpisodeAlert: () => void;
+  onStream: (item: CatalogItem, episodeGroup?: DownloadSection | null, language?: MediaLanguage) => void;
+  onDownload: (item: CatalogItem, file: DownloadFile, episodeGroup?: DownloadSection) => void;
+  onOperatorOpen: (item: CatalogItem, file: DownloadFile) => void;
+  onOpenRelated: (item: CatalogItem) => void;
+  onOpenPerson: (person: CatalogPerson) => void;
+  onBrowse: (filter: SearchFilter) => void;
+  vpnActive: boolean;
+  onVpnRetry: () => void;
+}) {
+  // catalog-index is only a summary. Never render that summary as if its media
+  // were complete. As soon as the selected detail object is hydrated React
+  // renders the real actions/episodes directly; no InteractionManager/scroll
+  // event is allowed to gate their visibility.
+  const detailBodyReady = Boolean(
+    item && (
+      !item.detailPath ||
+      item.detailLoaded === true ||
+      Boolean(item.streamUrl) ||
+      (item.downloads?.length || 0) > 0
+    ),
+  );
+  const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
+  const [downloadInitialGroup, setDownloadInitialGroup] = useState<string | null>(null);
+  const [relatedSelectionSeed, setRelatedSelectionSeed] = useState(0);
+  const [secondaryDetailReady, setSecondaryDetailReady] = useState(false);
+  // DetailModal stays mounted while hidden, so these provider-level insets are
+  // already known before the native Modal's first frame. SafeAreaView inside a
+  // freshly presented Modal can report zero first and apply the top inset on a
+  // later layout pass, which visibly nudges the whole page downward.
+  const detailInsets = useSafeAreaInsets();
+
+  useEffect(() => {
+    setDownloadSheetOpen(false);
+    setDownloadInitialGroup(null);
+    setSecondaryDetailReady(false);
+    if (!visible || !item?.id) return undefined;
+
+    setRelatedSelectionSeed((seed) => seed + 1);
+    const task = InteractionManager.runAfterInteractions(() => setSecondaryDetailReady(true));
+    return () => {
+      task.cancel();
+    };
+  }, [item?.id, visible]);
+  if (!item) return null;
+
+  // Movie summaries now carry a compact actionable media preview. Do not hide
+  // those real links while the richer detail shard is still hydrating.
+  const downloadGroups = item.downloads || [];
+  const episodeGroups = downloadGroups.filter((group) => isEpisodeSection(group) && (languageSectionsForFiles(group.files, group.id, isIranianItem(item)).length || operatorFilesFor(group.files).length));
+  const standaloneOperatorGroups = downloadGroups.filter((group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0);
+  const standaloneOperatorPlayFile = standaloneOperatorGroups.flatMap((group) => operatorFilesFor(group.files)).find((file) => downloadModeFor(file) === 'operator-play');
+  const latestEpisode = detailBodyReady ? newestEpisodeGroup(item) : null;
+  const latestOperatorPlayFile = latestEpisode
+    ? operatorFilesFor(latestEpisode.files).find((file) => downloadModeFor(file) === 'operator-play')
+    : undefined;
+  const primaryOperatorPlayFile = item.type === 'series' ? latestOperatorPlayFile : standaloneOperatorPlayFile;
+  const hasDownloads = downloadGroups.some((group) => group.files.some((file) =>
+    downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
+  ));
+  const hasPlayableStream = playableVersionsFor(item).length > 0;
+
+  const browseAndClose = (filter: SearchFilter) => { onClose(); requestAnimationFrame(() => onBrowse(filter)); };
+
+  return (
+    <Modal visible={visible} animationType="none" hardwareAccelerated statusBarTranslucent={false} onRequestClose={() => downloadSheetOpen ? setDownloadSheetOpen(false) : onClose()}>
+      <View
+        style={[
+          styles.detailScreen,
+          {
+            paddingTop: detailInsets.top,
+            paddingRight: detailInsets.right,
+            paddingBottom: detailInsets.bottom,
+            paddingLeft: detailInsets.left,
+          },
+        ]}
+      >
+        <StatusBar style="light" />
+        <ScrollView
+          key={`detail-scroll:${item.type}:${item.id}`}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.detailContent}
+        >
+          <View style={styles.detailHero}>
+            <CatalogArtwork primary={item.backdrop || item.backdropFallback || item.poster} fallback={item.backdropFallback || item.poster} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} imageKind="backdrop" />
+            <LinearGradient colors={['rgba(7,9,12,0.06)', COLORS.background]} style={StyleSheet.absoluteFill} />
+            <View style={styles.detailTopBar}>
+              <Pressable onPress={onClose} unstable_pressDelay={0} hitSlop={14} style={styles.detailCircleButton}><Ionicons name="arrow-forward" color="#fff" size={21} /></Pressable>
+              <View style={styles.detailTopActions}>
+                {item.type === 'series' ? <Pressable disabled={episodeAlertBusy} onPress={onEpisodeAlert} unstable_pressDelay={0} hitSlop={12} style={[styles.detailCircleButton, episodeAlertBusy && styles.detailCircleButtonDisabled]}>{episodeAlertBusy ? <ActivityIndicator color={COLORS.gold} size="small" /> : <Ionicons name={episodeAlertEnabled ? 'notifications' : 'notifications-outline'} color={episodeAlertEnabled ? COLORS.gold : '#fff'} size={21} />}</Pressable> : null}
+                <Pressable onPress={onFavorite} unstable_pressDelay={0} hitSlop={12} style={styles.detailCircleButton}><Ionicons name={favorite ? 'bookmark' : 'bookmark-outline'} color={favorite ? COLORS.gold : '#fff'} size={21} /></Pressable>
+              </View>
+            </View>
+            <View style={styles.detailIdentity}>
+              <CatalogArtwork primary={item.poster} fallback={item.backdrop} style={styles.detailPoster} contentFit="cover" imageKind="poster" />
+              <View style={styles.detailTitleBlock}>
+                <Text style={styles.detailType}>{mediaKindLabel(item)}</Text>
+                {itemHasOperatorAccess(item) ? <View style={styles.detailOperatorBadge}><Ionicons name="phone-portrait-outline" color={COLORS.gold} size={12} /><Text style={styles.detailOperatorBadgeText}>ویژه اینترنت همراه</Text></View> : null}
+                <Text
+                  numberOfLines={adaptiveTitleLines(item.nameFa)}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                  style={[styles.detailTitle, adaptiveTitleStyle(item.nameFa, 'detail')]}
+                >
+                  {item.nameFa}
+                </Text>
+                <Text style={styles.detailEnglish}>{item.name}</Text>
+                <View style={styles.detailMeta}>
+                  <Pressable onPress={() => browseAndClose(yearFilter(item.year))}><Text style={styles.detailMetaText}>{toPersianDigits(item.year)}</Text></Pressable>
+                  {typeof item.rate === 'number' ? <Text style={styles.detailMetaText}>IMDb {toPersianDigits(item.rate)}</Text> : null}
+                  {item.type === 'series' && latestEpisode ? <Text style={styles.detailMetaText}>تا قسمت {toPersianDigits(latestEpisode.episodeNumber || 0)}</Text> : null}
+                </View>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.detailBody}>
+            {!detailBodyReady ? (
+              <>
+                <View style={styles.genreRow}>
+                  {(item.countryCodes || []).map((code, index) => ({ code, index })).filter(({ code }) => String(code).toUpperCase() !== 'JP').map(({ code, index }) => <Pressable key={`country-loading-${code}`} onPress={() => browseAndClose(countryFilter(code))}><Text style={styles.detailGenre}>{item.countryLabels?.[index] || countryLabel(code, catalog)}</Text></Pressable>)}
+                  {item.genres.map((genre) => <Pressable key={`genre-loading-${genre}`} onPress={() => browseAndClose(genreFilter(genre))}><Text style={styles.detailGenre}>{genre}</Text></Pressable>)}
+                </View>
+                {catalogOverviewFor(item) ? (
+                  <>
+                    <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text>
+                    <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
+                  </>
+                ) : null}
+                <PeopleSection item={item} onOpen={onOpenPerson} />
+                {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile || hasDownloads) ? (
+                  <View style={styles.detailActions}>
+                    {(hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
+                    {hasDownloads ? (
+                      <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
+                        <Ionicons name="download-outline" color={COLORS.gold} size={19} />
+                        <Text style={styles.detailDownloadActionText}>دانلود</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable onPress={() => void shareCatalogItem(item)} style={styles.detailSecondaryButton}><Ionicons name="share-social-outline" color={COLORS.text} size={20} /></Pressable>
+                  </View>
+                ) : null}
+              </>
+            ) : (
+              <>
+            <View style={styles.detailActions}>
+              {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
+              {item.type === 'movie' && hasDownloads ? (
+                <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
+                  <Ionicons name="download-outline" color={COLORS.gold} size={19} />
+                  <Text style={styles.detailDownloadActionText}>دانلود</Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => void shareCatalogItem(item)} style={styles.detailSecondaryButton}><Ionicons name="share-social-outline" color={COLORS.text} size={20} /></Pressable>
+            </View>
+
+            <View style={styles.genreRow}>
+              {(item.countryCodes || []).map((code, index) => ({ code, index })).filter(({ code }) => String(code).toUpperCase() !== 'JP').map(({ code, index }) => <Pressable key={`country-${code}`} onPress={() => browseAndClose(countryFilter(code))}><Text style={styles.detailGenre}>{item.countryLabels?.[index] || countryLabel(code, catalog)}</Text></Pressable>)}
+              {item.genres.map((genre) => <Pressable key={genre} onPress={() => browseAndClose(genreFilter(genre))}><Text style={styles.detailGenre}>{genre}</Text></Pressable>)}
+            </View>
+
+            {catalogOverviewFor(item) ? (
+              <>
+                <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text>
+                <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
+              </>
+            ) : null}
+            <PeopleSection item={item} onOpen={onOpenPerson} />
+            {item.type === 'series' && episodeGroups.length ? (
+              <SeriesEpisodeShowcase
+                item={item}
+                onPlay={(group) => onStream(item, group)}
+                onOpenDownloads={(group) => { setDownloadInitialGroup(group.id); setDownloadSheetOpen(true); }}
+                onOpenOperator={(file) => onOperatorOpen(item, file)}
+              />
+            ) : null}
+            {secondaryDetailReady ? (
+              <>
+                <MovieCollectionSection item={item} catalog={catalog} onOpen={onOpenRelated} />
+                <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} selectionSeed={relatedSelectionSeed} />
+              </>
+            ) : null}
+              </>
+            )}
+          </View>
+        </ScrollView>
+        <DownloadOptionsModal
+          item={item}
+          visible={downloadSheetOpen}
+          initialGroupId={downloadInitialGroup}
+          onClose={() => setDownloadSheetOpen(false)}
+          onDownload={onDownload}
+          onStream={onStream}
+          onOperatorOpen={onOperatorOpen}
+          vpnActive={vpnActive}
+          onVpnRetry={onVpnRetry}
+        />
+      </View>
+    </Modal>
+  );
+}
+
+function PersonProfileModal({
+  person,
+  catalog,
+  peopleWorks,
+  visible,
+  onClose,
+  onOpenItem,
+}: {
+  person: CatalogPerson | null;
+  catalog: CatalogItem[];
+  peopleWorks: Record<string, PersonWorkRef[]>;
+  visible: boolean;
+  onClose: () => void;
+  onOpenItem: (item: CatalogItem) => void;
+}) {
+  const { width: screenWidth } = useWindowDimensions();
+  const works = useMemo(
+    () => person ? personWorksFor(person, catalog, peopleWorks) : [],
+    [catalog, peopleWorks, person],
+  );
+  if (!person) return null;
+
+  const cardGap = 12;
+  const cardWidth = Math.floor((screenWidth - 32 - cardGap) / 2);
+
+  return (
+    <Modal visible={visible} animationType="fade" hardwareAccelerated statusBarTranslucent={false} onRequestClose={onClose}>
+      <SafeAreaView style={styles.personProfileScreen} edges={['top', 'right', 'bottom', 'left']}>
+        <StatusBar style="light" />
+        <View style={styles.personProfileTopBar}>
+          <Pressable onPress={onClose} hitSlop={12} style={styles.detailCircleButton}>
+            <Ionicons name="arrow-forward" color="#fff" size={21} />
+          </Pressable>
+        </View>
+        <FlatList
+          data={works}
+          numColumns={2}
+          keyExtractor={(work) => work.id}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.personProfileContent}
+          columnWrapperStyle={works.length > 1 ? { gap: cardGap, flexDirection: 'row-reverse' } : undefined}
+          initialNumToRender={4}
+          maxToRenderPerBatch={3}
+          updateCellsBatchingPeriod={48}
+          windowSize={4}
+          removeClippedSubviews
+          ListHeaderComponent={(
+            <>
+              <View style={styles.personProfileHeader}>
+                <View style={styles.personProfileAvatarWrap}>
+                  <PersonAvatar person={person} style={styles.personProfileAvatar} />
+                </View>
+                <Text style={styles.personProfileName}>{personName(person)}</Text>
+                <View style={styles.personProfileRoleBadge}>
+                  <Ionicons
+                    name={person.role === 'director' ? 'videocam-outline' : 'person-outline'}
+                    color={COLORS.gold}
+                    size={15}
+                  />
+                  <Text style={styles.personProfileRoleText}>{personRoleTitle(person)}</Text>
+                </View>
+              </View>
+
+              <View style={styles.personWorksHeader}>
+                <Text style={styles.personWorksTitle}>فیلم‌ها و سریال‌ها</Text>
+                <Text style={styles.personWorksCount}>{toPersianDigits(works.length)} عنوان</Text>
+              </View>
+            </>
+          )}
+          ListEmptyComponent={(
+            <View style={styles.personWorksEmpty}>
+              <Ionicons name="film-outline" color={COLORS.muted} size={27} />
+              <Text style={styles.personWorksEmptyTitle}>اثر دیگری در کاتالوگ پیدا نشد</Text>
+              <Text style={styles.personWorksEmptyText}>با کامل‌شدن کاتالوگ، آثار بیشتری اینجا نمایش داده می‌شوند.</Text>
+            </View>
+          )}
+          renderItem={({ item: work }) => (
+            <View style={{ width: cardWidth, marginBottom: 18 }}>
+              <PosterCard
+                item={work}
+                width={cardWidth}
+                onOpen={() => onOpenItem(work)}
+              />
+            </View>
+          )}
+        />
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+const exactEpisodeArtworkFor = (group: DownloadSection, item: CatalogItem) => {
+  const artwork = optimizedImageUrl(String(group.artwork || '').trim(), 'backdrop');
+  if (!artwork) return '';
+  const exactGeneratedFrame = /(?:^|\/)assets\/media\/episodes\/[a-f0-9]{24}\.jpg(?:$|[?#])/i.test(artwork);
+  if (exactGeneratedFrame) return artwork;
+  if (!isSafeHttpUrl(artwork) || isPlaceholderUrl(artwork)) return '';
+
+  // Accept a real per-episode remote still while continuing to reject a series
+  // poster/backdrop recycled as episode artwork.
+  const seriesArtwork = new Set([
+    item.poster,
+    item.posterFallback,
+    item.backdrop,
+    item.backdropFallback,
+  ].map((value) => optimizedImageUrl(value, 'backdrop')).filter(Boolean));
+  return seriesArtwork.has(artwork) ? '' : artwork;
+};
+
+function PlayerEpisodesOverlay({
+  item,
+  groups,
+  activeEpisodeId,
+  landscape,
+  frameStyle,
+  onClose,
+  onSelect,
+}: {
+  item: CatalogItem;
+  groups: DownloadSection[];
+  activeEpisodeId?: string;
+  landscape: boolean;
+  frameStyle: any;
+  onClose: () => void;
+  onSelect: (group: DownloadSection) => void;
+}) {
+  const seasons = useMemo(() => groups.reduce<Record<number, DownloadSection[]>>((result, group) => {
+    const season = Number(group.seasonNumber || 1);
+    result[season] = [...(result[season] || []), group];
+    return result;
+  }, {}), [groups]);
+  const seasonNumbers = useMemo(() => Object.keys(seasons).map(Number).sort((a, b) => b - a), [seasons]);
+  const activeGroup = groups.find((group) => group.id === activeEpisodeId);
+  const activeSeason = Number(activeGroup?.seasonNumber || seasonNumbers[0] || 1);
+  const [selectedSeason, setSelectedSeason] = useState(activeSeason);
+
+  useEffect(() => setSelectedSeason(activeSeason), [activeEpisodeId, activeSeason, item.id]);
+  const visibleSeason = seasons[selectedSeason] ? selectedSeason : seasonNumbers[0];
+  const visibleGroups = seasons[visibleSeason] || [];
+  const episodeRailRef = useRef<ScrollView>(null);
+  const episodeRailPositionedRef = useRef('');
+  const episodeRailKey = `${item.id}:${visibleSeason}:${visibleGroups.map((group) => group.id).join("|")}`;
+  const positionEpisodeRail = useCallback(() => {
+    if (!visibleGroups.length || episodeRailPositionedRef.current === episodeRailKey) return;
+    episodeRailPositionedRef.current = episodeRailKey;
+    requestAnimationFrame(() => episodeRailRef.current?.scrollToEnd({ animated: false }));
+  }, [episodeRailKey, visibleGroups.length]);
+
+  return (
+    <View style={[styles.playerEpisodesFrame, frameStyle]}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      <View style={[styles.playerEpisodesCard, landscape ? styles.playerEpisodesCardLandscape : styles.playerEpisodesCardPortrait]}>
+        <View style={styles.playerEpisodesHeader}>
+          <Pressable onPress={onClose} style={styles.playerSettingsClose}>
+            <Ionicons name="close" color="#fff" size={18} />
+          </Pressable>
+          <View style={styles.playerEpisodesHeaderText}>
+            <Text style={styles.playerEpisodesTitle}>قسمت‌های {item.nameFa}</Text>
+            <Text style={styles.playerEpisodesSubtitle}>برای جابه‌جایی سریع، قسمت بعدی را انتخاب کنید.</Text>
+          </View>
+          <Ionicons name="albums-outline" color={COLORS.gold} size={22} />
+        </View>
+        {seasonNumbers.length > 1 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.playerEpisodesSeasons}>
+            {seasonNumbers.map((season) => {
+              const active = visibleSeason === season;
+              return (
+                <Pressable key={season} onPress={() => setSelectedSeason(season)} style={[styles.playerEpisodesSeason, active && styles.playerEpisodesSeasonActive]}>
+                  <Text style={[styles.playerEpisodesSeasonText, active && styles.playerEpisodesSeasonTextActive]}>فصل {toPersianDigits(season)}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
+        <ScrollView
+          ref={episodeRailRef}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.playerEpisodesRail}
+          onContentSizeChange={positionEpisodeRail}
+        >
+          {visibleGroups.map((group) => {
+            const active = group.id === activeEpisodeId;
+            return (
+              <Pressable key={group.id} disabled={active} onPress={() => onSelect(group)} style={[styles.playerEpisodeCard, landscape && styles.playerEpisodeCardLandscape, active && styles.playerEpisodeCardActive]}>
+                <View style={styles.playerEpisodeArtworkWrap}>
+                  <CatalogArtwork primary={exactEpisodeArtworkFor(group, item)} style={styles.playerEpisodeArtwork} contentFit="cover" imageKind="backdrop" />
+                  <LinearGradient colors={['transparent', 'rgba(3,5,8,0.92)']} style={StyleSheet.absoluteFill} />
+                  <View style={[styles.playerEpisodePlay, active && styles.playerEpisodePlayActive]}>
+                    <Ionicons name={active ? 'pause' : 'play'} color="#fff" size={18} />
+                  </View>
+                </View>
+                <Text numberOfLines={1} style={styles.playerEpisodeTitle}>قسمت {toPersianDigits(group.episodeNumber || 0)}</Text>
+                <Text numberOfLines={1} style={styles.playerEpisodeMeta}>{active ? 'در حال پخش' : cleanMediaLabel(group.subtitle) || 'آماده پخش'}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+    </View>
+  );
+}
+
+
+function VideoPlayerModal({
+  request,
+  item,
+  onClose,
+  onProgress,
+  onEpisodeSelect,
+  relatedItems,
+  onRecommendationSelect,
+}: {
+  request: VideoRequest;
+  item?: CatalogItem | null;
+  onClose: () => void;
+  onProgress: (request: VideoRequest, position: number, duration: number, completed?: boolean) => void;
+  onEpisodeSelect: (group: DownloadSection, language?: MediaLanguage) => void;
+  relatedItems: CatalogItem[];
+  onRecommendationSelect: (item: CatalogItem) => void | Promise<void>;
+}) {
+  const orderedSources = useMemo(
+    () => [...request.sources].sort((a, b) => a.rank - b.rank),
+    [request.sources],
+  );
+  const initialSource = orderedSources.find((source) => source.id === request.initialSourceId) || orderedSources[0];
+  const [activeSource, setActiveSource] = useState(initialSource);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [episodesOpen, setEpisodesOpen] = useState(false);
+  const [qualityExpanded, setQualityExpanded] = useState(false);
+  const [switchingQuality, setSwitchingQuality] = useState(false);
+  const [firstFrameReady, setFirstFrameReady] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [networkOffline, setNetworkOffline] = useState(false);
+  const [controlsLocked, setControlsLocked] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [playerVolume, setPlayerVolume] = useState(1);
+  const [endRecommendationsDismissed, setEndRecommendationsDismissed] = useState(false);
+  const [nextEpisodeDismissed, setNextEpisodeDismissed] = useState(false);
+  const [nextEpisodeCountdown, setNextEpisodeCountdown] = useState(15);
+  const [currentTime, setCurrentTime] = useState(Math.max(0, Number(request.resumeAt || 0)));
+  const [duration, setDuration] = useState(0);
+  const [timelineWidth, setTimelineWidth] = useState(1);
+  const [orientationTransitioning, setOrientationTransitioning] = useState(false);
+  const orientationTransitionOpacity = useRef(new Animated.Value(0)).current;
+  const orientationTransitioningRef = useRef(false);
+  const playerClosingRef = useRef(false);
+  const requestedLandscapeRef = useRef<boolean | null>(null);
+  const orientationFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const landscape = viewportWidth > viewportHeight;
+  const portraitFrameHeight = Math.round(viewportWidth * 9 / 16);
+  const portraitTopBarHeight = 54;
+  const portraitBottomBarHeight = 96;
+  const portraitAvailableHeight = Math.max(0, viewportHeight - insets.top - insets.bottom);
+  const portraitGroupHeight = portraitTopBarHeight + portraitFrameHeight + portraitBottomBarHeight;
+  const portraitGroupTop = Math.max(
+    insets.top + 2,
+    insets.top + Math.round((portraitAvailableHeight - portraitGroupHeight) / 2),
+  );
+  const frameTop = landscape ? 0 : portraitGroupTop + portraitTopBarHeight;
+  const safeLeft = landscape ? Math.max(72, insets.left + 16) : 12;
+  const safeRight = landscape ? Math.max(72, insets.right + 16) : 12;
+  const frameRect = landscape
+    ? { top: 0, left: 0, width: viewportWidth, height: viewportHeight }
+    : { top: frameTop, left: 0, width: viewportWidth, height: portraitFrameHeight };
+  const latestTimeRef = useRef(Math.max(0, Number(request.resumeAt || 0)));
+  const latestDurationRef = useRef(0);
+  const resumeAppliedRef = useRef(false);
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const qualitySources = useMemo(() => {
+    const uniqueByUrl = new Map<string, PlaybackSource>();
+    orderedSources.forEach((source) => {
+      if (!source.url || uniqueByUrl.has(source.url)) return;
+      uniqueByUrl.set(source.url, {
+        ...source,
+        quality: cleanQualityLabel(source.quality) || 'خودکار',
+      });
+    });
+    return [...uniqueByUrl.values()].sort((a, b) => a.rank - b.rank || a.quality.localeCompare(b.quality, 'fa', { numeric: true }));
+  }, [orderedSources]);
+  const playerEpisodeGroups = useMemo(() => item?.type === 'series'
+    ? [...(item.downloads || [])]
+        .filter((group) => isEpisodeSection(group) && playableVersionsFor(item, group).length > 0)
+        .sort(compareEpisodeGroupsOldestFirst)
+    : [], [item]);
+  const activeEpisodeIndex = request.episodeId
+    ? playerEpisodeGroups.findIndex((group) => group.id === request.episodeId)
+    : -1;
+  const nextEpisodeGroup = activeEpisodeIndex >= 0
+    ? playerEpisodeGroups[activeEpisodeIndex + 1] || null
+    : null;
+
+  const player = useVideoPlayer(initialSource.url, (instance) => {
+    instance.timeUpdateEventInterval = 0.5;
+    instance.play();
+  });
+  const requestIdentity = `${request.itemId || 'local'}:${request.episodeId || 'main'}:${request.resumeKey}`;
+  const previousRequestIdentityRef = useRef(requestIdentity);
+  const previousRequestRef = useRef(request);
+
+  // A related-title selection changes the media inside the existing player.
+  // Keeping this component mounted preserves the user's current orientation;
+  // only closing the player is allowed to lock Android back to portrait.
+  useEffect(() => {
+    if (previousRequestIdentityRef.current === requestIdentity) {
+      previousRequestRef.current = request;
+      return;
+    }
+    const previousRequest = previousRequestRef.current;
+    const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+    const previousDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+    onProgress(previousRequest, previousTime, previousDuration, false);
+    previousRequestIdentityRef.current = requestIdentity;
+    previousRequestRef.current = request;
+    resumeAppliedRef.current = false;
+    latestTimeRef.current = Math.max(0, Number(request.resumeAt || 0));
+    latestDurationRef.current = 0;
+    setCurrentTime(latestTimeRef.current);
+    setDuration(0);
+    setFirstFrameReady(false);
+    setSettingsOpen(false);
+    setEpisodesOpen(false);
+    setQualityExpanded(false);
+    setSwitchingQuality(false);
+    setEndRecommendationsDismissed(false);
+    setNextEpisodeDismissed(false);
+    setNextEpisodeCountdown(15);
+    setActiveSource(initialSource);
+    let cancelled = false;
+    void (async () => {
+      try {
+        player.pause();
+        await player.replaceAsync(initialSource.url);
+        if (cancelled) return;
+        if (latestTimeRef.current > 0) player.currentTime = latestTimeRef.current;
+        player.play();
+      } catch {
+        if (!cancelled) Alert.alert('پخش آنلاین', 'فیلم پیشنهادی آماده نشد. دوباره تلاش کنید.');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [initialSource, onProgress, player, request, requestIdentity]);
+
+  useEffect(() => {
+    const controlledPlayer = player as typeof player & { muted: boolean; volume: number };
+    controlledPlayer.muted = isMuted || playerVolume <= 0;
+    controlledPlayer.volume = Math.max(0, Math.min(1, playerVolume));
+  }, [isMuted, player, playerVolume]);
+
+  const retryNetworkPlayback = useCallback(async () => {
+    if (!isSafeHttpUrl(activeSource.url)) {
+      setNetworkOffline(false);
+      player.play();
+      return;
+    }
+    const reachable = await internetIsReachable();
+    setNetworkOffline(!reachable);
+    if (reachable) {
+      setFirstFrameReady(false);
+      try {
+        await player.replaceAsync(activeSource.url);
+        if (latestTimeRef.current > 0) player.currentTime = latestTimeRef.current;
+        player.play();
+      } catch {
+        Alert.alert('پخش آنلاین', 'اتصال برقرار شد اما ویدئو آماده نشد. دوباره تلاش کنید.');
+      }
+    }
+  }, [activeSource.url, player]);
+
+  useEffect(() => {
+    if (!isSafeHttpUrl(activeSource.url)) {
+      setNetworkOffline(false);
+      return undefined;
+    }
+    let cancelled = false;
+    const check = async () => {
+      const reachable = await internetIsReachable();
+      if (cancelled) return;
+      if (!reachable) {
+        player.pause();
+        setNetworkOffline(true);
+        setControlsVisible(true);
+      }
+    };
+    void check();
+    const timer = setInterval(() => { void check(); }, 2_500);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeSource.url, player]);
+
+  const clearControlsTimer = useCallback(() => {
+    if (controlsTimerRef.current) {
+      clearTimeout(controlsTimerRef.current);
+      controlsTimerRef.current = null;
+    }
+  }, []);
+
+  const finishOrientationTransition = useCallback(() => {
+    if (orientationFallbackTimerRef.current) {
+      clearTimeout(orientationFallbackTimerRef.current);
+      orientationFallbackTimerRef.current = null;
+    }
+    Animated.timing(orientationTransitionOpacity, {
+      toValue: 0,
+      duration: 170,
+      useNativeDriver: true,
+    }).start(() => {
+      orientationTransitioningRef.current = false;
+      requestedLandscapeRef.current = null;
+      setOrientationTransitioning(false);
+    });
+  }, [orientationTransitionOpacity]);
+
+  useEffect(() => {
+    if (!orientationTransitioningRef.current) return;
+    if (requestedLandscapeRef.current !== landscape) return;
+    const frame = requestAnimationFrame(() => {
+      if (orientationFallbackTimerRef.current) clearTimeout(orientationFallbackTimerRef.current);
+      orientationFallbackTimerRef.current = setTimeout(finishOrientationTransition, 150);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [finishOrientationTransition, landscape]);
+
+  const scheduleControlsHide = useCallback(() => {
+    clearControlsTimer();
+    if (!firstFrameReady || settingsOpen || episodesOpen) return;
+    controlsTimerRef.current = setTimeout(() => setControlsVisible(false), 3200);
+  }, [clearControlsTimer, episodesOpen, firstFrameReady, settingsOpen]);
+
+  const revealControls = useCallback(() => {
+    setControlsVisible(true);
+    scheduleControlsHide();
+  }, [scheduleControlsHide]);
+
+  const hideControls = useCallback(() => {
+    if (settingsOpen || episodesOpen || !firstFrameReady) return;
+    clearControlsTimer();
+    setControlsVisible(false);
+  }, [clearControlsTimer, episodesOpen, firstFrameReady, settingsOpen]);
+
+  useEventListener(player, 'playingChange', ({ isPlaying: nextPlaying }) => {
+    setIsPlaying(Boolean(nextPlaying));
+  });
+
+  useEventListener(player, 'sourceLoad', ({ duration: loadedDuration }) => {
+    const safeDuration = Math.max(0, Number(loadedDuration || player.duration || 0));
+    latestDurationRef.current = safeDuration;
+    setDuration(safeDuration);
+    if (!resumeAppliedRef.current && Number(request.resumeAt || 0) > 0) {
+      const maximumResume = safeDuration > 10 ? safeDuration - 5 : Number(request.resumeAt || 0);
+      const resumeAt = Math.max(0, Math.min(Number(request.resumeAt || 0), maximumResume));
+      player.currentTime = resumeAt;
+      latestTimeRef.current = resumeAt;
+      setCurrentTime(resumeAt);
+      resumeAppliedRef.current = true;
+    }
+  });
+
+  useEventListener(player, 'timeUpdate', ({ currentTime: nextCurrentTime }) => {
+    const position = Math.max(0, Number(nextCurrentTime || 0));
+    const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+    latestTimeRef.current = position;
+    latestDurationRef.current = safeDuration;
+    setCurrentTime(position);
+    if (safeDuration > 0) setDuration(safeDuration);
+  });
+
+  useEventListener(player, 'playToEnd', () => {
+    const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+    setCurrentTime(safeDuration);
+    setIsPlaying(false);
+    setControlsVisible(true);
+    onProgress(request, safeDuration, safeDuration, true);
+  });
+
+  useEffect(() => {
+    if (!firstFrameReady || settingsOpen || episodesOpen) {
+      clearControlsTimer();
+      setControlsVisible(true);
+      return;
+    }
+    scheduleControlsHide();
+  }, [clearControlsTimer, episodesOpen, firstFrameReady, landscape, scheduleControlsHide, settingsOpen]);
+
+  useEffect(
+    () => () => {
+      clearControlsTimer();
+      if (orientationFallbackTimerRef.current) clearTimeout(orientationFallbackTimerRef.current);
+      void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => undefined);
+    },
+    [clearControlsTimer],
+  );
+
+  const changeOrientation = useCallback((targetLandscape: boolean) => {
+    if (orientationTransitioningRef.current || targetLandscape === landscape) return;
+    orientationTransitioningRef.current = true;
+    requestedLandscapeRef.current = targetLandscape;
+    setOrientationTransitioning(true);
+    orientationTransitionOpacity.stopAnimation();
+    orientationTransitionOpacity.setValue(1);
+    setSettingsOpen(false);
+    setEpisodesOpen(false);
+    setQualityExpanded(false);
+    if (!targetLandscape) setControlsLocked(false);
+    setControlsVisible(true);
+    clearControlsTimer();
+
+    requestAnimationFrame(() => {
+      void ScreenOrientation.lockAsync(
+        targetLandscape
+          ? ScreenOrientation.OrientationLock.LANDSCAPE
+          : ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      ).catch(() => finishOrientationTransition());
+    });
+
+    orientationFallbackTimerRef.current = setTimeout(finishOrientationTransition, 1500);
+  }, [clearControlsTimer, finishOrientationTransition, landscape, orientationTransitionOpacity]);
+
+  const closePlayer = () => {
+    if (playerClosingRef.current) return;
+    playerClosingRef.current = true;
+    const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+    const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+    clearControlsTimer();
+    player.pause();
+    onProgress(request, position, safeDuration, false);
+
+    // Keep an opaque player surface mounted while Android rotates back to
+    // portrait. Closing the Modal first exposed the detail page for one frame.
+    orientationTransitioningRef.current = true;
+    requestedLandscapeRef.current = false;
+    setOrientationTransitioning(true);
+    orientationTransitionOpacity.stopAnimation();
+    orientationTransitionOpacity.setValue(1);
+    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)
+      .catch(() => undefined)
+      .finally(() => {
+        setTimeout(onClose, landscape ? 170 : 40);
+      });
+  };
+
+  const handleBack = () => {
+    if (controlsLocked) {
+      setControlsLocked(false);
+      revealControls();
+      return;
+    }
+    if (episodesOpen) {
+      setEpisodesOpen(false);
+      revealControls();
+      return;
+    }
+    if (settingsOpen) {
+      setSettingsOpen(false);
+      revealControls();
+      return;
+    }
+    if (landscape) {
+      changeOrientation(false);
+      revealControls();
+      return;
+    }
+    closePlayer();
+  };
+
+  const togglePlayback = () => {
+    if (networkOffline) {
+      void retryNetworkPlayback();
+      revealControls();
+      return;
+    }
+    if (player.playing) player.pause();
+    else player.play();
+    revealControls();
+  };
+
+  const seekTo = (nextTime: number) => {
+    const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || duration || 0));
+    const target = Math.max(0, safeDuration > 0 ? Math.min(nextTime, safeDuration) : nextTime);
+    player.currentTime = target;
+    latestTimeRef.current = target;
+    setCurrentTime(target);
+    revealControls();
+  };
+
+  const seekBy = (seconds: number) => seekTo(Number(player.currentTime || latestTimeRef.current || 0) + seconds);
+
+  const toggleMute = () => {
+    setIsMuted((current) => !current);
+    revealControls();
+  };
+
+  const adjustVolume = (delta: number) => {
+    const next = Math.max(0, Math.min(1, playerVolume + delta));
+    setPlayerVolume(next);
+    setIsMuted(next <= 0);
+    revealControls();
+  };
+
+  const lockPlayerControls = () => {
+    if (!landscape) return;
+    clearControlsTimer();
+    setSettingsOpen(false);
+    setEpisodesOpen(false);
+    setQualityExpanded(false);
+    setControlsLocked(true);
+    setControlsVisible(false);
+  };
+
+  const unlockPlayerControls = () => {
+    setControlsLocked(false);
+    revealControls();
+  };
+
+  const switchQuality = async (nextSource: PlaybackSource) => {
+    if (nextSource.id === activeSource.id || nextSource.url === activeSource.url || switchingQuality) return;
+    const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+    const wasPlaying = Boolean(player.playing);
+    setSwitchingQuality(true);
+    setFirstFrameReady(false);
+    clearControlsTimer();
+    try {
+      player.pause();
+      await player.replaceAsync(nextSource.url);
+      if (previousTime > 0) {
+        player.currentTime = previousTime;
+        latestTimeRef.current = previousTime;
+        setCurrentTime(previousTime);
+      }
+      setActiveSource(nextSource);
+      if (wasPlaying) player.play();
+      else player.pause();
+    } catch {
+      Alert.alert('کیفیت پخش', 'تغییر کیفیت انجام نشد. دوباره تلاش کنید.');
+      if (wasPlaying) player.play();
+    } finally {
+      setSwitchingQuality(false);
+      setQualityExpanded(false);
+      setSettingsOpen(false);
+      setControlsVisible(true);
+      scheduleControlsHide();
+    }
+  };
+
+  const toggleOrientation = () => {
+    changeOrientation(!landscape);
+  };
+
+  const toggleSurfaceControls = () => {
+    if (controlsLocked) {
+      if (controlsVisible) hideControls();
+      else revealControls();
+      return;
+    }
+    if (controlsVisible) hideControls();
+    else revealControls();
+  };
+
+  const progress = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
+  // Do not cover the actual ending on titles with no credits. End cards appear
+  // only in the final five seconds and stay visible after playback completes.
+  const movieEndOverlayStart = Math.max(0, duration - 5);
+  const movieEndRecommendations = item?.type === 'movie' ? relatedItems.slice(0, 5) : [];
+  const movieRecommendationRailRef = useRef<ScrollView>(null);
+  const movieRecommendationRailPositionedRef = useRef('');
+  const movieRecommendationRailKey = movieEndRecommendations.map((entry) => entry.id).join('|');
+  const positionMovieRecommendationRail = useCallback(() => {
+    if (!movieRecommendationRailKey || movieRecommendationRailPositionedRef.current === movieRecommendationRailKey) return;
+    movieRecommendationRailPositionedRef.current = movieRecommendationRailKey;
+    requestAnimationFrame(() => movieRecommendationRailRef.current?.scrollToEnd({ animated: false }));
+  }, [movieRecommendationRailKey]);
+  const showNextEpisodeOverlay = Boolean(
+    item?.type === 'series' &&
+    nextEpisodeGroup &&
+    firstFrameReady &&
+    !networkOffline &&
+    !settingsOpen &&
+    !episodesOpen &&
+    !nextEpisodeDismissed &&
+    duration > 0 &&
+    currentTime >= movieEndOverlayStart
+  );
+  const showMovieEndRecommendations = Boolean(
+    item?.type === 'movie' &&
+    firstFrameReady &&
+    !networkOffline &&
+    !settingsOpen &&
+    !episodesOpen &&
+    !endRecommendationsDismissed &&
+    duration > 0 &&
+    currentTime >= movieEndOverlayStart &&
+    movieEndRecommendations.length > 0
+  );
+  useEffect(() => {
+    if (!showNextEpisodeOverlay || !nextEpisodeGroup) {
+      setNextEpisodeCountdown(15);
+      return;
+    }
+    if (nextEpisodeCountdown <= 0) {
+      const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+      const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+      onProgress(request, position, safeDuration, false);
+      onEpisodeSelect(nextEpisodeGroup, request.language);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setNextEpisodeCountdown((value) => Math.max(0, value - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [showNextEpisodeOverlay, nextEpisodeGroup?.id, nextEpisodeCountdown]);
+
+  const chromeVisible = !controlsLocked && !settingsOpen && !episodesOpen && (!firstFrameReady || switchingQuality || controlsVisible);
+  const topBarStyle = landscape
+    ? { top: Math.max(8, insets.top + 4), left: safeLeft, right: safeRight }
+    : { top: portraitGroupTop, left: 12, right: 12, height: portraitTopBarHeight };
+  const bottomPanelStyle = landscape
+    ? { left: safeLeft, right: safeRight, bottom: Math.max(8, insets.bottom + 8) }
+    : { top: frameTop + portraitFrameHeight + 2, left: 12, right: 12, height: portraitBottomBarHeight };
+  const settingsOverlayStyle = landscape
+    ? frameRect
+    : { top: 0, left: 0, width: viewportWidth, height: viewportHeight, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 12 };
+  const qualityListMaxHeight = landscape ? Math.min(190, viewportHeight * 0.46) : Math.min(176, viewportHeight * 0.30);
+
+  return (
+    <Modal
+      visible
+      animationType="none"
+      presentationStyle="fullScreen"
+      onRequestClose={handleBack}
+      supportedOrientations={['portrait', 'landscape']}
+      statusBarTranslucent
+      navigationBarTranslucent
+      hardwareAccelerated
+    >
+      <View style={styles.mediaModal}>
+        <StatusBar style="light" hidden={landscape || orientationTransitioning} />
+
+        <View style={[styles.videoFrame, frameRect]}>
+          {request.artwork && !firstFrameReady && optimizedImageUrl(request.artwork, 'backdrop') ? (
+            <Image
+              source={{ uri: optimizedImageUrl(request.artwork, 'backdrop') }}
+              style={StyleSheet.absoluteFill}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              transition={0}
+            />
+          ) : null}
+          <VideoView
+            player={player}
+            style={[styles.videoView, !firstFrameReady && styles.videoViewPreparing]}
+            nativeControls={false}
+            contentFit="contain"
+            allowsPictureInPicture
+            fullscreenOptions={{ enable: false }}
+            surfaceType="textureView"
+            useExoShutter
+            onFirstFrameRender={() => {
+              setFirstFrameReady(true);
+              setControlsVisible(true);
+            }}
+          />
+          <Pressable style={StyleSheet.absoluteFill} onPress={toggleSurfaceControls} />
+        </View>
+
+        {!firstFrameReady || switchingQuality ? (
+          <View style={[styles.playerFramePortal, frameRect]} pointerEvents="none">
+            <ActivityIndicator color={COLORS.gold} size="small" />
+          </View>
+        ) : null}
+
+        {networkOffline ? (
+          <View style={[styles.playerOfflineOverlay, frameRect]}>
+            <View style={styles.playerOfflineCard}>
+              <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={34} />
+              <Text style={styles.playerOfflineTitle}>اتصال اینترنت قطع شد</Text>
+              <Text style={styles.playerOfflineText}>اینترنت را روشن کنید و دوباره تلاش کنید.</Text>
+              <View style={styles.playerOfflineActions}>
+                <Pressable onPress={() => void retryNetworkPlayback()} style={styles.playerOfflineRetry}>
+                  <Ionicons name="refresh" color="#fff" size={17} />
+                  <Text style={styles.playerOfflineRetryText}>تلاش دوباره</Text>
+                </Pressable>
+                <Pressable onPress={closePlayer} style={styles.playerOfflineCancel}>
+                  <Text style={styles.playerOfflineCancelText}>بستن</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        {showNextEpisodeOverlay && nextEpisodeGroup && item?.type === 'series' ? (
+          <View
+            pointerEvents="box-none"
+            style={[
+              styles.nextEpisodeOverlay,
+              frameRect,
+              landscape ? {
+                paddingLeft: safeLeft,
+                paddingRight: safeRight,
+                paddingBottom: Math.max(10, insets.bottom + 8),
+              } : null,
+            ]}
+          >
+            <View style={[styles.nextEpisodeCard, landscape && styles.nextEpisodeCardLandscape]}>
+              <Pressable
+                onPress={() => setNextEpisodeDismissed(true)}
+                style={styles.nextEpisodeClose}
+                accessibilityLabel="بستن پیشنهاد قسمت بعد"
+              >
+                <Ionicons name="close" color="#fff" size={18} />
+              </Pressable>
+              <CatalogArtwork
+                primary={exactEpisodeArtworkFor(nextEpisodeGroup, item)}
+                style={styles.nextEpisodeArtwork}
+                contentFit="cover"
+                imageKind="backdrop"
+              />
+              <View style={styles.nextEpisodeBody}>
+                <Text style={styles.nextEpisodeEyebrow}>قسمت بعدی</Text>
+                <Text numberOfLines={2} style={styles.nextEpisodeTitle}>
+                  {item.nameFa} — فصل {toPersianDigits(nextEpisodeGroup.seasonNumber || 1)}، قسمت {toPersianDigits(nextEpisodeGroup.episodeNumber || 0)}
+                </Text>
+                <Pressable
+                  style={styles.nextEpisodePlayButton}
+                  onPress={() => {
+                    const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+                    const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+                    onProgress(request, position, safeDuration, false);
+                    setNextEpisodeDismissed(true);
+                    onEpisodeSelect(nextEpisodeGroup, request.language);
+                  }}
+                >
+                  <Ionicons name="play" color="#05070A" size={18} />
+                  <Text style={styles.nextEpisodePlayText}>پخش ({toPersianDigits(nextEpisodeCountdown)})</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        {showMovieEndRecommendations ? (
+          <View
+            pointerEvents="box-none"
+            style={[
+              styles.movieEndRecommendations,
+              frameRect,
+              landscape ? {
+                paddingLeft: safeLeft,
+                paddingRight: safeRight,
+                paddingBottom: Math.max(10, insets.bottom + 8),
+              } : null,
+            ]}
+          >
+            <View style={[styles.movieEndRecommendationsCard, landscape && styles.movieEndRecommendationsCardLandscape]}>
+              <View style={styles.movieEndRecommendationsHeader}>
+                <Pressable
+                  onPress={() => setEndRecommendationsDismissed(true)}
+                  style={styles.movieEndRecommendationsClose}
+                  accessibilityLabel="بستن پیشنهادها"
+                >
+                  <Ionicons name="close" color="#fff" size={18} />
+                </Pressable>
+                <View style={styles.movieEndRecommendationsHeaderText}>
+                  <Text style={styles.movieEndRecommendationsTitle}>فیلم‌های پیشنهادی</Text>
+                  <Text style={styles.movieEndRecommendationsSubtitle}>مشابه همین فیلم</Text>
+                </View>
+              </View>
+              <ScrollView
+                ref={movieRecommendationRailRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.movieEndRecommendationsRail}
+                onContentSizeChange={positionMovieRecommendationRail}
+              >
+                {movieEndRecommendations.map((recommendation) => (
+                  <Pressable
+                    key={recommendation.id}
+                    style={styles.movieEndRecommendationItem}
+                    onPress={() => {
+                      const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+                      const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+                      onProgress(request, position, safeDuration, false);
+                      setEndRecommendationsDismissed(true);
+                      void onRecommendationSelect(recommendation);
+                    }}
+                  >
+                    <CatalogArtwork
+                      primary={recommendation.poster}
+                      fallback={recommendation.posterFallback}
+                      style={styles.movieEndRecommendationPoster}
+                      contentFit="cover"
+                      imageKind="poster"
+                    />
+                    <Text numberOfLines={1} style={styles.movieEndRecommendationName}>{recommendation.nameFa}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+        ) : null}
+
+        {chromeVisible ? (
+          <View pointerEvents="box-none" style={styles.playerControlsLayer}>
+            {landscape ? (
+              <>
+                <LinearGradient colors={['rgba(0,0,0,0.82)', 'transparent']} style={styles.playerTopGradient} pointerEvents="none" />
+                <LinearGradient colors={['transparent', 'rgba(0,0,0,0.88)']} style={styles.playerBottomGradient} pointerEvents="none" />
+              </>
+            ) : null}
+
+            <View style={[styles.nativePlayerTopBar, !landscape && styles.playerDetachedBar, topBarStyle]}>
+              {landscape ? (
+                <Pressable onPress={lockPlayerControls} style={styles.nativePlayerTopButton} accessibilityLabel="قفل کنترل‌ها">
+                  <Ionicons name="lock-closed-outline" color="#fff" size={20} />
+                </Pressable>
+              ) : <View style={{ width: 38, height: 38 }} />}
+              <Text numberOfLines={1} style={styles.nativePlayerTitle}>{request.title}</Text>
+              <Pressable onPress={closePlayer} unstable_pressDelay={0} hitSlop={10} style={styles.nativePlayerTopButton} accessibilityLabel="بستن پخش‌کننده">
+                <Ionicons name="arrow-forward" color="#fff" size={23} />
+              </Pressable>
+            </View>
+
+            {firstFrameReady && !switchingQuality ? (
+              <View pointerEvents="box-none" style={[styles.playerCenterZone, frameRect]}>
+                <View style={[styles.playerCenterControls, landscape && styles.playerCenterControlsLandscape]}>
+                  <Pressable onPress={() => seekBy(-10)} style={styles.playerRoundButton} accessibilityLabel="ده ثانیه عقب">
+                    <Ionicons name="play-back" color="#fff" size={26} />
+                    <Text style={styles.playerSkipText}>۱۰</Text>
+                  </Pressable>
+                  <Pressable onPress={togglePlayback} style={styles.playerPrimaryButton} accessibilityLabel={isPlaying ? 'توقف' : 'پخش'}>
+                    <Ionicons name={isPlaying ? 'pause' : 'play'} color="#05070A" size={34} />
+                  </Pressable>
+                  <Pressable onPress={() => seekBy(10)} style={styles.playerRoundButton} accessibilityLabel="ده ثانیه جلو">
+                    <Ionicons name="play-forward" color="#fff" size={26} />
+                    <Text style={styles.playerSkipText}>۱۰</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+
+            <View style={[styles.playerBottomPanel, !landscape && styles.playerDetachedBottomPanel, bottomPanelStyle]}>
+              <Pressable
+                style={styles.playerTimelineTrack}
+                onLayout={(event) => setTimelineWidth(Math.max(1, event.nativeEvent.layout.width))}
+                onPress={(event) => {
+                  if (duration <= 0) return;
+                  seekTo((Math.max(0, Math.min(timelineWidth, event.nativeEvent.locationX)) / timelineWidth) * duration);
+                }}
+              >
+                <View style={styles.playerTimelineRail} />
+                <View style={[styles.playerTimelineFill, { width: `${progress * 100}%` }]} />
+                <View style={[styles.playerTimelineThumb, { left: `${progress * 100}%` }]} />
+              </Pressable>
+              <View style={styles.playerTimeRow}>
+                <Text style={styles.playerTimeText}>{formatPlaybackTime(currentTime)}</Text>
+                <View style={styles.playerTimeSpacer} />
+                <Text style={styles.playerTimeText}>{formatPlaybackTime(duration)}</Text>
+              </View>
+              <View style={styles.playerBottomTools}>
+                <Pressable
+                  onPress={() => {
+                    clearControlsTimer();
+                    setControlsVisible(true);
+                    setQualityExpanded(false);
+                    setSettingsOpen(true);
+                  }}
+                  style={styles.playerControlIcon}
+                  accessibilityLabel="تنظیمات"
+                >
+                  <Ionicons name="settings-outline" color="#fff" size={22} />
+                </Pressable>
+                <Pressable onPress={toggleOrientation} style={styles.playerControlIcon} accessibilityLabel={landscape ? 'خروج از تمام‌صفحه' : 'تمام‌صفحه'}>
+                  <Ionicons name={landscape ? 'contract-outline' : 'expand-outline'} color="#fff" size={22} />
+                </Pressable>
+                {playerEpisodeGroups.length ? (
+                  <Pressable
+                    onPress={() => {
+                      clearControlsTimer();
+                      setControlsVisible(true);
+                      setSettingsOpen(false);
+                      setEpisodesOpen(true);
+                    }}
+                    style={styles.playerControlIcon}
+                    accessibilityLabel="قسمت‌ها"
+                  >
+                    <Ionicons name="albums-outline" color="#fff" size={21} />
+                  </Pressable>
+                ) : null}
+                <View style={styles.playerControlSpacer} />
+                <Pressable onPress={() => adjustVolume(-0.1)} style={styles.playerControlIcon} accessibilityLabel="کم کردن صدا">
+                  <Ionicons name="remove-circle-outline" color="#fff" size={21} />
+                </Pressable>
+                <Pressable onPress={toggleMute} style={styles.playerControlIcon} accessibilityLabel={isMuted ? 'وصل کردن صدا' : 'قطع کردن صدا'}>
+                  <Ionicons name={isMuted || playerVolume <= 0 ? 'volume-mute' : 'volume-high'} color="#fff" size={22} />
+                </Pressable>
+                <Pressable onPress={() => adjustVolume(0.1)} style={styles.playerControlIcon} accessibilityLabel="زیاد کردن صدا">
+                  <Ionicons name="add-circle-outline" color="#fff" size={21} />
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        {controlsLocked && controlsVisible ? (
+          <Pressable
+            onPress={unlockPlayerControls}
+            style={[styles.playerLockedButton, { left: safeLeft, top: Math.max(12, insets.top + 8) }]}
+            accessibilityLabel="باز کردن قفل کنترل‌ها"
+          >
+            <Ionicons name="lock-closed" color="#fff" size={20} />
+            <Text style={styles.playerLockedText}>باز کردن قفل</Text>
+          </Pressable>
+        ) : null}
+
+        {episodesOpen && item?.type === 'series' ? (
+          <PlayerEpisodesOverlay
+            item={item}
+            groups={playerEpisodeGroups}
+            activeEpisodeId={request.episodeId}
+            landscape={landscape}
+            frameStyle={settingsOverlayStyle}
+            onClose={() => {
+              setEpisodesOpen(false);
+              revealControls();
+            }}
+            onSelect={(group) => {
+              const position = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
+              const safeDuration = Math.max(0, Number(player.duration || latestDurationRef.current || 0));
+              onProgress(request, position, safeDuration, false);
+              setEpisodesOpen(false);
+              onEpisodeSelect(group, request.language);
+            }}
+          />
+        ) : null}
+
+        {settingsOpen ? (
+          <View style={[styles.playerSettingsFrameOverlay, settingsOverlayStyle]}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => {
+              setQualityExpanded(false);
+              setSettingsOpen(false);
+              revealControls();
+            }} />
+            <View style={[styles.playerSettingsCard, !landscape && styles.playerSettingsCardPortrait, landscape && styles.playerSettingsCardLandscape]}>
+              <View style={styles.playerSettingsHeader}>
+                <Text style={styles.playerSettingsTitle}>تنظیمات پخش</Text>
+                <Pressable onPress={() => {
+                  setQualityExpanded(false);
+                  setSettingsOpen(false);
+                  revealControls();
+                }} unstable_pressDelay={0} hitSlop={10} style={styles.playerSettingsClose}>
+                  <Ionicons name="close" color="#fff" size={18} />
+                </Pressable>
+              </View>
+
+              <Pressable
+                disabled={qualitySources.length <= 1 || switchingQuality}
+                onPress={() => setQualityExpanded((current) => !current)}
+                style={({ pressed }) => [
+                  styles.playerSettingsRow,
+                  qualityExpanded && styles.playerSettingsRowExpanded,
+                  pressed && qualitySources.length > 1 && styles.playerSettingsRowPressed,
+                ]}
+              >
+                <View style={styles.playerSettingsRowMain}>
+                  <Text style={styles.playerSettingsRowTitle}>کیفیت ویدئو</Text>
+                  <Text style={styles.playerSettingsRowValue}>{activeSource.quality || 'خودکار'}</Text>
+                </View>
+                <Ionicons
+                  name={qualityExpanded ? 'chevron-up' : 'chevron-down'}
+                  color={qualitySources.length > 1 ? COLORS.gold : COLORS.muted}
+                  size={17}
+                />
+              </Pressable>
+
+              {qualitySources.length > 1 && qualityExpanded ? (
+                <ScrollView
+                  style={[styles.playerSettingsQualityScroll, { maxHeight: qualityListMaxHeight }]}
+                  contentContainerStyle={styles.playerSettingsQualityList}
+                  showsVerticalScrollIndicator={qualitySources.length > 4}
+                  nestedScrollEnabled
+                  overScrollMode="never"
+                >
+                  {qualitySources.map((source) => {
+                    const selected = source.id === activeSource.id || source.url === activeSource.url;
+                    return (
+                      <Pressable
+                        key={`${source.id}-${source.url}`}
+                        onPress={() => void switchQuality(source)}
+                        disabled={switchingQuality || selected}
+                        hitSlop={4}
+                        style={({ pressed }) => [
+                          styles.playerSettingsQualityOption,
+                          selected && styles.playerSettingsQualityOptionActive,
+                          pressed && !selected && styles.playerSettingsQualityOptionPressed,
+                        ]}
+                      >
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.playerSettingsQualityOptionText,
+                            selected && styles.playerSettingsQualityOptionTextActive,
+                          ]}
+                        >
+                          {source.quality}
+                        </Text>
+                        <Ionicons
+                          name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+                          color={selected ? COLORS.gold : COLORS.muted}
+                          size={17}
+                        />
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              ) : qualitySources.length <= 1 ? (
+                <Text style={styles.playerSingleQualityText}>برای این ویدئو فقط همین کیفیت پخش آنلاین موجود است.</Text>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+        {orientationTransitioning ? (
+          <Animated.View
+            pointerEvents="auto"
+            style={[styles.playerOrientationCover, { opacity: orientationTransitionOpacity }]}
+          />
+        ) : null}
+      </View>
+    </Modal>
+  );
+}
+
+
+function OperatorGateModal({
+  request,
+  onClose,
+  onRetry,
+}: {
+  request: OperatorGateRequest;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const isChecking = request.status === 'checking';
+  const subject = request.item.type === 'movie' ? 'این فیلم' : 'این قسمت';
+  const content = request.status === 'wifi'
+    ? {
+        icon: 'wifi-outline' as const,
+        title: 'پخش ویژه اینترنت همراه',
+        text: `${subject} فقط با اینترنت همراه اپراتورهای پشتیبانی‌شده قابل پخش است. وای‌فای را خاموش کنید، اینترنت سیم‌کارت را روشن کنید و دوباره تلاش کنید.`,
+      }
+    : request.status === 'vpn'
+      ? {
+          icon: 'shield-outline' as const,
+          title: 'فیلترشکن را خاموش کنید',
+          text: `${subject} فقط با اینترنت همراه قابل پخش است. فیلترشکن را خاموش کنید و دوباره تلاش کنید.`,
+        }
+      : request.status === 'offline'
+        ? {
+            icon: 'cloud-offline-outline' as const,
+            title: 'اتصال اینترنت برقرار نیست',
+            text: 'اینترنت سیم‌کارت را روشن کنید و دوباره تلاش کنید.',
+          }
+        : {
+            icon: 'phone-portrait-outline' as const,
+            title: 'پخش ویژه اینترنت همراه',
+            text: 'نوع اتصال مشخص نشد. وای‌فای و فیلترشکن را خاموش کنید، اینترنت سیم‌کارت را روشن کنید و دوباره تلاش کنید.',
+          };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.operatorGateOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={isChecking ? undefined : onClose} />
+        <View style={styles.operatorGateCard}>
+          {isChecking ? (
+            <>
+              <ActivityIndicator color={COLORS.gold} size="large" />
+              <Text style={styles.operatorGateTitle}>در حال بررسی اینترنت همراه…</Text>
+              <Text style={styles.operatorGateText}>لطفاً چند لحظه صبر کنید.</Text>
+            </>
+          ) : (
+            <>
+              <View style={styles.operatorGateIcon}>
+                <Ionicons name={content.icon} color={COLORS.gold} size={30} />
+              </View>
+              <Text style={styles.operatorGateTitle}>{content.title}</Text>
+              <Text style={styles.operatorGateText}>{content.text}</Text>
+              <View style={styles.operatorGateButtons}>
+                <Pressable onPress={onRetry} style={styles.operatorGatePrimaryButton}>
+                  <Ionicons name="refresh" color="#fff" size={17} />
+                  <Text style={styles.operatorGatePrimaryText}>بررسی دوباره</Text>
+                </Pressable>
+                <Pressable onPress={onClose} style={styles.operatorGateCancelButton}>
+                  <Text style={styles.operatorGateCancelText}>انصراف</Text>
+                </Pressable>
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function OperatorWebModal({
+  request,
+  onClose,
+}: {
+  request: OperatorWebRequest;
+  onClose: () => void;
+}) {
+  const [operatorBrowserAttempt, setOperatorBrowserAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+
+    const openOperatorBrowser = async () => {
+      try {
+        if (Platform.OS === 'android') {
+          // Upera/Filimo requires a real browser context and blocks embedded
+          // WebViews. Use our native Android Custom Tab launcher instead of
+          // expo-web-browser so the Intent is pinned to one concrete browser
+          // activity and Android does not show an “Open with…” resolver.
+          const result = await AparatchiCustomTab.openAsync(request.url);
+          if (cancelled) return;
+          if (!result?.opened) throw new Error('Native Custom Tab did not open.');
+          closeTimerRef.current = setTimeout(onClose, 300);
+          return;
+        }
+
+        // iOS has no Android-style app chooser here, so SafariViewController
+        // remains the correct provider-compliant browser surface.
+        await WebBrowser.openBrowserAsync(request.url, {
+          toolbarColor: '#090B10',
+          secondaryToolbarColor: '#11151C',
+          controlsColor: COLORS.gold,
+          showTitle: false,
+          enableBarCollapsing: true,
+          enableDefaultShareMenuItem: false,
+          dismissButtonStyle: 'close',
+        });
+        if (!cancelled) onClose();
+      } catch {
+        if (cancelled) return;
+        setFailed(true);
+      }
+    };
+
+    void openOperatorBrowser();
+    return () => {
+      cancelled = true;
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, [request.url, operatorBrowserAttempt]);
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.operatorBrowserLaunchOverlay}>
+        <View style={styles.operatorBrowserLaunchCard}>
+          <View style={styles.operatorBrowserBrandIcon}>
+            <Ionicons name="film-outline" color={COLORS.gold} size={26} />
+          </View>
+          {failed ? (
+            <>
+              <Text numberOfLines={1} style={styles.operatorBrowserLaunchTitle}>{request.title}</Text>
+              <Text style={styles.operatorBrowserLaunchText}>
+                مرورگر امن پخش باز نشد. اینترنت همراه و نصب بودن Chrome را بررسی کنید و دوباره تلاش کنید.
+              </Text>
+              <View style={styles.operatorBrowserLaunchActions}>
+                <Pressable
+                  onPress={() => setOperatorBrowserAttempt((value) => value + 1)}
+                  style={styles.operatorGatePrimaryButton}
+                >
+                  <Ionicons name="refresh" color="#fff" size={17} />
+                  <Text style={styles.operatorGatePrimaryText}>تلاش دوباره</Text>
+                </Pressable>
+                <Pressable onPress={onClose} style={styles.operatorGateCancelButton}>
+                  <Text style={styles.operatorGateCancelText}>بستن</Text>
+                </Pressable>
+              </View>
+            </>
+          ) : (
+            <ActivityIndicator color={COLORS.gold} size="large" />
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function VpnBlockModal({
+  visible,
+  checking,
+  onRetry,
+  onContinue,
+}: {
+  visible: boolean;
+  checking: boolean;
+  onRetry: () => void;
+  onContinue: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" hardwareAccelerated onRequestClose={onContinue}>
+      <View style={styles.vpnOverlay}>
+        <View style={styles.vpnCard}>
+          <View style={styles.vpnIconWrap}><Ionicons name="shield-outline" color={COLORS.gold} size={34} /></View>
+          <Text style={styles.vpnTitle}>فیلترشکن روشن است</Text>
+          <Text style={styles.vpnText}>می‌توانید وارد برنامه شوید؛ اما تا وقتی فیلترشکن روشن باشد، لینک‌های دانلود و پخش آنلاین مخفی می‌مانند.</Text>
+          <Pressable disabled={checking} onPress={onRetry} style={[styles.vpnRetryButton, checking && styles.disabledButton]}>
+            {checking ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="refresh-outline" color="#fff" size={19} />}
+            <Text style={styles.vpnRetryText}>{checking ? 'در حال بررسی…' : 'بررسی دوباره'}</Text>
+          </Pressable>
+          <Pressable onPress={onContinue} style={styles.vpnContinueButton}>
+            <Text style={styles.vpnContinueText}>ورود به اپ</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { visible: boolean; onClose: () => void; onBrowse: (filter: SearchFilter) => void; onCategories: () => void; onHome: () => void }) {
+  type MenuEntry = {
+    key: string;
+    title: string;
+    filter?: SearchFilter;
+    action?: 'categories' | 'home';
+    icon?: keyof typeof Ionicons.glyphMap;
+    children?: MenuEntry[];
+  };
+
+  const [openRoot, setOpenRoot] = useState<string | null>(null);
+  const [openChild, setOpenChild] = useState<string | null>(null);
+  const entries: MenuEntry[] = [
+    {
+      key: 'movies', title: 'فیلم‌ها', icon: 'film-outline', children: [
+        { key: 'iranian-movies', title: 'فیلم‌های ایرانی', filter: 'iranian-movies', icon: 'flag-outline' },
+        {
+          key: 'foreign-movies-root', title: 'فیلم‌های خارجی', icon: 'earth-outline', children: [
+            { key: 'foreign-movies', title: 'همه فیلم‌های خارجی', filter: 'foreign-movies' },
+            { key: 'dubbed', title: 'دوبله فارسی', filter: 'dubbed' },
+            { key: 'subtitled', title: 'زیرنویس فارسی', filter: 'subtitled' },
+            { key: 'korean-movies', title: 'فیلم‌های کره‌ای', filter: 'korean-movies' },
+            { key: 'indian-movies', title: 'فیلم‌های هندی', filter: 'indian-movies' },
+          ],
+        },
+      ],
+    },
+    {
+      key: 'series', title: 'سریال‌ها', icon: 'tv-outline', children: [
+        { key: 'iranian-series', title: 'سریال‌های ایرانی', filter: 'iranian-series', icon: 'videocam-outline' },
+        { key: 'foreign-series', title: 'سریال‌های خارجی', filter: 'foreign-series', icon: 'globe-outline' },
+        { key: 'korean-series', title: 'سریال‌های کره‌ای', filter: 'korean-series', icon: 'location-outline' },
+        { key: 'indian-series', title: 'سریال‌های هندی', filter: 'indian-series', icon: 'location-outline' },
+      ],
+    },
+    {
+      key: 'anime', title: 'انیمه', icon: 'sparkles-outline', children: [
+        { key: 'anime-movies', title: 'انیمه سینمایی', filter: 'anime-movies' },
+        { key: 'anime-series', title: 'انیمه سریالی', filter: 'anime-series' },
+      ],
+    },
+    {
+      key: 'animation', title: 'انیمیشن', icon: 'color-palette-outline', children: [
+        { key: 'animation-movies', title: 'انیمیشن سینمایی', filter: 'animation-movies' },
+        { key: 'animation-series', title: 'انیمیشن سریالی', filter: 'animation-series' },
+      ],
+    },
+    { key: 'kids', title: 'کودکان', filter: 'kids', icon: 'happy-outline' },
+    { key: 'programs', title: 'برنامه‌ها و مسابقه‌ها', filter: 'programs', icon: 'mic-outline' },
+    { key: 'religious', title: 'مذهبی و مناسبتی', filter: 'religious', icon: 'book-outline' },
+    { key: 'updated', title: 'به‌روزشده‌ها', filter: 'updated', icon: 'refresh-outline' },
+    { key: 'operator', title: 'ویژه اینترنت همراه', filter: 'mobile-operator', icon: 'phone-portrait-outline' },
+    { key: 'imdb-top', title: '۱۰۰ برتر IMDb', action: 'home', icon: 'trophy-outline' },
+    { key: 'categories', title: 'همه دسته‌بندی‌ها', action: 'categories', icon: 'grid-outline' },
+  ];
+
+  useEffect(() => {
+    if (!visible) {
+      setOpenRoot(null);
+      setOpenChild(null);
+    }
+  }, [visible]);
+
+  const choose = (entry: MenuEntry) => {
+    if (entry.children?.length) return;
+    onClose();
+    requestAnimationFrame(() => entry.filter
+      ? onBrowse(entry.filter)
+      : entry.action === 'categories'
+        ? onCategories()
+        : onHome());
+  };
+
+  const renderLeaf = (entry: MenuEntry, depth: 1 | 2) => (
+    <Pressable
+      key={entry.key}
+      onPress={() => choose(entry)}
+      style={[styles.sideMenuLeaf, depth === 2 && styles.sideMenuLeafDeep]}
+    >
+      {entry.icon ? <Ionicons name={entry.icon} color={COLORS.gold} size={17} /> : <View style={styles.sideMenuLeafDot} />}
+      <Text style={styles.sideMenuLeafText}>{entry.title}</Text>
+      <Ionicons name="chevron-back" color={COLORS.muted} size={14} />
+    </Pressable>
+  );
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" hardwareAccelerated onRequestClose={onClose}>
+      <View style={styles.sideMenuOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <SafeAreaView style={styles.sideMenuPanel} edges={['top', 'right', 'bottom']}>
+          <View style={styles.sideMenuHeader}>
+            <Logo />
+            <Pressable onPress={onClose} style={styles.iconButton}><Ionicons name="close" color={COLORS.text} size={22} /></Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.sideMenuItems} showsVerticalScrollIndicator={false}>
+            {entries.map((entry) => {
+              if (!entry.children?.length) return renderLeaf(entry, 1);
+              const rootOpen = openRoot === entry.key;
+              return (
+                <View key={entry.key} style={styles.sideMenuAccordion}>
+                  <Pressable
+                    onPress={() => {
+                      setOpenRoot((current) => current === entry.key ? null : entry.key);
+                      setOpenChild(null);
+                    }}
+                    style={[styles.sideMenuItem, rootOpen && styles.sideMenuItemOpen]}
+                  >
+                    <Ionicons name={entry.icon || 'folder-outline'} color={COLORS.gold} size={20} />
+                    <Text style={styles.sideMenuItemText}>{entry.title}</Text>
+                    <Ionicons name={rootOpen ? 'chevron-up' : 'chevron-down'} color={COLORS.muted} size={16} />
+                  </Pressable>
+                  {rootOpen ? (
+                    <View style={styles.sideMenuChildren}>
+                      {entry.children.map((child) => {
+                        if (!child.children?.length) return renderLeaf(child, 1);
+                        const childOpen = openChild === child.key;
+                        return (
+                          <View key={child.key} style={styles.sideMenuNestedAccordion}>
+                            <Pressable
+                              onPress={() => setOpenChild((current) => current === child.key ? null : child.key)}
+                              style={[styles.sideMenuLeaf, styles.sideMenuNestedHeader, childOpen && styles.sideMenuItemOpen]}
+                            >
+                              <Ionicons name={child.icon || 'folder-open-outline'} color={COLORS.gold} size={17} />
+                              <Text style={styles.sideMenuLeafText}>{child.title}</Text>
+                              <Ionicons name={childOpen ? 'chevron-up' : 'chevron-down'} color={COLORS.muted} size={14} />
+                            </Pressable>
+                            {childOpen ? <View style={styles.sideMenuGrandchildren}>{child.children.map((leaf) => renderLeaf(leaf, 2))}</View> : null}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+          </ScrollView>
+        </SafeAreaView>
+      </View>
+    </Modal>
+  );
+}
+
+const BOTTOM_TABS: { id: MainTab; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { id: 'home', label: 'خانه', icon: 'home-outline' },
+  { id: 'categories', label: 'دسته‌بندی', icon: 'grid-outline' },
+  { id: 'favorites', label: 'کتابخانه', icon: 'bookmark-outline' },
+  { id: 'downloads', label: 'دریافت‌ها', icon: 'download-outline' },
+];
+
+const BottomNavigation = memo(function BottomNavigation({ active, onChange }: { active: MainTab; onChange: (tab: MainTab) => void }) {
+  return (
+    <View style={styles.bottomNavigation}>
+      {BOTTOM_TABS.map((tab) => {
+        const selected = active === tab.id;
+        return (
+          <Pressable
+            key={tab.id}
+            onPressIn={() => onChange(tab.id)}
+            unstable_pressDelay={0}
+            hitSlop={14}
+            style={({ pressed }) => [styles.bottomTab, pressed && !selected && styles.bottomTabPressed]}
+          >
+            <View style={[styles.bottomIconWrap, selected && styles.bottomIconWrapActive]}>
+              <Ionicons
+                name={selected ? (String(tab.icon).replace('-outline','') as keyof typeof Ionicons.glyphMap) : tab.icon}
+                color={selected ? COLORS.text : COLORS.muted}
+                size={20}
+              />
+            </View>
+            <Text style={[styles.bottomLabel, selected && styles.bottomLabelActive]}>{tab.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+});
+
+function StartupScreen() {
+  const motion = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(Animated.timing(motion, {
+      toValue: 1,
+      duration: 1800,
+      useNativeDriver: true,
+    }));
+    animation.start();
+    return () => animation.stop();
+  }, [motion]);
+
+  const reelSpin = motion.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const filmTravel = motion.interpolate({ inputRange: [0, 1], outputRange: [-14, 14] });
+  const beamOpacity = motion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.16, 0.42, 0.16] });
+  const screenGlow = motion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.18, 0.46, 0.18] });
+  const operatorBob = motion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -2, 0] });
+
+  const reelHoles = [0, 1, 2, 3];
+  const reelHoleStyles = [
+    styles.startupReelHole0,
+    styles.startupReelHole1,
+    styles.startupReelHole2,
+    styles.startupReelHole3,
+  ];
+
+  return (
+    <View style={styles.startupOverlay}>
+      <LinearGradient colors={['#030406', '#090A0D', '#120E0A', '#030406']} style={StyleSheet.absoluteFill} />
+      <View style={styles.startupProjectionistScene}>
+        <View style={styles.startupCurtainLeft} />
+        <View style={styles.startupCurtainRight} />
+        <View style={styles.startupCurtainTop} />
+
+        <Animated.View pointerEvents="none" style={[styles.startupProjectionBeam, { opacity: beamOpacity }]}>
+          <LinearGradient
+            colors={['rgba(245,220,151,0.02)', 'rgba(245,220,151,0.38)', 'rgba(245,220,151,0.04)']}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 1, y: 0.5 }}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+
+        <View style={styles.startupCinemaScreenFrame}>
+          <LinearGradient
+            colors={['#E9E0C8', '#F6F0DE', '#D8CBA9']}
+            style={styles.startupCinemaScreen}
+          />
+          <Animated.View style={[styles.startupCinemaScreenGlow, { opacity: screenGlow }]} />
+          <View style={styles.startupScreenFilmMark}>
+            <Ionicons name="play" color="rgba(31,27,20,0.42)" size={22} />
+          </View>
+        </View>
+
+        <View style={styles.startupProjectionFloor} />
+
+        <Animated.View style={[styles.startupOperator, { transform: [{ translateY: operatorBob }] }]}>
+          <View style={styles.startupOperatorHead} />
+          <View style={styles.startupOperatorNeck} />
+          <View style={styles.startupOperatorBody} />
+          <View style={styles.startupOperatorArm} />
+        </Animated.View>
+
+        <View style={styles.startupProjector}>
+          <Animated.View style={[styles.startupProjectorReel, styles.startupProjectorReelBack, { transform: [{ rotate: reelSpin }] }]}>
+            {reelHoles.map((hole) => <View key={`back-${hole}`} style={[styles.startupReelHole, reelHoleStyles[hole]]} />)}
+            <View style={styles.startupReelHub} />
+          </Animated.View>
+          <Animated.View style={[styles.startupProjectorReel, styles.startupProjectorReelFront, { transform: [{ rotate: reelSpin }] }]}>
+            {reelHoles.map((hole) => <View key={`front-${hole}`} style={[styles.startupReelHole, reelHoleStyles[hole]]} />)}
+            <View style={styles.startupReelHub} />
+          </Animated.View>
+          <View style={styles.startupProjectorBody}>
+            <View style={styles.startupProjectorVent} />
+            <View style={styles.startupProjectorLens}>
+              <View style={styles.startupProjectorLensGlass} />
+            </View>
+          </View>
+          <View style={styles.startupProjectorNeck} />
+          <View style={styles.startupProjectorStand} />
+          <View style={styles.startupProjectorFoot} />
+        </View>
+      </View>
+
+      <Text style={styles.startupCinemaBrand}>آپاراتچی</Text>
+      <Text style={styles.startupCinemaTagline}>چراغ‌ها خاموش می‌شوند؛ نمایش تا چند لحظه دیگر آغاز می‌شود</Text>
+
+      <Animated.View style={[styles.startupCinemaFilmStrip, { transform: [{ translateX: filmTravel }] }]}>
+        {[0, 1, 2, 3, 4, 5].map((slot) => <View key={slot} style={styles.startupCinemaFilmFrame} />)}
+      </Animated.View>
+      <Text style={styles.startupCinemaLoadingText}>آپاراتچی در حال آماده‌کردن حلقهٔ فیلم است…</Text>
+    </View>
+  );
+}
+
+const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): CatalogItem => {
+  // Once Detail is visible, background index/detail hydration may enrich actions
+  // and metadata, but it must not visually replace the artwork/text/people the
+  // user is already looking at. Missing fields are still allowed to fill once.
+  const visiblePoster = current.poster || current.posterFallback || '';
+  const visibleBackdrop = current.backdrop || current.backdropFallback || visiblePoster;
+  const visibleOverview = String(current.overview || '').trim();
+  const visiblePeople = Array.isArray(current.people) && current.people.length ? current.people : null;
+  const mergedPeople = visiblePeople ? [...visiblePeople] : [];
+  const visiblePersonKeys = new Set(mergedPeople.map((person) => person.tmdbId
+    ? `${person.role}:tmdb:${person.tmdbId}`
+    : `${person.role}:name:${normalizeComparableText(person.nameFa || person.name || '')}`));
+  for (const person of incoming.people || []) {
+    const key = person.tmdbId
+      ? `${person.role}:tmdb:${person.tmdbId}`
+      : `${person.role}:name:${normalizeComparableText(person.nameFa || person.name || '')}`;
+    if (!key || visiblePersonKeys.has(key)) continue;
+    visiblePersonKeys.add(key);
+    mergedPeople.push(person);
+  }
+  return {
+    ...incoming,
+    ...(visiblePoster ? {
+      poster: visiblePoster,
+      posterFallback: current.posterFallback || incoming.posterFallback,
+    } : {}),
+    ...(visibleBackdrop ? {
+      backdrop: visibleBackdrop,
+      backdropFallback: current.backdropFallback || incoming.backdropFallback,
+    } : {}),
+    ...(visibleOverview ? { overview: current.overview } : {}),
+    ...(mergedPeople.length ? { people: mergedPeople } : {}),
+  };
+};
+
+const STARTUP_MIN_VISIBLE_MS = 0;
+
+function AppContent() {
+  const appInsets = useSafeAreaInsets();
+  const [activeTab, setActiveTab] = useState<MainTab>('home');
+  const [categoriesMounted, setCategoriesMounted] = useState(false);
+  const [searchFilter, setSearchFilter] = useState<SearchFilter>('all');
+  const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
+  const [selectedPerson, setSelectedPerson] = useState<CatalogPerson | null>(null);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [watchProgress, setWatchProgress] = useState<WatchProgressRecord[]>([]);
+  const [watchHistory, setWatchHistory] = useState<WatchHistoryRecord[]>([]);
+  const [libraryLoaded, setLibraryLoaded] = useState(false);
+  const [episodeAlertSeriesIds, setEpisodeAlertSeriesIds] = useState<string[]>([]);
+  const [episodeAlertBusyId, setEpisodeAlertBusyId] = useState<string | null>(null);
+  const [content, setContent] = useState<LoadedContent>(() =>
+    visibleLoadedContent(getBundledContent()),
+  );
+  const contentRef = useRef(content);
+  const contentRevisionRef = useRef(loadedContentRevision(content));
+  const [contentReady, setContentReady] = useState(() => content.items.length > 0);
+  const [contentResolved, setContentResolved] = useState(() => content.items.length > 0);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [contentOffline, setContentOffline] = useState(false);
+  const [startupVisible, setStartupVisible] = useState(true);
+  const [homeScrollTopSignal, setHomeScrollTopSignal] = useState(0);
+  const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
+  const downloadsRef = useRef<DownloadRecord[]>([]);
+  const [videoRequest, setVideoRequest] = useState<VideoRequest | null>(null);
+  const [operatorWebRequest, setOperatorWebRequest] = useState<OperatorWebRequest | null>(null);
+  const [operatorGateRequest, setOperatorGateRequest] = useState<OperatorGateRequest | null>(null);
+  const [pendingDeepLink, setPendingDeepLink] = useState<CatalogDeepLink | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [vpnActive, setVpnActive] = useState(false);
+  const [vpnWarningVisible, setVpnWarningVisible] = useState(false);
+  const [vpnChecking, setVpnChecking] = useState(false);
+  const [searchReturnTab, setSearchReturnTab] = useState<MainTab>('home');
+  const [searchReturnItem, setSearchReturnItem] = useState<CatalogItem | null>(null);
+  const [downloadsReturnItem, setDownloadsReturnItem] = useState<CatalogItem | null>(null);
+  const [downloadsReturnTab, setDownloadsReturnTab] = useState<MainTab>('home');
+  const homeScrollOffsetRef = useRef(0);
+  const detailHistoryRef = useRef<CatalogItem[]>([]);
+  const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
+  const lastContentLoadRef = useRef(0);
+  const startupStartedAtRef = useRef(Date.now());
+  const startupDismissedRef = useRef(false);
+  const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startupFallbackContentRef = useRef<LoadedContent | null>(null);
+  const backgroundedAtRef = useRef<number | null>(null);
+  const vpnCheckSequenceRef = useRef(0);
+  const vpnPausingDownloadsRef = useRef(false);
+  const activeTabRef = useRef<MainTab>('home');
+  const navigationStateRef = useRef({
+    activeTab,
+    menuOpen,
+    operatorGateRequest,
+    operatorWebRequest,
+    searchReturnItem,
+    searchReturnTab,
+    selectedItem,
+    selectedPerson,
+    downloadsReturnItem,
+    downloadsReturnTab,
+    videoRequest,
+    vpnActive,
+    vpnWarningVisible,
+  });
+
+  activeTabRef.current = activeTab;
+  contentRef.current = content;
+  navigationStateRef.current = {
+    activeTab,
+    menuOpen,
+    operatorGateRequest,
+    operatorWebRequest,
+    searchReturnItem,
+    searchReturnTab,
+    selectedItem,
+    selectedPerson,
+    downloadsReturnItem,
+    downloadsReturnTab,
+    videoRequest,
+    vpnActive,
+    vpnWarningVisible,
+  };
+
+  const navigateToTab = useCallback((tab: MainTab) => {
+    if (activeTabRef.current === tab) return;
+    activeTabRef.current = tab;
+    setActiveTab(tab);
+  }, []);
+
+  const refreshVpnState = async (showProgress = false) => {
+    const sequence = ++vpnCheckSequenceRef.current;
+    if (showProgress) setVpnChecking(true);
+    try {
+      // Action checks use one fast native lookup. Startup/retry gets two short retries.
+      const active = await checkVpnActive(showProgress ? 2 : 0);
+      if (sequence === vpnCheckSequenceRef.current) {
+        setVpnActive(active);
+        if (active && showProgress) setVpnWarningVisible(true);
+        if (!active) setVpnWarningVisible(false);
+      }
+      return active;
+    } finally {
+      if (showProgress && sequence === vpnCheckSequenceRef.current) setVpnChecking(false);
+    }
+  };
+
+  const dismissStartup = useCallback(() => {
+    if (startupDismissedRef.current) return;
+    const remaining = STARTUP_MIN_VISIBLE_MS - (Date.now() - startupStartedAtRef.current);
+    if (remaining > 0) {
+      if (!startupDismissTimerRef.current) {
+        startupDismissTimerRef.current = setTimeout(() => {
+          startupDismissTimerRef.current = null;
+          if (startupDismissedRef.current) return;
+          startupDismissedRef.current = true;
+          setStartupVisible(false);
+        }, remaining);
+      }
+      return;
+    }
+    if (startupDismissTimerRef.current) {
+      clearTimeout(startupDismissTimerRef.current);
+      startupDismissTimerRef.current = null;
+    }
+    startupDismissedRef.current = true;
+    setStartupVisible(false);
+  }, []);
+
+  const reloadContent = async (force = true, options: { silent?: boolean } = {}) => {
+    if (!force && Date.now() - lastContentLoadRef.current < 2 * 60 * 1000) return;
+    const online = await internetIsReachable();
+    setContentOffline(!online);
+    const initialLoad = lastContentLoadRef.current === 0;
+    const showRefreshIndicator = force && !initialLoad && !options.silent;
+    const hadVisibleCatalog = contentRef.current.items.length > 0;
+
+    if (showRefreshIndicator) setContentLoading(true);
+    if (!hadVisibleCatalog) setContentResolved(false);
+
+    const applyContent = (nextContent: LoadedContent) => {
+      const incomingRevision = loadedContentRevision(nextContent);
+      if (incomingRevision === contentRevisionRef.current && contentRef.current.items.length) {
+        lastContentLoadRef.current = Date.now();
+        setContentReady(true);
+        setContentResolved(true);
+        return true;
+      }
+
+      const visibleContent = visibleLoadedContent(nextContent);
+      if (!visibleContent.items.length) return false;
+      contentRevisionRef.current = incomingRevision;
+      contentRef.current = visibleContent;
+      // The first usable catalog must be committed before the startup cover is
+      // dismissed. Deferring this initial render could briefly expose the false
+      // "catalog is empty" screen. Only later background refreshes are non-urgent.
+      if (initialLoad || !hadVisibleCatalog) setContent(visibleContent);
+      else startTransition(() => setContent(visibleContent));
+      lastContentLoadRef.current = Date.now();
+      setContentReady(true);
+      setContentResolved(true);
+      if (visibleContent.source === 'remote') {
+        void syncEpisodeAlerts(visibleContent.items, true);
+      }
+      return true;
+    };
+
+    try {
+      // The APK snapshot remains visible while a small cumulative live delta
+      // inserts every title added/changed by later syncs. The complete 8+ MB
+      // bootstrap is only a compatibility fallback, never the normal refresh.
+      let firstContent: LoadedContent;
+      const cachedLive = initialLoad ? await loadCachedLiveContent(contentRef.current) : null;
+
+      if (cachedLive?.items.length) {
+        startupFallbackContentRef.current = cachedLive;
+        applyContent(cachedLive);
+      }
+
+      if (online) {
+        let liveContent: LoadedContent | null = null;
+        try {
+          liveContent = await loadLiveContent(contentRef.current);
+        } catch {
+          liveContent = null;
+        }
+
+        if (liveContent?.items.length) {
+          startupFallbackContentRef.current = liveContent;
+          if (applyContent(liveContent)) {
+            dismissStartup();
+            return;
+          }
+        }
+
+        // Compatibility fallback for an APK older than the immutable live
+        // baseline. Keep the current screen interactive while it downloads.
+        void loadBootstrapContent().then((bootstrapContent) => {
+          if (!bootstrapContent?.items.length) return;
+          startupFallbackContentRef.current = bootstrapContent;
+          applyContent(bootstrapContent);
+        }).catch(() => undefined);
+        firstContent = cachedLive || contentRef.current;
+      } else {
+        firstContent = cachedLive || contentRef.current;
+      }
+
+      const firstApplied = applyContent(firstContent);
+
+      if (firstApplied) {
+        dismissStartup();
+        return;
+      }
+
+      setContentReady(false);
+      setContentResolved(true);
+      dismissStartup();
+    } catch {
+      setContentReady(false);
+      setContentResolved(true);
+      dismissStartup();
+    } finally {
+      if (showRefreshIndicator) setContentLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const hasBundledCatalog = contentRef.current.items.length > 0;
+    let startupFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let initialRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingIdleRefresh: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
+
+    const reloadContentWhenIdle = () => {
+      pendingIdleRefresh?.cancel();
+      pendingIdleRefresh = InteractionManager.runAfterInteractions(() => {
+        pendingIdleRefresh = null;
+        void reloadContent(false);
+      });
+    };
+
+    if (hasBundledCatalog) {
+      // Keep the complete APK snapshot mounted behind Startup, then reveal Home
+      // only after the small cumulative live delta has been merged. Otherwise a
+      // build-time title count is visibly replaced by newer syncs a few seconds
+      // after Home appears. Offline launches still reveal the APK snapshot from
+      // reloadContent as soon as network state is known.
+      void reloadContent(false);
+    } else {
+      void reloadContent();
+      // Even on a cold/offline install, never trap the user behind Splash.
+    }
+    // Five seconds is the normal minimum, not permission to reveal stale data.
+    // The Raw-first bootstrap has bounded failover; this ten-second timer is only
+    // an emergency escape for a broken network stack.
+    startupFallbackTimer = setTimeout(() => {
+      if (startupDismissedRef.current) return;
+      const fallback = startupFallbackContentRef.current;
+      if (fallback?.items.length) {
+        const visibleFallback = visibleLoadedContent(fallback);
+        if (visibleFallback.items.length) {
+          contentRevisionRef.current = `startup-bootstrap:${loadedContentRevision(visibleFallback)}`;
+          contentRef.current = visibleFallback;
+          setContent(visibleFallback);
+          setContentReady(true);
+          setContentResolved(true);
+        }
+      }
+      dismissStartup();
+    }, 10000);
+
+    loadDownloadRecords().then(setDownloads);
+    loadLibraryState()
+      .then((library) => {
+        const isLegacyDemoRecord = (record: WatchProgressRecord | WatchHistoryRecord) =>
+          /دو\s*جهان\s*یک\s*آرزو/i.test(normalizeComparableText(record.title || ''));
+        const watchHistory = library.watchHistory.filter((record) => !isLegacyDemoRecord(record));
+        setFavorites(library.favorites);
+        setWatchProgress([]);
+        setWatchHistory(watchHistory);
+        if (library.watchProgress.length || watchHistory.length !== library.watchHistory.length) {
+          void saveLibraryState({
+            favorites: library.favorites,
+            watchProgress: [],
+            watchHistory,
+          });
+        }
+      })
+      .finally(() => setLibraryLoaded(true));
+    initializeEpisodeAlertSystem()
+      .then((state) => setEpisodeAlertSeriesIds(state.subscribedSeriesIds))
+      .catch(() => undefined);
+
+    void refreshVpnState(false);
+    const vpnRetryTimer = setTimeout(() => { void refreshVpnState(false); }, 1600);
+
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        const backgroundedAt = backgroundedAtRef.current;
+        backgroundedAtRef.current = null;
+        const returningFromBackground = Boolean(
+          startupDismissedRef.current &&
+          backgroundedAt &&
+          Date.now() - backgroundedAt >= 2500
+        );
+        if (returningFromBackground) {
+          // Returning from Recent Apps must preserve the exact tab/detail/scroll
+          // state. Refresh truth silently; only a true cold start owns Splash.
+          void reloadContent(true, { silent: true });
+        } else {
+          reloadContentWhenIdle();
+        }
+        void refreshVpnState();
+      } else if (state === 'background' || state === 'inactive') {
+        if (backgroundedAtRef.current === null) backgroundedAtRef.current = Date.now();
+      }
+    });
+    const catalogRefreshTimer = setInterval(() => {
+      if (AppState.currentState === 'active') reloadContentWhenIdle();
+    }, 10 * 60 * 1000);
+
+    return () => {
+      pendingIdleRefresh?.cancel();
+      if (initialRefreshTimer) clearTimeout(initialRefreshTimer);
+      if (startupFallbackTimer) clearTimeout(startupFallbackTimer);
+      clearInterval(catalogRefreshTimer);
+      clearTimeout(vpnRetryTimer);
+      if (startupDismissTimerRef.current) clearTimeout(startupDismissTimerRef.current);
+      subscription.remove();
+    };
+  }, []);
+
+
+  const openRootDetail = useCallback((nextItem: CatalogItem) => {
+    detailHistoryRef.current = [];
+    setSelectedItem(nextItem);
+  }, []);
+
+  const openNestedDetail = useCallback((nextItem: CatalogItem) => {
+    const current = navigationStateRef.current.selectedItem;
+    if (current && String(current.id) !== String(nextItem.id)) {
+      detailHistoryRef.current = [...detailHistoryRef.current.slice(-19), current];
+    }
+    setSelectedItem(nextItem);
+  }, []);
+
+  // Related cards are a replacement of the current detail, not a navigation
+  // stack. One Back always returns to the screen that originally opened detail.
+  const openRelatedDetail = useCallback((nextItem: CatalogItem) => {
+    detailHistoryRef.current = [];
+    setSelectedItem(nextItem);
+  }, []);
+
+  const closeOrBackDetail = useCallback(() => {
+    const previous = detailHistoryRef.current.pop() || null;
+    setSelectedItem(previous);
+  }, []);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      const state = navigationStateRef.current;
+
+      if (state.vpnWarningVisible) { setVpnWarningVisible(false); return true; }
+      if (state.menuOpen) { setMenuOpen(false); return true; }
+      if (state.operatorWebRequest) { setOperatorWebRequest(null); return true; }
+      if (state.operatorGateRequest) { setOperatorGateRequest(null); return true; }
+      if (state.selectedPerson) { setSelectedPerson(null); return true; }
+      if (state.videoRequest) { setVideoRequest(null); return true; }
+      if (state.selectedItem) { closeOrBackDetail(); return true; }
+      if (state.activeTab === 'search' && collectionBrowserBackHandler?.()) return true;
+
+      if (state.activeTab === 'downloads' && state.downloadsReturnItem) {
+        navigateToTab(state.downloadsReturnTab || 'home');
+        setSelectedItem(state.downloadsReturnItem);
+        setDownloadsReturnItem(null);
+        setDownloadsReturnTab('home');
+        return true;
+      }
+
+      if (state.activeTab === 'search') {
+        const destination = state.searchReturnTab === 'search' ? 'home' : state.searchReturnTab;
+        navigateToTab(destination || 'home');
+        if (state.searchReturnItem) setSelectedItem(state.searchReturnItem);
+        setSearchReturnItem(null);
+        setSearchReturnTab('home');
+        return true;
+      }
+
+      if (state.activeTab !== 'home') {
+        navigateToTab('home');
+        setSearchReturnItem(null);
+        setSearchReturnTab('home');
+        return true;
+      }
+
+      Alert.alert(
+        'خروج از آپاراتچی',
+        'آیا می‌خواهید از آپاراتچی خارج شوید؟',
+        [
+          { text: 'خیر', style: 'cancel' },
+          { text: 'خروج', style: 'destructive', onPress: () => BackHandler.exitApp() },
+        ],
+      );
+      return true;
+    });
+    return () => subscription.remove();
+  }, [navigateToTab]);
+
+  useEffect(() => {
+    const queueDeepLink = (url?: string | null) => {
+      const deepLink = parseCatalogDeepLink(url);
+      if (!deepLink) return;
+
+      const key = `${deepLink.type}:${deepLink.id}`;
+      const now = Date.now();
+      const previous = lastDeepLinkRef.current;
+      if (previous?.key === key && now - previous.receivedAt < 1500) return;
+
+      lastDeepLinkRef.current = { key, receivedAt: now };
+      setPendingDeepLink(deepLink);
+    };
+
+    void Linking.getInitialURL()
+      .then(queueDeepLink)
+      .catch(() => undefined);
+
+    const subscription = Linking.addEventListener('url', ({ url }) => queueDeepLink(url));
+    const queueNotificationResponse = (response: Notifications.NotificationResponse | null) => {
+      const url = response?.notification.request.content.data?.url;
+      if (typeof url === 'string') queueDeepLink(url);
+    };
+
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        queueNotificationResponse(response);
+        if (response) return Notifications.clearLastNotificationResponseAsync();
+        return undefined;
+      })
+      .catch(() => undefined);
+    const notificationSubscription = Notifications.addNotificationResponseReceivedListener(
+      queueNotificationResponse,
+    );
+
+    return () => {
+      subscription.remove();
+      notificationSubscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!content || !pendingDeepLink) return;
+
+    const linkedItem = content.items.find(
+      (candidate) =>
+        candidate.type === pendingDeepLink.type &&
+        String(candidate.id) === pendingDeepLink.id,
+    );
+
+    if (linkedItem) {
+      setSelectedPerson(null);
+      openRootDetail(linkedItem);
+      navigateToTab('home');
+    } else {
+      Alert.alert(
+        'لینک آپاراتچی',
+        'این عنوان در فهرست فعلی برنامه پیدا نشد. محتوای برنامه را به‌روز کنید و دوباره لینک را باز کنید.',
+      );
+    }
+
+    setPendingDeepLink(null);
+  }, [content, pendingDeepLink]);
+
+  useEffect(() => {
+    const summary = selectedItem;
+    if (!summary?.detailPath || summary.detailLoaded === true) return undefined;
+
+    let cancelled = false;
+    void (async () => {
+      let activeSummary = summary;
+      let fullItem = await loadCatalogItemDetail(activeSummary);
+
+      if (!fullItem && !cancelled) {
+        // A cached lightweight index can outlive a content-addressed detail shard.
+        // Force one direct index refresh (bypassing manifest/cache short-circuits),
+        // then retry using the refreshed detailPath for the same title.
+        const refreshed = await loadContent(false, true);
+        if (cancelled) return;
+        const refreshedSummary = refreshed.items.find((candidate) =>
+          candidate.type === summary.type && String(candidate.id) === String(summary.id),
+        );
+        if (refreshedSummary) {
+          setContent(refreshed);
+          activeSummary = refreshedSummary;
+          setSelectedItem((current) => {
+            if (!current) return current;
+            if (current.type !== summary.type || String(current.id) !== String(summary.id)) return current;
+            return mergeOpenDetailSnapshot(current, refreshedSummary);
+          });
+          fullItem = await loadCatalogItemDetail(activeSummary);
+        }
+      }
+
+      if (!fullItem && !cancelled) {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        fullItem = await loadCatalogItemDetail(activeSummary);
+      }
+      if (cancelled || !fullItem) return;
+
+      setSelectedItem((current) => {
+        if (!current) return current;
+        if (current.type !== activeSummary.type || String(current.id) !== String(activeSummary.id)) return current;
+        if (current.detailPath !== activeSummary.detailPath) return current;
+
+        return mergeOpenDetailSnapshot(current, fullItem);
+      });
+    })().catch(() => undefined);
+
+    return () => { cancelled = true; };
+  }, [selectedItem?.detailLoaded, selectedItem?.detailPath, selectedItem?.id, selectedItem?.type]);
+
+  useEffect(() => {
+    if (!selectedItem) return;
+
+    const currentItem = content.items.find(
+      (candidate) =>
+        candidate.type === selectedItem.type &&
+        String(candidate.id) === String(selectedItem.id),
+    );
+
+    if (!currentItem) {
+      setSelectedItem(null);
+      return;
+    }
+
+    if (currentItem !== selectedItem) {
+      // An open Detail screen owns its first visible snapshot. A background
+      // full-index refresh with the same content-addressed detail must not swap
+      // its banner, overview or cast. Only a genuinely new detailPath may update
+      // the open item, and even then visible fields stay stable until next open.
+      if (
+        selectedItem.detailPath &&
+        selectedItem.detailPath === currentItem.detailPath
+      ) return;
+      setSelectedItem((current) => {
+        if (!current) return currentItem;
+        if (current.type !== currentItem.type || String(current.id) !== String(currentItem.id)) return currentItem;
+        return mergeOpenDetailSnapshot(current, currentItem);
+      });
+    }
+  }, [content.items, selectedItem]);
+
+  useEffect(() => {
+    downloadsRef.current = downloads;
+    const timer = setTimeout(() => {
+      saveDownloadRecords(downloads).catch(() => undefined);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [downloads]);
+
+
+  const hasRunningDownloads = downloads.some((record) => record.status === 'downloading');
+  useEffect(() => {
+    if (!hasRunningDownloads) return undefined;
+    let disposed = false;
+
+    const stopForVpn = async () => {
+      if (disposed || vpnPausingDownloadsRef.current) return;
+      const active = await checkVpnActive(0).catch(() => false);
+      if (disposed) return;
+      setVpnActive(active);
+      if (!active) return;
+
+      vpnPausingDownloadsRef.current = true;
+      try {
+        const running = downloadsRef.current.filter((record) => record.status === 'downloading');
+        const snapshots = new Map<string, Awaited<ReturnType<typeof pauseDownload>>>();
+        await Promise.all(running.map(async (record) => {
+          const snapshot = await pauseDownload(record.id).catch(() => null);
+          snapshots.set(record.id, snapshot);
+        }));
+        if (disposed) return;
+        setDownloads((current) => current.map((record) => {
+          if (record.status !== 'downloading') return record;
+          const snapshot = snapshots.get(record.id);
+          return {
+            ...record,
+            status: 'paused' as const,
+            destinationUri: snapshot?.destinationUri || record.destinationUri,
+            resumeData: snapshot?.resumeData || record.resumeData,
+            error: 'فیلترشکن روشن شد؛ دانلود متوقف شد. فیلترشکن را خاموش کنید و «ادامه» را بزنید.',
+          };
+        }));
+        setVpnWarningVisible(true);
+      } finally {
+        vpnPausingDownloadsRef.current = false;
+      }
+    };
+
+    void stopForVpn();
+    const timer = setInterval(() => { void stopForVpn(); }, 3500);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [hasRunningDownloads]);
+
+  useEffect(() => {
+    if (!libraryLoaded) return undefined;
+    const timer = setTimeout(() => {
+      saveLibraryState({ favorites, watchProgress: [], watchHistory }).catch(() => undefined);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [favorites, libraryLoaded, watchHistory]);
+
+  const toggleFavorite = (id: string) => {
+    setFavorites((current) =>
+      current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id],
+    );
+  };
+
+  const toggleEpisodeAlert = async (item: CatalogItem) => {
+    if (item.type !== 'series' || episodeAlertBusyId) return;
+
+    const itemId = String(item.id);
+    const currentlyEnabled = episodeAlertSeriesIds.includes(itemId);
+    setEpisodeAlertBusyId(itemId);
+    try {
+      const result = await setSeriesEpisodeAlert(item, !currentlyEnabled);
+      setEpisodeAlertSeriesIds(result.state.subscribedSeriesIds);
+
+      if (!result.permissionGranted) {
+        Alert.alert(
+          'اجازه اعلان فعال نیست',
+          'برای دریافت خبر قسمت‌های جدید، اعلان‌های آپاراتچی را از تنظیمات گوشی فعال کنید.',
+        );
+      } else {
+        Alert.alert(
+          result.enabled ? 'اعلان قسمت جدید فعال شد' : 'اعلان قسمت جدید خاموش شد',
+          result.enabled
+            ? `با انتشار قسمت جدید «${item.nameFa}»، به شما اطلاع داده می‌شود.`
+            : `برای «${item.nameFa}» دیگر اعلان قسمت جدید نمایش داده نمی‌شود.`,
+        );
+      }
+    } catch {
+      Alert.alert('اعلان قسمت جدید', 'تنظیم اعلان انجام نشد. دوباره تلاش کنید.');
+    } finally {
+      setEpisodeAlertBusyId(null);
+    }
+  };
+
+  const updateWatchProgress = (
+    request: VideoRequest,
+    position: number,
+    duration: number,
+    completed = false,
+  ) => {
+    if (!request.resumeKey || !request.itemId) return;
+    const safePosition = Math.max(0, Number(position || 0));
+    const safeDuration = Math.max(0, Number(duration || 0));
+    const finished = completed || (safeDuration > 0 && safePosition / safeDuration >= 0.94);
+    if (!finished && safePosition < 15) return;
+
+    const catalogItem = content?.items.find((item) => item.id === request.itemId);
+    const source = request.sources.find((candidate) => candidate.id === request.initialSourceId) || request.sources[0];
+    const historyRecord: WatchHistoryRecord = {
+      id: request.resumeKey,
+      itemId: request.itemId,
+      title: request.title,
+      subtitle: catalogItem?.name,
+      artwork: request.artwork || catalogItem?.backdrop || catalogItem?.poster,
+      episodeId: request.episodeId,
+      language: request.language,
+      downloadId: request.downloadId,
+      sourceId: source?.id,
+      sourceUrl: source?.url,
+      sourceQuality: source?.quality,
+      position: safePosition,
+      duration: safeDuration,
+      completed: finished,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setWatchHistory((current) => [
+      historyRecord,
+      ...current.filter((record) => record.id !== historyRecord.id),
+    ]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 100));
+  };
+
+  const removeWatchProgress = (id: string) => {
+    setWatchProgress((current) => current.filter((record) => record.id !== id));
+  };
+
+  const removeWatchHistory = (id: string) => {
+    setWatchHistory((current) => current.filter((record) => record.id !== id));
+  };
+
+  const confirmClearWatchHistory = () => {
+    Alert.alert(
+      'پاک‌کردن تاریخچه',
+      'تمام سابقه تماشای ذخیره‌شده روی این گوشی پاک شود؟ علاقه‌مندی‌ها و فایل‌های دانلودشده حذف نمی‌شوند.',
+      [
+        { text: 'انصراف', style: 'cancel' },
+        { text: 'پاک‌کردن', style: 'destructive', onPress: () => setWatchHistory([]) },
+      ],
+    );
+  };
+
+  const resumeWatchRecord = async (record: WatchProgressRecord) => {
+    if (record.downloadId) {
+      const download = downloadsRef.current.find((candidate) => candidate.id === record.downloadId);
+      if (!download?.localUri || download.status !== 'completed') {
+        removeWatchProgress(record.id);
+        Alert.alert('ادامه تماشا', 'فایل دانلودشده دیگر در حافظه برنامه موجود نیست.');
+        return;
+      }
+
+      const source: PlaybackSource = {
+        id: download.id,
+        url: download.localUri,
+        quality: download.quality || record.sourceQuality || 'فایل ذخیره‌شده',
+        rank: 0,
+      };
+      setVideoRequest({
+        title: download.title,
+        sources: [source],
+        initialSourceId: source.id,
+        resumeKey: record.id,
+        itemId: download.itemId,
+        artwork: record.artwork,
+        downloadId: download.id,
+        resumeAt: record.position,
+      });
+      return;
+    }
+
+    // Continuing a remote stream is also a playback action, so verify the
+    // Android VPN transport again immediately before opening the player.
+    if (await refreshVpnState()) { setVpnWarningVisible(true); return; }
+
+    const item = content?.items.find((candidate) => candidate.id === record.itemId);
+    if (!item) {
+      removeWatchProgress(record.id);
+      Alert.alert('ادامه تماشا', 'این عنوان دیگر در فهرست محتوا موجود نیست.');
+      return;
+    }
+
+    const episodeGroup = record.episodeId
+      ? (item.downloads || []).find((section) => section.id === record.episodeId) || null
+      : null;
+    const versions = playableVersionsFor(item, episodeGroup);
+    const version = versions.find((candidate) => candidate.language === record.language) || versions[0];
+
+    if (!version) {
+      setSelectedItem(item);
+      Alert.alert('ادامه تماشا', 'لینک پخش این عنوان تغییر کرده است؛ نسخه موردنظر را دوباره انتخاب کنید.');
+      return;
+    }
+
+    setVideoRequest({
+      title: record.title,
+      sources: version.sources,
+      initialSourceId: version.defaultSource.id,
+      resumeKey: record.id,
+      itemId: item.id,
+      artwork: episodeGroup ? episodeGroup.artwork : (item.backdrop || item.poster),
+      episodeId: episodeGroup?.id,
+      language: version.language,
+      resumeAt: record.position,
+    });
+  };
+
+  const openWatchHistoryRecord = (record: WatchHistoryRecord) => {
+    if (record.completed) {
+      const item = content?.items.find((candidate) => candidate.id === record.itemId);
+      if (item) {
+        openRootDetail(item);
+        return;
+      }
+    }
+    void resumeWatchRecord(record);
+  };
+
+  const openCatalogFilter = useCallback((filter: SearchFilter) => {
+    const state = navigationStateRef.current;
+    setSearchReturnTab(state.activeTab === 'search' ? 'categories' : state.activeTab);
+    setSearchReturnItem(state.selectedItem);
+    setSearchFilter(filter);
+    setSelectedItem(null);
+    setSelectedPerson(null);
+    navigateToTab('search');
+  }, [navigateToTab]);
+
+  const rememberHomeScrollOffset = useCallback((offset: number) => {
+    homeScrollOffsetRef.current = Math.max(0, offset);
+  }, []);
+  const reloadHomeContent = useCallback(() => { void reloadContent(true); }, [content.items.length, dismissStartup]);
+  const openMainMenu = useCallback(() => setMenuOpen(true), []);
+
+  useEffect(() => {
+    if (startupVisible || categoriesMounted || !content.items.length) return;
+    const task = InteractionManager.runAfterInteractions(() => setCategoriesMounted(true));
+    return () => task.cancel();
+  }, [categoriesMounted, content.items.length, startupVisible]);
+
+  const handleBottomTabChange = useCallback((tab: MainTab) => {
+    if (tab === activeTabRef.current) {
+      if (tab === 'home') setHomeScrollTopSignal((value) => value + 1);
+      return;
+    }
+    setSelectedItem(null);
+    setSelectedPerson(null);
+    setMenuOpen(false);
+    setSearchReturnItem(null);
+    setSearchReturnTab('home');
+    // Only the automatic jump that happens when a download starts keeps a
+    // return target. A deliberate bottom-tab tap starts a fresh navigation path.
+    setDownloadsReturnItem(null);
+    setDownloadsReturnTab('home');
+    navigateToTab(tab);
+  }, [navigateToTab]);
+
+  const openOperatorAccess = async (item: CatalogItem, file: DownloadFile) => {
+    if (!isOperatorFile(file) || !isOperatorPortalUrl(file.url)) {
+      Alert.alert('پخش ویژه اینترنت همراه', 'لینک پخش این عنوان فعلاً در دسترس نیست.');
+      return;
+    }
+
+    setOperatorGateRequest({ item, file, status: 'checking' });
+
+    if (await refreshVpnState()) { setOperatorGateRequest(null); setVpnWarningVisible(true); return; }
+
+    const mobileAccess = await checkMobileOperatorAccess();
+    if (mobileAccess.status !== 'allowed') {
+      setOperatorGateRequest({ item, file, status: mobileAccess.status });
+      return;
+    }
+
+    setOperatorGateRequest(null);
+    setOperatorWebRequest({
+      title: `${item.nameFa} — ${downloadModeFor(file) === 'operator-download' ? 'دریافت ویژه همراه' : 'پخش ویژه همراه'}`,
+      url: file.url,
+    });
+  };
+
+  const openStreamInsideApp = async (
+    item: CatalogItem,
+    episodeGroup: DownloadSection | null = null,
+    requestedLanguage?: MediaLanguage,
+  ) => {
+    if (!(await internetIsReachable())) {
+      Alert.alert(
+        'اتصال اینترنت برقرار نیست',
+        'برای پخش آنلاین، اینترنت را روشن کنید و دوباره تلاش کنید.',
+        [
+          { text: 'انصراف', style: 'cancel' },
+          { text: 'تلاش دوباره', onPress: () => void openStreamInsideApp(item, episodeGroup, requestedLanguage) },
+        ],
+      );
+      return;
+    }
+    if (await refreshVpnState()) { setVpnWarningVisible(true); return; }
+
+    const versions = playableVersionsFor(item, episodeGroup);
+    if (!versions.length) {
+      Alert.alert('پخش آنلاین', 'پخش این نسخه فعلاً در دسترس نیست.');
+      return;
+    }
+
+    const playVersion = (version: PlayableVersion) => {
+      const episodeLabel = episodeGroup
+        ? ` — فصل ${toPersianDigits(episodeGroup.seasonNumber || 1)}، قسمت ${toPersianDigits(episodeGroup.episodeNumber || 0)}`
+        : '';
+      const resumeKey = `${item.id}:${episodeGroup?.id || 'main'}:${version.language || 'iranian'}`;
+      setVideoRequest({
+        title: `${item.nameFa}${episodeLabel} — ${version.label}`,
+        sources: version.sources,
+        initialSourceId: version.defaultSource.id,
+        resumeKey,
+        itemId: item.id,
+        artwork: episodeGroup ? episodeGroup.artwork : (item.backdrop || item.poster),
+        episodeId: episodeGroup?.id,
+        language: version.language,
+        resumeAt: 0,
+      });
+    };
+
+    const requestedVersion = requestedLanguage ? versions.find((version) => version.language === requestedLanguage) : undefined;
+    if (requestedVersion || versions.length === 1) {
+      playVersion(requestedVersion || versions[0]);
+      return;
+    }
+
+    const dubbed = versions.find((version) => version.language === 'dubbed');
+    const subtitled = versions.find((version) => version.language === 'subtitled');
+
+    Alert.alert(
+      'انتخاب نسخه پخش',
+      'نسخه دوبله را می‌خواهید یا زیرنویس؟',
+      [
+        ...(dubbed ? [{ text: 'دوبله فارسی', onPress: () => playVersion(dubbed) }] : []),
+        ...(subtitled ? [{ text: 'زیرنویس فارسی', onPress: () => playVersion(subtitled) }] : []),
+        ...(item.ir ? versions.filter((version) => !version.language).map((version) => ({ text: version.label, onPress: () => playVersion(version) })) : []),
+        { text: 'انصراف', style: 'cancel' },
+      ],
+    );
+  };
+
+  const playRecommendedMovieInsidePlayer = async (summary: CatalogItem) => {
+    if (summary.type !== 'movie') return;
+
+    if (!(await internetIsReachable())) {
+      Alert.alert('اتصال اینترنت برقرار نیست', 'برای پخش آنلاین، اینترنت را روشن کنید و دوباره تلاش کنید.');
+      return;
+    }
+    if (await refreshVpnState()) { setVpnWarningVisible(true); return; }
+
+    let item = summary;
+    if (summary.detailPath && summary.detailLoaded !== true) {
+      const hydrated = await loadCatalogItemDetail(summary).catch(() => null);
+      if (hydrated) item = hydrated;
+    }
+
+    const versions = playableVersionsFor(item, null);
+    if (!versions.length) {
+      Alert.alert('پخش آنلاین', 'برای این پیشنهاد لینک پخش آنلاین قابل استفاده پیدا نشد.');
+      return;
+    }
+
+    // Keep the current language when possible, then prefer Persian dub, then
+    // subtitle. No detail-page navigation and no extra version chooser: one tap
+    // switches the existing player directly to the recommended movie.
+    const currentLanguage = videoRequest?.language;
+    const version =
+      (currentLanguage ? versions.find((candidate) => candidate.language === currentLanguage) : undefined) ||
+      versions.find((candidate) => candidate.language === 'dubbed') ||
+      versions.find((candidate) => candidate.language === 'subtitled') ||
+      versions[0];
+
+    setSelectedPerson(null);
+    // Keep the recommended detail behind the modal so closing the player returns
+    // to the movie that is actually playing, without visibly navigating first.
+    setSelectedItem(item);
+    setVideoRequest({
+      title: `${item.nameFa || item.name} — ${version.label}` ,
+      sources: version.sources,
+      initialSourceId: version.defaultSource.id,
+      resumeKey: `${item.id}:main:${version.language || 'direct'}` ,
+      itemId: item.id,
+      artwork: item.backdrop || item.poster,
+      language: version.language,
+      resumeAt: 0,
+    });
+  };
+  const playDownloadedRecord = (record: DownloadRecord) => {
+    if (!record.localUri) return;
+    const source: PlaybackSource = {
+      id: record.id,
+      url: record.localUri,
+      quality: record.quality || 'فایل ذخیره‌شده',
+      rank: 0,
+    };
+    setVideoRequest({
+      title: record.title,
+      sources: [source],
+      initialSourceId: source.id,
+      resumeKey: `download:${record.id}`,
+      itemId: record.itemId,
+      artwork: content?.items.find((item) => item.id === record.itemId)?.backdrop ||
+        content?.items.find((item) => item.id === record.itemId)?.poster,
+      downloadId: record.id,
+      resumeAt: 0,
+    });
+  };
+
+  const executeDownload = async (record: DownloadRecord) => {
+    const runningRecord: DownloadRecord = {
+      ...record,
+      status: 'downloading',
+      error: undefined,
+    };
+
+    setDownloads((current) => current.map((item) =>
+      item.id === record.id ? runningRecord : item,
+    ));
+
+    if (!(await internetIsReachable())) {
+      setDownloads((current) => current.map((item) =>
+        item.id === record.id
+          ? {
+              ...item,
+              status: 'paused' as const,
+              error: 'اینترنت قطع است؛ اینترنت را روشن کنید و برای شروع دانلود دوباره بزنید.',
+            }
+          : item,
+      ));
+      return;
+    }
+
+    try {
+      const result = await runDownload({
+        record: runningRecord,
+        onProgress: ({ progress, bytesWritten, totalBytes }) => {
+          setDownloads((current) => current.map((item) =>
+            item.id === record.id
+              ? {
+                  ...item,
+                  progress,
+                  bytesWritten,
+                  totalBytes,
+                  destinationUri: item.destinationUri || runningRecord.destinationUri,
+                }
+              : item,
+          ));
+        },
+      });
+
+      if (result.unavailable) {
+        setDownloads((current) => current.map((item) =>
+          item.id === record.id
+            ? {
+                ...item,
+                status: 'failed' as const,
+                localUri: undefined,
+                destinationUri: undefined,
+                resumeData: undefined,
+                progress: 0,
+                bytesWritten: 0,
+                totalBytes: undefined,
+                responseStatus: result.responseStatus,
+                mimeType: result.mimeType,
+                error: 'فایل این کیفیت در دسترس نیست.',
+              }
+            : item,
+        ));
+        return;
+      }
+
+      if (result.paused || !result.localUri) {
+        setDownloads((current) => current.map((item) =>
+          item.id === record.id
+            ? {
+                ...item,
+                status: 'paused' as const,
+                destinationUri: result.destinationUri || item.destinationUri || runningRecord.destinationUri,
+                resumeData: result.resumeData || item.resumeData,
+                responseStatus: result.responseStatus || item.responseStatus,
+                mimeType: result.mimeType || item.mimeType,
+                error: friendlyNetworkError(result.error) || 'دانلود متوقف شده است؛ برای ادامه دوباره بزنید.',
+              }
+            : item,
+        ));
+        return;
+      }
+
+      setDownloads((current) => current.map((item) =>
+        item.id === record.id
+          ? {
+              ...item,
+              localUri: result.localUri,
+              destinationUri: result.localUri,
+              resumeData: undefined,
+              progress: 1,
               status: 'completed' as const,
               responseStatus: result.responseStatus,
               mimeType: result.mimeType,
