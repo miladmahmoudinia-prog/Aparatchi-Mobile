@@ -10,8 +10,18 @@ const [app, service, bootstrap] = await Promise.all([
 
 test('a reopened Detail always starts at the top', () => {
   assert.ok(!app.includes('detailScrollOffsets'));
-  assert.ok(app.includes('detailScrollRef.current?.scrollTo({ y: 0, animated: false })'));
+  assert.ok(!app.includes('detailScrollRef.current?.scrollTo'));
+  assert.ok(app.includes('key={`detail-scroll:${item.type}:${item.id}`}'));
   assert.ok(app.includes('}, [item?.id, visible]);'));
+});
+
+test('Detail uses provider insets on its first native Modal frame', () => {
+  const detailStart = app.indexOf('function DetailModal({');
+  const detailEnd = app.indexOf('function PersonProfileModal({', detailStart);
+  const detail = app.slice(detailStart, detailEnd);
+  assert.ok(detail.includes('const detailInsets = useSafeAreaInsets();'));
+  assert.ok(detail.includes('paddingTop: detailInsets.top'));
+  assert.ok(!detail.includes('<SafeAreaView style={styles.detailScreen}'));
 });
 
 test('poster navigation commits before catalog-wide secondary sections', () => {
