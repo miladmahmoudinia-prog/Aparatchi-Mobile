@@ -5,12 +5,12 @@ import test from 'node:test';
 const app = fs.readFileSync('App.tsx','utf8');
 const service = fs.readFileSync('src/contentService.ts','utf8');
 
-test('cold start reveals bundled/live cache before remote work', () => {
+test('cold start keeps bundled/live cache behind Startup until current live truth', () => {
   const effectStart = app.indexOf('if (hasBundledCatalog) {');
   const effectEnd = app.indexOf('} else {', effectStart);
   const effect = app.slice(effectStart, effectEnd);
-  assert.ok(effect.indexOf('dismissStartup();') >= 0);
-  assert.ok(effect.indexOf('dismissStartup();') < effect.indexOf('void reloadContent(false);'));
+  assert.ok(!effect.includes('dismissStartup();'));
+  assert.ok(effect.includes('void reloadContent(false);'));
 
   const start = app.indexOf('if (online) {', app.indexOf('const reloadContent = async'));
   const end = app.indexOf('const firstApplied = applyContent(firstContent);', start);
@@ -18,6 +18,9 @@ test('cold start reveals bundled/live cache before remote work', () => {
   assert.ok(start >= 0 && end > start);
   assert.ok(block.indexOf('await loadLiveContent(contentRef.current)') >= 0);
   assert.ok(app.includes('const cachedLive = initialLoad ? await loadCachedLiveContent(contentRef.current) : null;'));
+  const cachedStart = app.indexOf('if (cachedLive?.items.length) {', app.indexOf('const reloadContent = async'));
+  const onlineStart = app.indexOf('if (online) {', cachedStart);
+  assert.ok(!app.slice(cachedStart, onlineStart).includes('dismissStartup();'));
   assert.ok(!block.includes('firstContent = await loadContent(true)'));
   assert.ok(!block.includes('loadContent('));
   assert.ok(!block.includes('loadContent(false, true)'));
