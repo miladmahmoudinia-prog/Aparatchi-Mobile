@@ -16,6 +16,10 @@ test('series episodes render before related titles on detail pages', () => {
   assert.ok(episodes < related, 'related titles hide the episode list below the fold');
 });
 
-test('first publication timestamp keeps a newly completed series first', () => {
-  assert.ok(app.includes("item.publishedAt || item.firstSeenAt"));
+test('finishing an old archive cannot promote it ahead of genuinely new series', () => {
+  const timestampStart = app.indexOf('const catalogItemTimestamp =');
+  const timestampEnd = app.indexOf('const hasCategory =', timestampStart);
+  const timestampHelper = app.slice(timestampStart, timestampEnd);
+  assert.ok(timestampHelper.includes('item.firstSeenAt || item.sourceCreatedAt'));
+  assert.ok(!timestampHelper.includes('item.publishedAt'));
 });
