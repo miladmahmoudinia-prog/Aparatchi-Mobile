@@ -68,5 +68,8 @@ if (manifestRaw && freshRaw) {
 } else {
   const current = await fs.readFile(outputPath, 'utf8');
   const value = validate(current, null);
+  if (process.env.CI === 'true' || process.env.CI === '1') {
+    throw new Error(`Refusing to package stale startup catalog ${value.clientRevision}: fresh Content artifacts were unavailable`);
+  }
   console.warn(JSON.stringify({ bundledFallbackItems: value.items.length, clientRevision: value.clientRevision }));
 }
