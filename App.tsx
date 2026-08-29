@@ -8206,7 +8206,26 @@ function AppContent() {
       if (
         selectedItem.detailPath &&
         selectedItem.detailPath === currentItem.detailPath
-      ) return;
+      ) {
+        // Bootstrap intentionally carries only the latest series episode.  The
+        // full index can arrive before (or instead of) the immutable detail
+        // shard on slow/restricted networks.  Do not leave the already-open
+        // page stuck on that one-episode preview: merge the index's complete
+        // action tree while preserving the visible artwork/text snapshot.
+        const selectedEpisodeCount = (selectedItem.downloads || []).filter(
+          (section) => Number(section.episodeNumber || 0) > 0,
+        ).length;
+        const currentEpisodeCount = (currentItem.downloads || []).filter(
+          (section) => Number(section.episodeNumber || 0) > 0,
+        ).length;
+        if (currentEpisodeCount <= selectedEpisodeCount) return;
+        setSelectedItem((current) => {
+          if (!current) return currentItem;
+          if (current.type !== currentItem.type || String(current.id) !== String(currentItem.id)) return currentItem;
+          return mergeOpenDetailSnapshot(current, currentItem);
+        });
+        return;
+      }
       setSelectedItem((current) => {
         if (!current) return currentItem;
         if (current.type !== currentItem.type || String(current.id) !== String(currentItem.id)) return currentItem;
