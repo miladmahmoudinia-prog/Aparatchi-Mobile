@@ -21,10 +21,12 @@ test('every Detail replacement path uses the stable visible snapshot', () => {
   assert.ok(app.includes('return mergeOpenDetailSnapshot(current, currentItem);'));
 });
 
-test('background full-index refresh cannot replace an open summary with the same detailPath', () => {
+test('background full-index refresh expands a one-episode preview without replacing the visible snapshot', () => {
   const effectStart = app.indexOf('const currentItem = content.items.find(');
   const effectEnd = app.indexOf('}, [content.items, selectedItem]);', effectStart);
   const effect = app.slice(effectStart, effectEnd);
   assert.ok(effect.includes('selectedItem.detailPath === currentItem.detailPath'));
+  assert.ok(effect.includes('currentEpisodeCount <= selectedEpisodeCount'));
+  assert.ok(effect.includes('return mergeOpenDetailSnapshot(current, currentItem);'));
   assert.ok(!effect.includes('selectedItem.detailLoaded === true'), 'same-path protection must also cover the pre-hydration first paint');
 });
