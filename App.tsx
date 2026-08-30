@@ -68,6 +68,8 @@ import {
   syncEpisodeAlerts,
 } from './src/notificationManager';
 
+const APP_DISPLAY_VERSION = '0.16.6';
+
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
 type PersonRoleFilter = 'all' | 'actor' | 'director';
@@ -7465,7 +7467,10 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <SafeAreaView style={styles.sideMenuPanel} edges={['top', 'right', 'bottom']}>
           <View style={styles.sideMenuHeader}>
-            <Logo />
+            <View style={styles.sideMenuBrandBlock}>
+              <Logo />
+              <Text style={styles.sideMenuVersionText}>نسخه {APP_DISPLAY_VERSION}</Text>
+            </View>
             <Pressable onPress={onClose} style={styles.iconButton}><Ionicons name="close" color={COLORS.text} size={22} /></Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.sideMenuItems} showsVerticalScrollIndicator={false}>
@@ -10065,6 +10070,8 @@ const styles = StyleSheet.create({
   sideMenuOverlay: { flex: 1, flexDirection: 'row-reverse', backgroundColor: 'rgba(0,0,0,0.62)' },
   sideMenuPanel: { width: '82%', maxWidth: 360, height: '100%', backgroundColor: '#0B0E13', borderLeftWidth: 1, borderLeftColor: COLORS.border },
   sideMenuHeader: { minHeight: 75, paddingHorizontal: 16, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  sideMenuBrandBlock: { alignItems: 'flex-end', gap: 2 },
+  sideMenuVersionText: { ...rtlText, color: COLORS.muted, fontSize: 9, fontWeight: '700' },
   sideMenuItems: { padding: 14, gap: 8 },
   sideMenuAccordion: { gap: 6 },
   sideMenuItem: { minHeight: 54, paddingHorizontal: 13, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
