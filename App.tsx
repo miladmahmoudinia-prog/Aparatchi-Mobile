@@ -5501,9 +5501,11 @@ const episodeShowcaseLabel = (_item: CatalogItem, group: DownloadSection, quran:
 function ExactEpisodeArtwork({
   item,
   artwork,
+  style,
 }: {
   item: CatalogItem;
   artwork: string;
+  style?: any;
 }) {
   // Episode cards are navigation controls, so mounting them must never start
   // video decoders or thumbnail extraction. Paint artwork already seen on the
@@ -5512,7 +5514,7 @@ function ExactEpisodeArtwork({
   const exactArtwork = artwork ? optimizedImageUrl(artwork, 'backdrop') : '';
 
   return (
-    <View style={styles.episodeShowcaseArtwork}>
+    <View style={[styles.episodeShowcaseArtwork, style]}>
       <CatalogArtwork
         primary={fallbackArtwork}
         fallback={item.posterFallback || item.poster || item.backdrop}
@@ -6323,6 +6325,13 @@ function VideoPlayerModal({
   const nextEpisodeGroup = activeEpisodeIndex >= 0
     ? playerEpisodeGroups[activeEpisodeIndex + 1] || null
     : null;
+  const nextEpisodeArtwork = item?.type === 'series' && nextEpisodeGroup
+    ? exactEpisodeArtworkFor(nextEpisodeGroup, item)
+    : '';
+
+  useEffect(() => {
+    if (nextEpisodeArtwork) void Image.prefetch(nextEpisodeArtwork).catch(() => undefined);
+  }, [nextEpisodeArtwork]);
 
   const player = useVideoPlayer(initialSource.url, (instance) => {
     instance.timeUpdateEventInterval = 0.5;
@@ -6844,11 +6853,10 @@ function VideoPlayerModal({
               >
                 <Ionicons name="close" color="#fff" size={18} />
               </Pressable>
-              <CatalogArtwork
-                primary={exactEpisodeArtworkFor(nextEpisodeGroup, item)}
+              <ExactEpisodeArtwork
+                item={item}
+                artwork={nextEpisodeArtwork}
                 style={styles.nextEpisodeArtwork}
-                contentFit="cover"
-                imageKind="backdrop"
               />
               <View style={styles.nextEpisodeBody}>
                 <Text style={styles.nextEpisodeEyebrow}>قسمت بعدی</Text>
