@@ -26,7 +26,7 @@ export type FeaturedPerson = CatalogPerson & {
   region?: 'iranian' | 'foreign';
 };
 
-export type MediaLanguage = 'dubbed' | 'subtitled' | 'original';
+export type MediaLanguage = 'dubbed' | 'subtitled';
 
 export type OperatorAccessKind = 'stream' | 'download' | 'both';
 export type DownloadMode = 'download' | 'play' | 'purchase' | 'operator-download' | 'operator-play';

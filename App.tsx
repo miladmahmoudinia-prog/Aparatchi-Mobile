@@ -550,10 +550,10 @@ const itemHasOperatorAccess = (item: CatalogItem) =>
     (item.downloads || []).some((section) => operatorFilesFor(section.files).length > 0),
   );
 
-const LANGUAGE_ORDER: MediaLanguage[] = ['dubbed', 'subtitled', 'original'];
+const LANGUAGE_ORDER: MediaLanguage[] = ['dubbed', 'subtitled'];
 
 const languageTitle = (language: MediaLanguage) =>
-  language === 'dubbed' ? 'دوبله فارسی' : language === 'subtitled' ? 'زیرنویس فارسی' : 'نسخه اصلی';
+  language === 'dubbed' ? 'دوبله فارسی' : 'زیرنویس فارسی';
 
 const shareCatalogItem = async (item: CatalogItem) => {
   try {
@@ -593,8 +593,6 @@ const itemPosterBadges = (item: CatalogItem) => {
       badges.push({ id: 'language', label: 'دوبله فارسی', kind: 'language' });
     } else if (languages.includes('subtitled')) {
       badges.push({ id: 'language', label: 'زیرنویس فارسی', kind: 'language' });
-    } else if (languages.includes('original')) {
-      badges.push({ id: 'language', label: 'نسخه اصلی', kind: 'language' });
     }
   }
 
@@ -967,7 +965,7 @@ const languageSectionsForFiles = (
       id: `${idPrefix}-${language}`,
       title: languageTitle(language),
       subtitle: `${languageFiles.length} کیفیت دانلود مستقیم`,
-      badge: languageTitle(language),
+      badge: language === 'dubbed' ? 'دوبله فارسی' : 'زیرنویس فارسی',
       language,
       files: languageFiles,
     }];
