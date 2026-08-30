@@ -62,6 +62,10 @@ const MIN_VALID_VIDEO_BYTES = 256 * 1024;
 const VIDEO_EXTENSION_RE = /\.(?:mp4|m4v|mov|webm|mkv)(?:$|[?#])/i;
 const INVALID_CONTENT_TYPE_RE = /(?:text\/html|text\/plain|application\/(?:json|xml)|text\/xml)/i;
 
+const hasVideoExtension = (...values: Array<string | undefined>) => values.some((value) =>
+  VIDEO_EXTENSION_RE.test(String(value || '').replace(/\.part(?=$|[?#])/i, '')),
+);
+
 const responseMimeType = (result: any) => String(
   result?.headers?.['content-type'] ||
   result?.headers?.['Content-Type'] ||
@@ -141,7 +145,7 @@ export async function loadDownloadRecords(): Promise<DownloadRecord[]> {
       const looksComplete = Boolean(
         fileInfo?.exists &&
         actualSize >= MIN_VALID_VIDEO_BYTES &&
-        VIDEO_EXTENSION_RE.test(record.localUri) &&
+        hasVideoExtension(record.localUri) &&
         !INVALID_CONTENT_TYPE_RE.test(String(record.mimeType || '')) &&
         (expectedSize <= 0 || actualSize >= expectedSize * 0.97),
       );
@@ -235,7 +239,7 @@ export async function runDownload({
     const invalidFile = Boolean(
       !info.exists ||
       actualSize < MIN_VALID_VIDEO_BYTES ||
-      !VIDEO_EXTENSION_RE.test(result.uri) ||
+      !hasVideoExtension(result.uri, record.sourceUrl) ||
       invalidHttpStatus ||
       invalidMimeType,
     );
@@ -333,7 +337,7 @@ export async function saveDownloadedFileToGallery(localUri?: string) {
   }
 
   const info = await FileSystem.getInfoAsync(localUri);
-  if (!info.exists || Number((info as any).size || 0) < MIN_VALID_VIDEO_BYTES || !VIDEO_EXTENSION_RE.test(localUri)) {
+  if (!info.exists || Number((info as any).size || 0) < MIN_VALID_VIDEO_BYTES || !hasVideoExtension(localUri)) {
     throw new Error('فایل ویدئویی کامل و معتبر نیست.');
   }
 
