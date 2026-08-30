@@ -1,0 +1,65 @@
+name: Apply Dynamic Home Categories
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/apply-dynamic-home-categories.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 30
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Patch Home category preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const file = 'App.tsx';
+          let source = fs.readFileSync(file, 'utf8');
+          const before = `        const matches = SERVER_CATEGORY_FILTERS.has(filter) && keys.length\n          ? keys.includes(filter)\n          : fastCatalogFilterMatch(item, filter);`;
+          const after = `        const matches = STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)\n          ? fastCatalogFilterMatch(item, filter)\n          : (SERVER_CATEGORY_FILTERS.has(filter) && keys.length\n            ? keys.includes(filter)\n            : fastCatalogFilterMatch(item, filter));`;
+          if (!source.includes(before)) throw new Error('Home category preview hook not found');
+          source = source.replace(before, after);
+          fs.writeFileSync(file, source);
+          NODE
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add App.tsx
+          if git diff --cached --quiet; then
+            echo 'No Mobile category changes.'
+            exit 0
+          fi
+          git commit -m 'fix: validate dynamic Home categories'
+          git pull --rebase origin main
+          git push origin HEAD:main
