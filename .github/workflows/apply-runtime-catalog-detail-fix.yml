@@ -1,0 +1,124 @@
+name: Apply Runtime Catalog Detail Fix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/apply-runtime-catalog-detail-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: aparatchi-mobile-runtime-fix
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 20
+
+      - name: Patch category truth and detail hydration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one patch target, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'App.tsx',
+              "const isProgramItem = (item: CatalogItem) => {\n  const title = catalogTitleText(item);",
+              "const isProgramItem = (item: CatalogItem) => {\n  // Animation/anime is never a talk show, reality program or competition.\n  // This also protects the UI from stale server categoryKeys such as programs.\n  if (isAnimatedItem(item)) return false;\n  const title = catalogTitleText(item);",
+          )
+
+          replace_once(
+              'App.tsx',
+              "  if (filter === 'mobile-operator') return itemHasOperatorAccess(item);\n  if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length) {",
+              "  if (filter === 'mobile-operator') return itemHasOperatorAccess(item);\n  // These categories have enough local metadata to validate their truth. Do not\n  // blindly trust stale categoryKeys: that kept Iranian series at 18 and could\n  // place anime movies inside Programs.\n  if (STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)) {\n    return matchesCatalogFilter(item, filter);\n  }\n  if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length) {",
+          )
+
+          replace_once(
+              'src/contentService.ts',
+              "  return `${FileSystem.documentDirectory}aparatchi-detail-${key}`;",
+              "  // v2 invalidates detail objects cached by older builds before episode\n  // completeness was verified against the current catalog summary.\n  return `${FileSystem.documentDirectory}aparatchi-detail-v2-${key}`;",
+          )
+
+          replace_once(
+              'src/contentService.ts',
+              "  const detailPath = summaryDetailPath;\n  const memoryKey = `${summary.type}:${summary.id}:${detailPath}`;\n  const memory = detailMemoryCache.get(memoryKey);\n  if (memory) return memory;\n  const pending = detailRequestCache.get(memoryKey);",
+              "  const detailPath = summaryDetailPath;\n  const memoryKey = `${summary.type}:${summary.id}:${detailPath}`;\n\n  const detailSatisfiesSummary = (detail: CatalogItem) => {\n    if (summary.type !== 'series') return true;\n    const episodeSections = (detail.downloads || []).filter(\n      (section) => Number(section.episodeNumber || 0) > 0,\n    );\n    const expectedLatestEpisode = Number(summary.latestEpisode?.episodeNumber || 0);\n    const expectedLatestSeason = Number(summary.latestEpisode?.seasonNumber || 0);\n    if (expectedLatestEpisode > 0) {\n      return episodeSections.some((section) => {\n        const episode = Number(section.episodeNumber || 0);\n        const season = Number(section.seasonNumber || 1);\n        if (expectedLatestSeason > 0) {\n          return season > expectedLatestSeason ||\n            (season === expectedLatestSeason && episode >= expectedLatestEpisode);\n        }\n        return episode >= expectedLatestEpisode;\n      });\n    }\n    const expectedCount = Number(summary.episodeCount || 0);\n    return expectedCount <= 0 || episodeSections.length >= expectedCount;\n  };\n\n  const memory = detailMemoryCache.get(memoryKey);\n  if (memory && detailSatisfiesSummary(memory)) return memory;\n  if (memory) detailMemoryCache.delete(memoryKey);\n  const pending = detailRequestCache.get(memoryKey);",
+          )
+
+          replace_once(
+              'src/contentService.ts',
+              "      if (!normalized || normalized.id !== summary.id || normalized.type !== summary.type) return null;\n      // Keep the summary path on the selected object so App does not downgrade",
+              "      if (!normalized || normalized.id !== summary.id || normalized.type !== summary.type) return null;\n      // A summary can already know that a series has 14 episodes while an old\n      // detail cache/CDN response still contains none. Reject that stale detail\n      // so another mirror/current shard is fetched instead of rendering an empty page.\n      if (!detailSatisfiesSummary(normalized)) return null;\n      // Keep the summary path on the selected object so App does not downgrade",
+          )
+
+          package_path = Path('package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          package['version'] = '0.16.5'
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          app_path = Path('app.json')
+          app = json.loads(app_path.read_text(encoding='utf-8'))
+          app['expo']['version'] = '0.16.5'
+          app['expo']['android']['versionCode'] = max(35, int(app['expo']['android'].get('versionCode', 0)) + 1)
+          app_path.write_text(json.dumps(app, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Verify patch invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F "if (isAnimatedItem(item)) return false;" App.tsx
+          grep -F "if (STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter))" App.tsx
+          grep -F "aparatchi-detail-v2-" src/contentService.ts
+          grep -F "detailSatisfiesSummary" src/contentService.ts
+          node -e "const p=require('./package.json'); const a=require('./app.json'); if(p.version!=='0.16.5'||a.expo.version!=='0.16.5'||a.expo.android.versionCode<35) process.exit(1)"
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add App.tsx src/contentService.ts package.json app.json
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git commit -m 'fix: validate categories and refresh series details'
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - name: Dispatch fresh APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run android-apk.yml --repo "$GITHUB_REPOSITORY" --ref main
