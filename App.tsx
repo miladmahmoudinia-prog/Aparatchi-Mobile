@@ -9830,7 +9830,7 @@ const styles = StyleSheet.create({
   nextEpisodeCard: { width: '100%', maxWidth: 520, minHeight: 112, flexDirection: 'row-reverse', alignItems: 'center', gap: 10, padding: 10, borderRadius: 16, backgroundColor: 'rgba(10,12,16,0.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)' },
   nextEpisodeCardLandscape: { maxWidth: 560, minHeight: 108 },
   nextEpisodeClose: { position: 'absolute', top: 8, left: 8, zIndex: 3, width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.09)' },
-  nextEpisodeArtwork: { width: 132, height: 78, borderRadius: 11, backgroundColor: COLORS.surfaceStrong },
+  nextEpisodeArtwork: { width: 132, height: 78, overflow: 'hidden', borderRadius: 11, backgroundColor: COLORS.surfaceStrong },
   nextEpisodeBody: { flex: 1, minWidth: 0, alignItems: 'flex-end' },
   nextEpisodeEyebrow: { ...rtlText, color: COLORS.gold, fontSize: 9.5, fontWeight: '900', marginBottom: 4 },
   nextEpisodeTitle: { ...rtlText, color: '#fff', fontSize: 12.5, lineHeight: 19, fontWeight: '900', textAlign: 'right' },
