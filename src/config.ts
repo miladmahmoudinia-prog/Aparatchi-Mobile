@@ -1,11 +1,11 @@
 /**
  * منبع‌های عمومی کاتالوگ آپاراتچی.
- * CDN اولویت دارد تا روی شبکه‌هایی که raw.githubusercontent.com کند یا مسدود است
- * اپ به کاتالوگ ۱۰تایی اضطراری سقوط نکند. GitHub Raw به‌عنوان مسیر دوم می‌ماند.
+ * GitHub Raw اولویت دارد تا تغییرات جدید کاتالوگ و جزئیات بدون تأخیر cache
+ * به اپ برسند. jsDelivr فقط مسیر پشتیبان برای اختلال یا کندی GitHub Raw است.
  */
 export const CONTENT_REPOSITORY_BASES = [
-  'https://cdn.jsdelivr.net/gh/miladmahmoudinia-prog/Aparatchi-Content@main/',
   'https://raw.githubusercontent.com/miladmahmoudinia-prog/Aparatchi-Content/main/',
+  'https://cdn.jsdelivr.net/gh/miladmahmoudinia-prog/Aparatchi-Content@main/',
 ] as const;
 
 /**
