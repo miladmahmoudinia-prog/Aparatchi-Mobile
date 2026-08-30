@@ -3697,9 +3697,11 @@ const CategoriesScreen = memo(function CategoriesScreen({
       if (!hasFastCategoryArtwork(item)) continue;
       const keys = item.categoryKeys || [];
       for (const filter of previewFilters) {
-        const matches = SERVER_CATEGORY_FILTERS.has(filter) && keys.length
-          ? keys.includes(filter)
-          : fastCatalogFilterMatch(item, filter);
+        const matches = STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)
+          ? fastCatalogFilterMatch(item, filter)
+          : (SERVER_CATEGORY_FILTERS.has(filter) && keys.length
+            ? keys.includes(filter)
+            : fastCatalogFilterMatch(item, filter));
         if (!matches) continue;
         const score = categoryPreviewScore(item);
         if (score <= (scoreByFilter.get(filter) ?? Number.NEGATIVE_INFINITY)) continue;
