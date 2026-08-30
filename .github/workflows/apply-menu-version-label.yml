@@ -1,0 +1,109 @@
+name: Apply Menu Version Label
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/apply-menu-version-label.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 40
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Show version 0.16.6 in side menu
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const appFile = 'App.tsx';
+          let source = fs.readFileSync(appFile, 'utf8');
+
+          const versionAnchor = `type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';`;
+          const versionBlock = `const APP_DISPLAY_VERSION = '0.16.6';\n\n${versionAnchor}`;
+          if (source.includes(versionAnchor) && !source.includes("const APP_DISPLAY_VERSION = '0.16.6';")) {
+            source = source.replace(versionAnchor, versionBlock);
+          } else if (!source.includes("const APP_DISPLAY_VERSION = '0.16.6';")) {
+            throw new Error('App version insertion anchor not found');
+          }
+
+          const headerBefore = `          <View style={styles.sideMenuHeader}>\n            <Logo />\n            <Pressable onPress={onClose} style={styles.iconButton}><Ionicons name="close" color={COLORS.text} size={22} /></Pressable>\n          </View>`;
+          const headerAfter = `          <View style={styles.sideMenuHeader}>\n            <View style={styles.sideMenuBrandBlock}>\n              <Logo />\n              <Text style={styles.sideMenuVersionText}>نسخه {APP_DISPLAY_VERSION}</Text>\n            </View>\n            <Pressable onPress={onClose} style={styles.iconButton}><Ionicons name="close" color={COLORS.text} size={22} /></Pressable>\n          </View>`;
+          if (source.includes(headerBefore)) source = source.replace(headerBefore, headerAfter);
+          else if (!source.includes('styles.sideMenuVersionText')) throw new Error('Side menu header anchor not found');
+
+          const stylesBefore = `  sideMenuHeader: { minHeight: 75, paddingHorizontal: 16, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: COLORS.border },\n  sideMenuItems: { padding: 14, gap: 8 },`;
+          const stylesAfter = `  sideMenuHeader: { minHeight: 75, paddingHorizontal: 16, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: COLORS.border },\n  sideMenuBrandBlock: { alignItems: 'flex-end', gap: 2 },\n  sideMenuVersionText: { ...rtlText, color: COLORS.muted, fontSize: 9, fontWeight: '700' },\n  sideMenuItems: { padding: 14, gap: 8 },`;
+          if (source.includes(stylesBefore)) source = source.replace(stylesBefore, stylesAfter);
+          else if (!source.includes('sideMenuVersionText:')) throw new Error('Side menu style anchor not found');
+
+          fs.writeFileSync(appFile, source);
+
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          packageJson.version = '0.16.6';
+          fs.writeFileSync('package.json', `${JSON.stringify(packageJson, null, 2)}\n`);
+
+          const appJson = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+          appJson.expo.version = '0.16.6';
+          appJson.expo.android.versionCode = Math.max(36, Number(appJson.expo.android.versionCode || 0) + 1);
+          fs.writeFileSync('app.json', `${JSON.stringify(appJson, null, 2)}\n`);
+
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          lock.version = '0.16.6';
+          if (lock.packages?.['']) lock.packages[''].version = '0.16.6';
+          fs.writeFileSync('package-lock.json', `${JSON.stringify(lock, null, 2)}\n`);
+          NODE
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Verify visible version matches package
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+          const source = fs.readFileSync('App.tsx', 'utf8');
+          if (pkg.version !== '0.16.6' || app.expo.version !== '0.16.6') throw new Error('Version metadata mismatch');
+          if (!source.includes("const APP_DISPLAY_VERSION = '0.16.6';")) throw new Error('Visible app version missing');
+          if (!source.includes('نسخه {APP_DISPLAY_VERSION}')) throw new Error('Version label missing from side menu');
+          console.log(`Verified visible installed version ${pkg.version}; Android versionCode ${app.expo.android.versionCode}`);
+          NODE
+
+      - name: Commit menu version label
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add App.tsx package.json package-lock.json app.json
+          if git diff --cached --quiet; then
+            echo 'No version-label changes.'
+            exit 0
+          fi
+          git commit -m 'ui: show app version 0.16.6 in side menu'
+          git pull --rebase origin main
+          git push origin HEAD:main
