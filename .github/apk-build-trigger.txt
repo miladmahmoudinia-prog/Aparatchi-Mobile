@@ -1,0 +1,3 @@
+Aparatchi Android 0.16.5 rebuild
+Reason: fresh GitHub content source + refreshed Iranian series details + strict Home category truth
+Triggered: 2026-08-30
