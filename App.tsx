@@ -1320,6 +1320,9 @@ const isKidsItem = (item: CatalogItem) => {
 };
 
 const isProgramItem = (item: CatalogItem) => {
+  // Animation/anime is never a talk show, reality program or competition.
+  // This also protects the UI from stale server categoryKeys such as programs.
+  if (isAnimatedItem(item)) return false;
   const title = catalogTitleText(item);
   const genres = catalogGenreText(item);
   const metadata = catalogMetadataText(item);
@@ -1503,6 +1506,12 @@ const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
   if (filter === 'movie' || filter === 'series') return matchesCatalogFilter(item, filter);
   if (filter === 'updated') return isUpdatedEpisodicItem(item);
   if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
+  // These categories have enough local metadata to validate their truth. Do not
+  // blindly trust stale categoryKeys: that kept Iranian series at 18 and could
+  // place anime movies inside Programs.
+  if (STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)) {
+    return matchesCatalogFilter(item, filter);
+  }
   if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length) {
     return (item.categoryKeys || []).includes(filter);
   }

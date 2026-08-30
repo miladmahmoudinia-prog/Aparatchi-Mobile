@@ -2305,7 +2305,9 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
 const detailCacheUriFor = (detailPath: string) => {
   if (!FileSystem.documentDirectory) return '';
   const key = detailPath.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-120);
-  return `${FileSystem.documentDirectory}aparatchi-detail-${key}`;
+  // v2 invalidates detail objects cached by older builds before episode
+  // completeness was verified against the current catalog summary.
+  return `${FileSystem.documentDirectory}aparatchi-detail-v2-${key}`;
 };
 
 const detailUrlFor = (detailPath: string) => {
@@ -2416,8 +2418,32 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
   // The stable pointer remains the recovery path below when this shard is gone.
   const detailPath = summaryDetailPath;
   const memoryKey = `${summary.type}:${summary.id}:${detailPath}`;
+
+  const detailSatisfiesSummary = (detail: CatalogItem) => {
+    if (summary.type !== 'series') return true;
+    const episodeSections = (detail.downloads || []).filter(
+      (section) => Number(section.episodeNumber || 0) > 0,
+    );
+    const expectedLatestEpisode = Number(summary.latestEpisode?.episodeNumber || 0);
+    const expectedLatestSeason = Number(summary.latestEpisode?.seasonNumber || 0);
+    if (expectedLatestEpisode > 0) {
+      return episodeSections.some((section) => {
+        const episode = Number(section.episodeNumber || 0);
+        const season = Number(section.seasonNumber || 1);
+        if (expectedLatestSeason > 0) {
+          return season > expectedLatestSeason ||
+            (season === expectedLatestSeason && episode >= expectedLatestEpisode);
+        }
+        return episode >= expectedLatestEpisode;
+      });
+    }
+    const expectedCount = Number(summary.episodeCount || 0);
+    return expectedCount <= 0 || episodeSections.length >= expectedCount;
+  };
+
   const memory = detailMemoryCache.get(memoryKey);
-  if (memory) return memory;
+  if (memory && detailSatisfiesSummary(memory)) return memory;
+  if (memory) detailMemoryCache.delete(memoryKey);
   const pending = detailRequestCache.get(memoryKey);
   if (pending) return pending;
 
@@ -2426,6 +2452,10 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
     const parseDetail = (value: unknown) => {
       const normalized = normalizeCatalogItem(value);
       if (!normalized || normalized.id !== summary.id || normalized.type !== summary.type) return null;
+      // A summary can already know that a series has 14 episodes while an old
+      // detail cache/CDN response still contains none. Reject that stale detail
+      // so another mirror/current shard is fetched instead of rendering an empty page.
+      if (!detailSatisfiesSummary(normalized)) return null;
       // Keep the summary path on the selected object so App does not downgrade
       // a freshly resolved detail merely because its lightweight index was stale.
       return { ...normalized, detailPath: summaryDetailPath, detailLoaded: true } as CatalogItem;
