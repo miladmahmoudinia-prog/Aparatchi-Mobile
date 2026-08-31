@@ -1,0 +1,73 @@
+name: Apply cache reset fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-cache-reset-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 20
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Reset catalog cache namespace and bump version
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/contentService.ts')
+          s = p.read_text()
+          replacements = {
+            'aparatchi-catalog-index-v3-cache.json': 'aparatchi-catalog-index-v4-cache.json',
+            'aparatchi-catalog-index-v3-cache-meta.json': 'aparatchi-catalog-index-v4-cache-meta.json',
+            'aparatchi-bootstrap-v1-cache.json': 'aparatchi-bootstrap-v2-cache.json',
+            'aparatchi-live-v1-cache.json': 'aparatchi-live-v2-cache.json',
+          }
+          for old, new in replacements.items():
+            if old not in s:
+              raise SystemExit(f'missing expected cache key: {old}')
+            s = s.replace(old, new)
+          p.write_text(s)
+
+          p = Path('App.tsx')
+          s = p.read_text()
+          if "const APP_DISPLAY_VERSION = '0.16.6';" not in s:
+            raise SystemExit('visible version marker not found')
+          p.write_text(s.replace("const APP_DISPLAY_VERSION = '0.16.6';", "const APP_DISPLAY_VERSION = '0.16.7';"))
+
+          import json
+          p = Path('app.json')
+          data = json.loads(p.read_text())
+          data['expo']['version'] = '0.16.7'
+          data['expo']['android']['versionCode'] = 37
+          p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+
+          p = Path('package.json')
+          data = json.loads(p.read_text())
+          data['version'] = '0.16.7'
+          p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+
+          trigger = Path('.github/apk-build-trigger.txt')
+          trigger.write_text('Aparatchi Android 0.16.7 - reset stale catalog caches and force authoritative current catalog\n')
+          PY
+          npm install --package-lock-only --ignore-scripts
+          npm ci --ignore-scripts
+          npm run typecheck
+      - name: Commit fix and trigger APK
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/contentService.ts App.tsx app.json package.json package-lock.json .github/apk-build-trigger.txt
+          git commit -m "fix: purge stale catalog caches on upgrade"
+          git pull --rebase origin main
+          git push origin HEAD:main
