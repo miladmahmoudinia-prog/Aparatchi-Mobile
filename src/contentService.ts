@@ -45,16 +45,16 @@ const LOCAL_PAYLOAD: CatalogPayload = Array.isArray(bundledBootstrap.items) && b
     };
 
 const REMOTE_CACHE_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v3-cache.json`
+  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v4-cache.json`
   : '';
 const REMOTE_CACHE_META_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v3-cache-meta.json`
+  ? `${FileSystem.documentDirectory}aparatchi-catalog-index-v4-cache-meta.json`
   : '';
 const BOOTSTRAP_CACHE_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}aparatchi-bootstrap-v1-cache.json`
+  ? `${FileSystem.documentDirectory}aparatchi-bootstrap-v2-cache.json`
   : '';
 const LIVE_CACHE_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}aparatchi-live-v1-cache.json`
+  ? `${FileSystem.documentDirectory}aparatchi-live-v2-cache.json`
   : '';
 
 type RemoteCacheMetadata = {

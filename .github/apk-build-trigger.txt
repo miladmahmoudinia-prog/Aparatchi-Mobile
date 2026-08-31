@@ -1,3 +1,1 @@
-Aparatchi Android 0.16.5 rebuild
-Reason: fresh GitHub content source + refreshed Iranian series details + final animation/category migration
-Triggered: 2026-08-30 final
+Aparatchi Android 0.16.7 - reset stale catalog caches and force authoritative current catalog
