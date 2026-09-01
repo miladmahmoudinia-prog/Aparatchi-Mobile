@@ -585,7 +585,22 @@ const newestFirst = (items: CatalogItem[]) =>
     .map(({ item }) => item);
 
 const isDownloadableUrl = (url: string) => /\.(?:mp4|m4v|mov|webm|mkv)(?:$|[?#])/i.test(url);
-const isPlayableUrl = (url: string) => /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
+const isExtensionlessUperaHlsUrl = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    const path = decodeURIComponent(parsed.pathname || '');
+    return parsed.protocol === 'https:' &&
+      /(^|\.)upera\.tv$/i.test(parsed.hostname) &&
+      !/(^|\/)embed(?:\/|$)/i.test(path) &&
+      !/^\/stream\/(?:movie|episode)\//i.test(path) &&
+      path.length > 1;
+  } catch {
+    return false;
+  }
+};
+
+const isPlayableUrl = (url: string) =>
+  /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url) || isExtensionlessUperaHlsUrl(url);
 
 const isOperatorMode = (mode?: DownloadFile['mode']) =>
   mode === 'operator-play' || mode === 'operator-download';
