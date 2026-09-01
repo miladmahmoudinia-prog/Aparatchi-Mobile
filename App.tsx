@@ -301,8 +301,22 @@ const isCurrentScheduleSeries = (item?: CatalogItem | null) => {
     nextEpisodeTimestamp >= Date.now() - 2 * 24 * 60 * 60 * 1000;
 };
 
+const isExtensionlessUperaHlsUrl = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    const path = decodeURIComponent(parsed.pathname || '');
+    return parsed.protocol === 'https:' &&
+      /(^|\.)upera\.tv$/i.test(parsed.hostname) &&
+      !/(^|\/)embed(?:\/|$)/i.test(path) &&
+      !/^\/stream\/(?:movie|episode)\//i.test(path) &&
+      path.length > 1;
+  } catch {
+    return false;
+  }
+};
+
 const isDirectMediaUrl = (url: string) =>
-  /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url);
+  /\.(?:m3u8|mp4)(?:$|[?#])/i.test(url) || isExtensionlessUperaHlsUrl(url);
 
 const isDownloadableMediaUrl = (url: string) =>
   /\.(?:mp4|m4v|mov|webm|mkv)(?:$|[?#])/i.test(url);
