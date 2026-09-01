@@ -671,6 +671,9 @@ const normalizeDownloadFile = (
   if (!/^https?:\/\//i.test(url)) return null;
 
   const requestedMode = asString(file.mode).toLowerCase();
+  // Aparatchi never exposes provider purchase/subscription pages. Drop them at
+  // the catalog boundary so stale cached catalogs cannot render or open one.
+  if (requestedMode === 'purchase' || asBoolean(file.purchaseRequired)) return null;
   const explicitOperator = (asBoolean(file.operatorOnly) || requestedMode.startsWith('operator-')) &&
     isOperatorPortalUrl(url);
   const inferredOperatorMode = /download|دریافت|دانلود/i.test(
@@ -684,16 +687,10 @@ const normalizeDownloadFile = (
         : inferredOperatorMode)
     : requestedMode === 'play'
       ? 'play'
-      : requestedMode === 'purchase'
-        ? 'purchase'
-        : 'download';
+      : 'download';
 
   if (isOperatorMode(mode)) {
     if (!isOperatorPortalUrl(url)) return null;
-  } else if (mode === 'purchase') {
-    // Paid fallback is a normal HTTPS page/link supplied by the provider; it is
-    // opened externally instead of being treated as an MP4 download.
-    if (!/^https:\/\//i.test(url)) return null;
   } else if (mode === 'play' ? !isPlayableUrl(url) : !isDownloadableUrl(url)) {
     return null;
   }
@@ -815,10 +812,10 @@ const normalizeDownloads = (value: unknown, iranian: boolean): DownloadSection[]
   const languageSections = LANGUAGE_ORDER.flatMap((language) => {
     const files = sortFiles(uniqueFiles(directStandaloneFiles.filter((file) => file.language === language)));
     if (!files.length) return [];
-    return [{ id: `language-${language}`, title: languageTitle(language), subtitle: files.some((file) => file.mode === 'purchase') ? `${files.length} گزینه دریافت` : `${files.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`, badge: language === 'dubbed' ? 'دوبله' : 'زیرنویس', language, files } satisfies DownloadSection];
+    return [{ id: `language-${language}`, title: languageTitle(language), subtitle: `${files.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`, badge: language === 'dubbed' ? 'دوبله' : 'زیرنویس', language, files } satisfies DownloadSection];
   });
   const plainFiles = sortFiles(uniqueFiles(directStandaloneFiles.filter((file) => !file.language)));
-  const plainSections = iranian && plainFiles.length ? [{ id: 'language-plain', title: 'لینک‌های دریافت', subtitle: plainFiles.some((file) => file.mode === 'purchase') ? `${plainFiles.length} گزینه دریافت` : `${plainFiles.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`, files: plainFiles } satisfies DownloadSection] : [];
+  const plainSections = iranian && plainFiles.length ? [{ id: 'language-plain', title: 'لینک‌های دریافت', subtitle: `${plainFiles.filter((file) => file.mode !== 'play').length} کیفیت دانلود مستقیم`, files: plainFiles } satisfies DownloadSection] : [];
   const operatorSections = operatorStandaloneFiles.length ? [{ id: 'operator-mobile-access', title: 'ویژه اینترنت همراه', subtitle: 'تماشا یا دریافت با اینترنت سیم‌کارت', badge: 'همراه', files: operatorStandaloneFiles } satisfies DownloadSection] : [];
   return [...episodeSections, ...languageSections, ...plainSections, ...operatorSections];
 };
