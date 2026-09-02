@@ -5904,7 +5904,7 @@ function DetailModal({
   // Movie summaries now carry a compact actionable media preview. Do not hide
   // those real links while the richer detail shard is still hydrating.
   const downloadGroups = item.downloads || [];
-  const episodeGroups = downloadGroups.filter((group) => isEpisodeSection(group) && (languageSectionsForFiles(group.files, group.id, isIranianItem(item)).length || operatorFilesFor(group.files).length));
+  const episodeGroups = downloadGroups.filter((group) => isEpisodeSection(group) && episodeSectionHasUsableMedia(group));
   const standaloneOperatorGroups = downloadGroups.filter((group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0);
   const standaloneOperatorPlayFile = standaloneOperatorGroups.flatMap((group) => operatorFilesFor(group.files)).find((file) => downloadModeFor(file) === 'operator-play');
   const latestEpisode = detailBodyReady ? newestEpisodeGroup(item) : null;
