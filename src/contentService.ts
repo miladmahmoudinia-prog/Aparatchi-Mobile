@@ -2023,25 +2023,26 @@ export async function loadLiveContent(base: LoadedContent): Promise<LoadedConten
 
   const candidates = remoteRepositoryUrlCandidates(remoteUrl);
   if (!candidates.length) return null;
-  const manifestPromise = fetchRemoteManifest().catch(() => null);
+
+  // Check the tiny manifest before opening either catalog-live connection.
+  // While the hourly Content action is rebuilding files, the published manifest
+  // still describes the current on-device revision; downloading/parsing the
+  // multi-megabyte live delta in parallel only steals bandwidth and blocks taps.
+  const manifest = await fetchRemoteManifest().catch(() => null);
+  if (!manifest?.clientRevision) return null;
+  if (
+    base.clientRevision === manifest.clientRevision &&
+    (!manifest.clientItemCount || base.items.length === manifest.clientItemCount)
+  ) {
+    return { ...base, source: 'remote' };
+  }
+
   const controllers = candidates.map(() => new AbortController());
   const revisionToken = String(Date.now());
 
   return await new Promise<LoadedContent | null>((resolve) => {
     let pending = candidates.length;
     let settled = false;
-
-    void manifestPromise.then((manifest) => {
-      if (
-        settled ||
-        !manifest?.clientRevision ||
-        base.clientRevision !== manifest.clientRevision ||
-        (manifest.clientItemCount && base.items.length !== manifest.clientItemCount)
-      ) return;
-      settled = true;
-      controllers.forEach((controller) => controller.abort());
-      resolve({ ...base, source: 'remote' });
-    });
 
     candidates.forEach((candidate, index) => {
       const controller = controllers[index];
@@ -2060,8 +2061,7 @@ export async function loadLiveContent(base: LoadedContent): Promise<LoadedConten
           if (!response.ok) return;
           const rawText = await response.text();
           const live = JSON.parse(rawText) as Record<string, unknown>;
-          const manifest = await manifestPromise;
-          if (!manifest?.clientRevision || asString(live.clientRevision) !== manifest.clientRevision) return;
+          if (asString(live.clientRevision) !== manifest.clientRevision) return;
           const merged = mergeLiveCatalogDelta(base, live);
           if (!merged) return;
           if (manifest.clientItemCount && merged.items.length !== manifest.clientItemCount) return;
