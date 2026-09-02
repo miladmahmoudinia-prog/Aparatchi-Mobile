@@ -7580,97 +7580,56 @@ const BottomNavigation = memo(function BottomNavigation({ active, onChange }: { 
 });
 
 function StartupScreen() {
-  const motion = useRef(new Animated.Value(0)).current;
+  const reveal = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const animation = Animated.loop(Animated.timing(motion, {
+    const animation = Animated.timing(reveal, {
       toValue: 1,
-      duration: 1800,
+      duration: 900,
       useNativeDriver: true,
-    }));
+    });
     animation.start();
     return () => animation.stop();
-  }, [motion]);
+  }, [reveal]);
 
-  const reelSpin = motion.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-  const filmTravel = motion.interpolate({ inputRange: [0, 1], outputRange: [-14, 14] });
-  const beamOpacity = motion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.16, 0.42, 0.16] });
-  const screenGlow = motion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.18, 0.46, 0.18] });
-  const operatorBob = motion.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -2, 0] });
-
-  const reelHoles = [0, 1, 2, 3];
-  const reelHoleStyles = [
-    styles.startupReelHole0,
-    styles.startupReelHole1,
-    styles.startupReelHole2,
-    styles.startupReelHole3,
-  ];
+  const brandTranslate = reveal.interpolate({
+    inputRange: [0, 1],
+    outputRange: [18, 0],
+  });
 
   return (
     <View style={styles.startupOverlay}>
-      <LinearGradient colors={['#030406', '#090A0D', '#120E0A', '#030406']} style={StyleSheet.absoluteFill} />
-      <View style={styles.startupProjectionistScene}>
-        <View style={styles.startupCurtainLeft} />
-        <View style={styles.startupCurtainRight} />
-        <View style={styles.startupCurtainTop} />
-
-        <Animated.View pointerEvents="none" style={[styles.startupProjectionBeam, { opacity: beamOpacity }]}>
-          <LinearGradient
-            colors={['rgba(245,220,151,0.02)', 'rgba(245,220,151,0.38)', 'rgba(245,220,151,0.04)']}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-            style={StyleSheet.absoluteFill}
-          />
-        </Animated.View>
-
-        <View style={styles.startupCinemaScreenFrame}>
-          <LinearGradient
-            colors={['#E9E0C8', '#F6F0DE', '#D8CBA9']}
-            style={styles.startupCinemaScreen}
-          />
-          <Animated.View style={[styles.startupCinemaScreenGlow, { opacity: screenGlow }]} />
-          <View style={styles.startupScreenFilmMark}>
-            <Ionicons name="play" color="rgba(31,27,20,0.42)" size={22} />
-          </View>
+      <Image
+        source={require('./assets/splash-cinema-1080x2400.png')}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        cachePolicy="memory"
+        transition={0}
+      />
+      <LinearGradient
+        colors={['rgba(7,9,12,0.30)', 'rgba(7,9,12,0.02)', 'rgba(7,9,12,0.48)']}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+      <Animated.View
+        style={[
+          styles.startupArtworkBrand,
+          {
+            opacity: reveal,
+            transform: [{ translateY: brandTranslate }],
+          },
+        ]}
+      >
+        <View style={styles.startupArtworkLogo}>
+          <Ionicons name="play" color="#F7E9BE" size={28} />
         </View>
-
-        <View style={styles.startupProjectionFloor} />
-
-        <Animated.View style={[styles.startupOperator, { transform: [{ translateY: operatorBob }] }]}>
-          <View style={styles.startupOperatorHead} />
-          <View style={styles.startupOperatorNeck} />
-          <View style={styles.startupOperatorBody} />
-          <View style={styles.startupOperatorArm} />
-        </Animated.View>
-
-        <View style={styles.startupProjector}>
-          <Animated.View style={[styles.startupProjectorReel, styles.startupProjectorReelBack, { transform: [{ rotate: reelSpin }] }]}>
-            {reelHoles.map((hole) => <View key={`back-${hole}`} style={[styles.startupReelHole, reelHoleStyles[hole]]} />)}
-            <View style={styles.startupReelHub} />
-          </Animated.View>
-          <Animated.View style={[styles.startupProjectorReel, styles.startupProjectorReelFront, { transform: [{ rotate: reelSpin }] }]}>
-            {reelHoles.map((hole) => <View key={`front-${hole}`} style={[styles.startupReelHole, reelHoleStyles[hole]]} />)}
-            <View style={styles.startupReelHub} />
-          </Animated.View>
-          <View style={styles.startupProjectorBody}>
-            <View style={styles.startupProjectorVent} />
-            <View style={styles.startupProjectorLens}>
-              <View style={styles.startupProjectorLensGlass} />
-            </View>
-          </View>
-          <View style={styles.startupProjectorNeck} />
-          <View style={styles.startupProjectorStand} />
-          <View style={styles.startupProjectorFoot} />
-        </View>
-      </View>
-
-      <Text style={styles.startupCinemaBrand}>آپاراتچی</Text>
-      <Text style={styles.startupCinemaTagline}>چراغ‌ها خاموش می‌شوند؛ نمایش تا چند لحظه دیگر آغاز می‌شود</Text>
-
-      <Animated.View style={[styles.startupCinemaFilmStrip, { transform: [{ translateX: filmTravel }] }]}>
-        {[0, 1, 2, 3, 4, 5].map((slot) => <View key={slot} style={styles.startupCinemaFilmFrame} />)}
+        <Text style={styles.startupArtworkTitle}>آپاراتچی</Text>
+        <Text style={styles.startupArtworkTagline}>نمایش تا چند لحظهٔ دیگر آغاز می‌شود</Text>
       </Animated.View>
-      <Text style={styles.startupCinemaLoadingText}>آپاراتچی در حال آماده‌کردن حلقهٔ فیلم است…</Text>
+      <Animated.View style={[styles.startupArtworkLoading, { opacity: reveal }]}>
+        <View style={styles.startupArtworkLoadingLine} />
+        <Text style={styles.startupArtworkLoadingText}>در حال آماده‌کردن پردهٔ نمایش…</Text>
+      </Animated.View>
     </View>
   );
 }
@@ -7710,7 +7669,7 @@ const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): C
   };
 };
 
-const STARTUP_MIN_VISIBLE_MS = 0;
+const STARTUP_MIN_VISIBLE_MS = 2200;
 
 function AppContent() {
   const appInsets = useSafeAreaInsets();
@@ -9281,6 +9240,13 @@ const styles = StyleSheet.create({
   startupBrand: { ...rtlText, color: COLORS.text, fontSize: 27, lineHeight: 36, fontWeight: '900', marginTop: 15 },
   startupSpinner: { marginTop: 18 },
   startupOverlay: { ...absoluteFillObject, zIndex: 5000, elevation: 5000, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: '#05070A' },
+  startupArtworkBrand: { position: 'absolute', top: '24%', left: 24, right: 24, alignItems: 'center' },
+  startupArtworkLogo: { width: 66, height: 66, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.66)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.52)', shadowColor: '#D8B45A', shadowOpacity: 0.24, shadowRadius: 18, elevation: 8 },
+  startupArtworkTitle: { ...rtlText, color: '#F7F2E8', fontSize: 34, lineHeight: 46, fontWeight: '900', textAlign: 'center', marginTop: 14, textShadowColor: 'rgba(0,0,0,0.88)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 12 },
+  startupArtworkTagline: { ...rtlText, color: '#D8B45A', fontSize: 12, lineHeight: 22, fontWeight: '800', textAlign: 'center', marginTop: 2, textShadowColor: 'rgba(0,0,0,0.9)', textShadowRadius: 8 },
+  startupArtworkLoading: { position: 'absolute', bottom: '8%', left: 30, right: 30, alignItems: 'center' },
+  startupArtworkLoadingLine: { width: 56, height: 2, borderRadius: 2, backgroundColor: 'rgba(216,180,90,0.74)', marginBottom: 9 },
+  startupArtworkLoadingText: { ...rtlText, color: 'rgba(244,239,229,0.72)', fontSize: 10, lineHeight: 18, fontWeight: '700', textAlign: 'center' },
   startupProjectorBeam: { position: 'absolute', width: 420, height: 170, borderRadius: 210, opacity: 0.12, backgroundColor: '#E8C875', transform: [{ rotate: '-18deg' }, { translateX: 90 }] },
   startupTagline: { color: COLORS.gold, fontSize: 12, fontWeight: '800', letterSpacing: 1, marginTop: 5 },
   startupFilmStrip: { height: 34, marginTop: 28, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 5, borderTopWidth: 3, borderBottomWidth: 3, borderColor: 'rgba(212,175,95,0.62)' },
