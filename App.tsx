@@ -531,9 +531,6 @@ const isOperatorFile = (file: DownloadFile) => {
   return mode === 'operator-play' || mode === 'operator-download';
 };
 
-const isPublicPanelFile = (file: DownloadFile) =>
-  downloadModeFor(file) === 'public-play' && file.operatorOnly !== true;
-
 const isTrustedOperatorHostUrl = (url?: string) => {
   if (!url) return false;
   if (url === 'about:blank') return true;
@@ -562,9 +559,6 @@ const isOperatorPortalUrl = (url?: string) => {
 
 const operatorFilesFor = (files: DownloadFile[]) =>
   files.filter((file) => isOperatorFile(file) && isOperatorPortalUrl(file.url));
-
-const publicPanelFilesFor = (files: DownloadFile[]) =>
-  files.filter((file) => isPublicPanelFile(file) && isOperatorPortalUrl(file.url));
 
 const itemHasOperatorAccess = (item: CatalogItem) =>
   Boolean(
@@ -1047,7 +1041,6 @@ const compareEpisodeGroupsOldestFirst = (a: DownloadSection, b: DownloadSection)
 const episodeSectionHasUsableMedia = (group: DownloadSection) =>
   (group.files || []).some((file) => {
     if (!isSafeHttpUrl(file.url) || isPlaceholderUrl(file.url)) return false;
-    if (isPublicPanelFile(file)) return isOperatorPortalUrl(file.url);
     if (isOperatorFile(file)) return isOperatorPortalUrl(file.url);
     if (downloadModeFor(file) === 'purchase') return false;
     return isDirectMediaUrl(file.url) || isDownloadableMediaUrl(file.url);
@@ -5636,7 +5629,6 @@ function SeriesEpisodeShowcase({
       <View style={styles.episodeShowcaseRail}>
         {visibleGroups.map((group) => {
           const canPlay = playableVersionsFor(item, group).length > 0;
-          const publicPlay = publicPanelFilesFor(group.files)[0];
           const operatorPlay = operatorFilesFor(group.files).find((file) => downloadModeFor(file) === 'operator-play');
           const hasEpisodeDownload = group.files.some((file) =>
             downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
@@ -5645,13 +5637,13 @@ function SeriesEpisodeShowcase({
           return (
             <View key={group.id} style={styles.episodeShowcaseCard}>
               <Pressable
-                onPress={() => canPlay ? onPlay(group) : publicPlay ? onOpenOperator(publicPlay) : operatorPlay ? onOpenOperator(operatorPlay) : onOpenDownloads(group)}
+                onPress={() => canPlay ? onPlay(group) : operatorPlay ? onOpenOperator(operatorPlay) : onOpenDownloads(group)}
                 style={styles.episodeShowcaseArtworkWrap}
               >
                 <ExactEpisodeArtwork item={item} artwork={artwork} />
                 <LinearGradient colors={['transparent', 'rgba(4,6,9,0.92)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.episodeShowcasePlay}>
-                  <Ionicons name={canPlay || publicPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
+                  <Ionicons name={canPlay ? 'play' : operatorPlay ? 'phone-portrait-outline' : 'download-outline'} color="#fff" size={20} />
                 </View>
                 <Text numberOfLines={2} style={styles.episodeShowcaseNumber}>
                   {episodeShowcaseLabel(item, group, quran)}
@@ -5926,15 +5918,11 @@ function DetailModal({
   const episodeGroups = downloadGroups.filter((group) => isEpisodeSection(group) && episodeSectionHasUsableMedia(group));
   const standaloneOperatorGroups = downloadGroups.filter((group) => !isEpisodeSection(group) && operatorFilesFor(group.files).length > 0);
   const standaloneOperatorPlayFile = standaloneOperatorGroups.flatMap((group) => operatorFilesFor(group.files)).find((file) => downloadModeFor(file) === 'operator-play');
-  const standalonePublicPlayFile = downloadGroups
-    .filter((group) => !isEpisodeSection(group))
-    .flatMap((group) => publicPanelFilesFor(group.files))[0];
   const latestEpisode = detailBodyReady ? newestEpisodeGroup(item) : null;
   const latestOperatorPlayFile = latestEpisode
     ? operatorFilesFor(latestEpisode.files).find((file) => downloadModeFor(file) === 'operator-play')
     : undefined;
   const primaryOperatorPlayFile = item.type === 'series' ? latestOperatorPlayFile : standaloneOperatorPlayFile;
-  const primaryPublicPlayFile = item.type === 'movie' ? standalonePublicPlayFile : undefined;
   const hasDownloads = downloadGroups.some((group) => group.files.some((file) =>
     downloadModeFor(file) === 'download' || downloadModeFor(file) === 'operator-download',
   ));
@@ -6008,9 +5996,9 @@ function DetailModal({
                   </>
                 ) : null}
                 <PeopleSection item={item} onOpen={onOpenPerson} />
-                {item.type === 'movie' && (hasPlayableStream || primaryPublicPlayFile || primaryOperatorPlayFile || hasDownloads) ? (
+                {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile || hasDownloads) ? (
                   <View style={styles.detailActions}>
-                    {(hasPlayableStream || primaryPublicPlayFile || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryPublicPlayFile ? onOperatorOpen(item, primaryPublicPlayFile) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && !primaryPublicPlayFile && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream || primaryPublicPlayFile ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream || primaryPublicPlayFile ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
+                    {(hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
                     {hasDownloads ? (
                       <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
                         <Ionicons name="download-outline" color={COLORS.gold} size={19} />
@@ -6024,7 +6012,7 @@ function DetailModal({
             ) : (
               <>
             <View style={styles.detailActions}>
-              {item.type === 'movie' && (hasPlayableStream || primaryPublicPlayFile || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryPublicPlayFile ? onOperatorOpen(item, primaryPublicPlayFile) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && !primaryPublicPlayFile && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream || primaryPublicPlayFile ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream || primaryPublicPlayFile ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
+              {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
               {item.type === 'movie' && hasDownloads ? (
                 <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
                   <Ionicons name="download-outline" color={COLORS.gold} size={19} />
@@ -8527,15 +8515,6 @@ function AppContent() {
   }, [navigateToTab]);
 
   const openOperatorAccess = async (item: CatalogItem, file: DownloadFile) => {
-    if (isPublicPanelFile(file) && isOperatorPortalUrl(file.url)) {
-      if (!(await internetIsReachable())) {
-        Alert.alert('اتصال اینترنت برقرار نیست', 'برای پخش آنلاین، اینترنت را روشن کنید و دوباره تلاش کنید.');
-        return;
-      }
-      if (await refreshVpnState()) { setVpnWarningVisible(true); return; }
-      setOperatorWebRequest({ title: `${item.nameFa} — پخش آنلاین`, url: file.url });
-      return;
-    }
     if (!isOperatorFile(file) || !isOperatorPortalUrl(file.url)) {
       Alert.alert('پخش ویژه اینترنت همراه', 'لینک پخش این عنوان فعلاً در دسترس نیست.');
       return;
