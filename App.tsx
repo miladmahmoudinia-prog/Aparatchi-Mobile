@@ -1,3 +1,5 @@
+declare const require: (assetPath: string) => number;
+
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import * as Network from 'expo-network';
