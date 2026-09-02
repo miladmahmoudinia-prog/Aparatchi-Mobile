@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.12 retry - exact RTL rail origin without clipped first poster
+Aparatchi Android 0.16.12 retry - full right-aligned RTL poster rails
