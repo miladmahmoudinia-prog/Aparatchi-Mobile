@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.11 - cinematic image startup with coded Persian branding
+Aparatchi Android 0.16.11 retry - bundled cinematic splash asset typing fixed
