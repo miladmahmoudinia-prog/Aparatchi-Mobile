@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.11 retry - bundled cinematic splash asset typing fixed
+Aparatchi Android 0.16.11 retry 2 - valid optimized WebP splash resource
