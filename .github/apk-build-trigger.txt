@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.7 - reset stale catalog caches and force authoritative current catalog
+Aparatchi Android 0.16.8 - reject cached series details without episode play links
