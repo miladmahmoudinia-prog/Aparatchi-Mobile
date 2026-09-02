@@ -2436,10 +2436,16 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
     const episodeSections = (detail.downloads || []).filter(
       (section) => Number(section.episodeNumber || 0) > 0,
     );
+    // Old immutable shards can contain all episode rows but no media files.
+    // Never accept those as a complete detail: otherwise reopening a title can
+    // alternate between the healthy shard and a cached link-less copy.
+    const playableEpisodeSections = episodeSections.filter(
+      (section) => (section.files || []).length > 0,
+    );
     const expectedLatestEpisode = Number(summary.latestEpisode?.episodeNumber || 0);
     const expectedLatestSeason = Number(summary.latestEpisode?.seasonNumber || 0);
     if (expectedLatestEpisode > 0) {
-      return episodeSections.some((section) => {
+      return playableEpisodeSections.some((section) => {
         const episode = Number(section.episodeNumber || 0);
         const season = Number(section.seasonNumber || 1);
         if (expectedLatestSeason > 0) {
@@ -2450,7 +2456,7 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
       });
     }
     const expectedCount = Number(summary.episodeCount || 0);
-    return expectedCount <= 0 || episodeSections.length >= expectedCount;
+    return expectedCount <= 0 || playableEpisodeSections.length >= expectedCount;
   };
 
   const memory = detailMemoryCache.get(memoryKey);
