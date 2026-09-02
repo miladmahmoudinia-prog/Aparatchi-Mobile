@@ -66,13 +66,6 @@ function applyMobileSourcePatches(input) {
 
   source = replaceOnce(
     source,
-    "      initialNumToRender={4}\n      maxToRenderPerBatch={4}\n      updateCellsBatchingPeriod={50}\n      windowSize={4}\n      removeClippedSubviews={false}\n      nestedScrollEnabled\n",
-    "      initialNumToRender={3}\n      maxToRenderPerBatch={2}\n      updateCellsBatchingPeriod={64}\n      windowSize={3}\n      removeClippedSubviews={false}\n      nestedScrollEnabled\n",
-    'horizontal Home rail batching',
-  );
-
-  source = replaceOnce(
-    source,
     "        initialNumToRender={10}\n        maxToRenderPerBatch={10}\n        updateCellsBatchingPeriod={32}\n        windowSize={7}\n        removeClippedSubviews={false}\n        nestedScrollEnabled\n",
     "        initialNumToRender={6}\n        maxToRenderPerBatch={4}\n        updateCellsBatchingPeriod={64}\n        windowSize={4}\n        removeClippedSubviews={false}\n        nestedScrollEnabled\n",
     'Home stars people batching',
