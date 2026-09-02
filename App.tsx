@@ -2796,20 +2796,15 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
   items: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
 }) {
-  // Keep the native list non-inverted. In RTL Android, offset zero is the
-  // right-hand origin; scrollToEnd can overshoot the trailing padding and clip
-  // half of the first poster.
-  const railRef = useRef<FlatList<CatalogItem>>(null);
-  const positionRailAtRight = useCallback(() => {
-    requestAnimationFrame(() => railRef.current?.scrollToOffset({ offset: 0, animated: false }));
-  }, [items.length]);
+  // Android's RTL offset math is inconsistent across devices. Native inversion
+  // reliably anchors the first card on the right; rendering this short shelf in
+  // one batch avoids the blank cells previously caused by clipped virtualization.
   const renderPoster = useCallback(({ item }: { item: CatalogItem }) => (
     <PosterCard item={item} onOpen={() => onOpen(item)} />
   ), [onOpen]);
 
   return (
     <FlatList
-      ref={railRef}
       horizontal
       data={items}
       keyExtractor={(item) => item.id}
@@ -2817,13 +2812,11 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-      getItemLayout={(_data, index) => ({ length: 148, offset: 148 * index, index })}
-      onContentSizeChange={positionRailAtRight}
-      onScrollToIndexFailed={positionRailAtRight}
-      initialNumToRender={4}
-      maxToRenderPerBatch={4}
-      updateCellsBatchingPeriod={50}
-      windowSize={4}
+      inverted
+      initialNumToRender={10}
+      maxToRenderPerBatch={10}
+      updateCellsBatchingPeriod={16}
+      windowSize={10}
       removeClippedSubviews={false}
       nestedScrollEnabled
       keyboardShouldPersistTaps="always"
