@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.12 retry - fix RTL home rails and dedupe operator star works
+Aparatchi Android 0.16.12 retry - exact RTL rail origin without clipped first poster
