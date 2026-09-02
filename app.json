@@ -8,6 +8,11 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#07090c",
+    "splash": {
+      "image": "./assets/splash-cinema-1080x2400.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#07090c"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.aparatchi.mobile"

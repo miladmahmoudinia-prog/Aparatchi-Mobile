@@ -3525,8 +3525,19 @@ const HomeScreen = memo(function HomeScreen({
   const eagerRows = useMemo(() => populatedRows.slice(0, 4), [populatedRows]);
   const deferredRows = useMemo(() => populatedRows.slice(4), [populatedRows]);
 
-  // Visible artwork is loaded and cached by expo-image itself. Avoid a parallel
-  // prefetch flood so taps and the first on-screen posters get priority.
+  useEffect(() => {
+    // Warm only the first screen while the branded startup is visible. Keep the
+    // batch bounded so catalog sync and taps retain network/JS priority.
+    const firstScreenItems = [
+      ...newest.slice(0, 5),
+      ...eagerRows.slice(0, 2).flatMap((row) => row.items.slice(0, 4)),
+    ];
+    const urls = [...new Set(firstScreenItems.flatMap((item) => [
+      optimizedImageUrl(item.poster || item.posterFallback, 'poster'),
+      optimizedImageUrl(item.backdrop || item.backdropFallback, 'backdrop'),
+    ]).filter((url): url is string => Boolean(url && isSafeHttpUrl(url))))].slice(0, 14);
+    if (urls.length) void Image.prefetch(urls).catch(() => undefined);
+  }, [eagerRows, newest]);
 
   useEffect(() => {
     if (initialScrollOffset > 0) {
@@ -5913,8 +5924,12 @@ function DetailModal({
     item && (
       !item.detailPath ||
       item.detailLoaded === true ||
-      Boolean(item.streamUrl) ||
-      (item.downloads?.length || 0) > 0
+      (
+        item.type === 'movie' && (
+          Boolean(item.streamUrl) ||
+          (item.downloads?.length || 0) > 0
+        )
+      )
     ),
   );
   const [downloadSheetOpen, setDownloadSheetOpen] = useState(false);
@@ -6023,6 +6038,12 @@ function DetailModal({
                     <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text>
                     <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
                   </>
+                ) : null}
+                {item.type === 'series' ? (
+                  <View style={styles.detailEpisodesLoading}>
+                    <ActivityIndicator color={COLORS.gold} size="small" />
+                    <Text style={styles.detailEpisodesLoadingText}>در حال دریافت همهٔ قسمت‌ها…</Text>
+                  </View>
                 ) : null}
                 <PeopleSection item={item} onOpen={onOpenPerson} />
                 {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile || hasDownloads) ? (
@@ -7655,11 +7676,11 @@ function StartupScreen() {
           <Ionicons name="play" color="#F7E9BE" size={28} />
         </View>
         <Text style={styles.startupArtworkTitle}>آپاراتچی</Text>
-        <Text style={styles.startupArtworkTagline}>نمایش تا چند لحظهٔ دیگر آغاز می‌شود</Text>
+        <Text style={styles.startupArtworkTagline}>دنیای فیلم و سریال در آپاراتچی</Text>
       </Animated.View>
       <Animated.View style={[styles.startupArtworkLoading, { opacity: reveal }]}>
         <View style={styles.startupArtworkLoadingLine} />
-        <Text style={styles.startupArtworkLoadingText}>در حال آماده‌کردن پردهٔ نمایش…</Text>
+        <Text style={styles.startupArtworkLoadingText}>در حال دریافت تازه‌ترین‌های آپاراتچی…</Text>
       </Animated.View>
     </View>
   );
@@ -9631,6 +9652,8 @@ const styles = StyleSheet.create({
   detailGenre: { color: '#C5C8CD', fontSize: 9, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   detailSectionTitle: { ...rtlText, color: COLORS.text, fontSize: 16, lineHeight: 25, fontWeight: '900', letterSpacing: -0.25, marginTop: 25 },
   detailOverview: { ...rtlText, color: '#AEB3BB', fontSize: 11.5, lineHeight: 22, marginTop: 9 },
+  detailEpisodesLoading: { minHeight: 76, marginTop: 20, paddingHorizontal: 16, borderRadius: 16, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  detailEpisodesLoadingText: { ...rtlText, color: COLORS.text, fontSize: 10, fontWeight: '800' },
   downloadHeader: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, marginBottom: 12 },
   downloadHeaderText: { ...rtlText, color: COLORS.muted, fontSize: 9, lineHeight: 17, marginTop: 5 },
   downloadGroup: { marginTop: 8, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
