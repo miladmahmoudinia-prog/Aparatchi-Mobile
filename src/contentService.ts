@@ -700,25 +700,19 @@ const normalizeDownloadFile = (
     ? (requestedMode === 'operator-download' || requestedMode === 'operator-play'
         ? requestedMode
         : inferredOperatorMode)
-    : requestedMode === 'public-play' && !asBoolean(file.operatorOnly) && isOperatorPortalUrl(url)
-      ? 'public-play'
     : requestedMode === 'play'
       ? 'play'
       : 'download';
 
   if (isOperatorMode(mode)) {
     if (!isOperatorPortalUrl(url)) return null;
-  } else if (mode === 'public-play') {
-    if (!isOperatorPortalUrl(url) || asBoolean(file.operatorOnly)) return null;
   } else if (mode === 'play' ? !isPlayableUrl(url) : !isDownloadableUrl(url)) {
     return null;
   }
 
   const quality = asString(
     file.quality,
-    mode === 'public-play'
-      ? 'پخش آنلاین'
-      : isOperatorMode(mode)
+    isOperatorMode(mode)
       ? mode === 'operator-play' ? 'پخش آنلاین' : 'دریافت'
       : asString(file.label, 'کیفیت فایل'),
   );
