@@ -7602,7 +7602,7 @@ function StartupScreen() {
   return (
     <View style={styles.startupOverlay}>
       <Image
-        source={require('./assets/splash-cinema-1080x2400.png')}
+        source={require('./assets/splash-cinema-1080x2400.webp')}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
         cachePolicy="memory"
