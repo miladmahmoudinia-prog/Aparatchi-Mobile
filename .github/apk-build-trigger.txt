@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.8 - reject cached series details without episode play links
+Aparatchi Android 0.16.9 - show every play-only movie and series episode without purchase links
