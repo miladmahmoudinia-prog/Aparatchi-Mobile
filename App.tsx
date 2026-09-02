@@ -2741,6 +2741,12 @@ function PeopleSection({
   }, [item.people]);
 
   const displayedPeople = useMemo(() => [...people].reverse(), [people]);
+  const peopleRailRef = useRef<FlatList<CatalogPerson>>(null);
+  const positionPeopleRailAtStart = useCallback(() => {
+    requestAnimationFrame(() => {
+      peopleRailRef.current?.scrollToEnd({ animated: false });
+    });
+  }, [item.id, displayedPeople.length]);
 
   if (!people.length) return null;
 
@@ -2756,6 +2762,7 @@ function PeopleSection({
         </View>
       </View>
       <FlatList
+        ref={peopleRailRef}
         horizontal
         data={displayedPeople}
         keyExtractor={(person) => person.tmdbId
@@ -2768,6 +2775,8 @@ function PeopleSection({
         contentContainerStyle={styles.peopleList}
         initialScrollIndex={displayedPeople.length - 1}
         getItemLayout={(_data, index) => ({ length: 100, offset: 100 * index, index })}
+        onContentSizeChange={positionPeopleRailAtStart}
+        onScrollToIndexFailed={positionPeopleRailAtStart}
         initialNumToRender={4}
         maxToRenderPerBatch={3}
         updateCellsBatchingPeriod={60}
