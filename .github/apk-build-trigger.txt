@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.12 retry - full right-aligned RTL poster rails
+Aparatchi Android 0.16.12 retry - RTL rail transformer fixed and bundle verified
