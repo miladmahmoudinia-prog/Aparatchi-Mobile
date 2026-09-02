@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.10 - anchor cast rail right and keep UI responsive during content sync
+Aparatchi Android 0.16.11 - cinematic image startup with coded Persian branding
