@@ -2796,14 +2796,13 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
   items: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
 }) {
-  // Android occasionally lays out an inverted nested FlatList with its first
-  // cells outside the viewport, leaving a large black rail. Keep the data in
-  // visual RTL order instead of transforming the native list.
-  const displayedItems = useMemo(() => [...items].reverse(), [items]);
+  // Keep the native list non-inverted. In RTL Android, offset zero is the
+  // right-hand origin; scrollToEnd can overshoot the trailing padding and clip
+  // half of the first poster.
   const railRef = useRef<FlatList<CatalogItem>>(null);
   const positionRailAtRight = useCallback(() => {
-    requestAnimationFrame(() => railRef.current?.scrollToEnd({ animated: false }));
-  }, [displayedItems.length]);
+    requestAnimationFrame(() => railRef.current?.scrollToOffset({ offset: 0, animated: false }));
+  }, [items.length]);
   const renderPoster = useCallback(({ item }: { item: CatalogItem }) => (
     <PosterCard item={item} onOpen={() => onOpen(item)} />
   ), [onOpen]);
@@ -2812,13 +2811,12 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
     <FlatList
       ref={railRef}
       horizontal
-      data={displayedItems}
+      data={items}
       keyExtractor={(item) => item.id}
       renderItem={renderPoster}
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-      initialScrollIndex={Math.max(0, displayedItems.length - 1)}
       getItemLayout={(_data, index) => ({ length: 148, offset: 148 * index, index })}
       onContentSizeChange={positionRailAtRight}
       onScrollToIndexFailed={positionRailAtRight}
