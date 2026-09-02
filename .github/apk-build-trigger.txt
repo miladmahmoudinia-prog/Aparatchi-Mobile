@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.9 - show every play-only movie and series episode without purchase links
+Aparatchi Android 0.16.10 - anchor cast rail right and keep UI responsive during content sync
