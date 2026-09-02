@@ -70,7 +70,7 @@ import {
   syncEpisodeAlerts,
 } from './src/notificationManager';
 
-const APP_DISPLAY_VERSION = '0.16.11';
+const APP_DISPLAY_VERSION = '0.16.12';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
