@@ -2796,21 +2796,32 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
   items: CatalogItem[];
   onOpen: (item: CatalogItem) => void;
 }) {
+  // Android occasionally lays out an inverted nested FlatList with its first
+  // cells outside the viewport, leaving a large black rail. Keep the data in
+  // visual RTL order instead of transforming the native list.
+  const displayedItems = useMemo(() => [...items].reverse(), [items]);
+  const railRef = useRef<FlatList<CatalogItem>>(null);
+  const positionRailAtRight = useCallback(() => {
+    requestAnimationFrame(() => railRef.current?.scrollToEnd({ animated: false }));
+  }, [displayedItems.length]);
   const renderPoster = useCallback(({ item }: { item: CatalogItem }) => (
     <PosterCard item={item} onOpen={() => onOpen(item)} />
   ), [onOpen]);
 
   return (
     <FlatList
+      ref={railRef}
       horizontal
-      data={items}
+      data={displayedItems}
       keyExtractor={(item) => item.id}
       renderItem={renderPoster}
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
-      inverted
+      initialScrollIndex={Math.max(0, displayedItems.length - 1)}
       getItemLayout={(_data, index) => ({ length: 148, offset: 148 * index, index })}
+      onContentSizeChange={positionRailAtRight}
+      onScrollToIndexFailed={positionRailAtRight}
       initialNumToRender={4}
       maxToRenderPerBatch={4}
       updateCellsBatchingPeriod={50}
@@ -2855,16 +2866,24 @@ const StarWorkPosterCard = memo(function StarWorkPosterCard({
   item: CatalogItem;
   onOpen: (item: CatalogItem) => void;
 }) {
+  const operator = itemHasOperatorAccess(item);
   return (
     <Pressable onPress={() => onOpen(item)} unstable_pressDelay={0} style={styles.starWorkCard} hitSlop={10}>
-      <CatalogArtwork
-        primary={item.poster}
-        fallback={item.posterFallback || item.backdrop}
-        localFallback={localArtworkForItem(item)}
-        style={styles.starWorkPoster}
-        imageKind="poster"
-        transition={160}
-      />
+      <View style={styles.starWorkPosterWrap}>
+        <CatalogArtwork
+          primary={item.poster}
+          fallback={item.posterFallback || item.backdrop}
+          localFallback={localArtworkForItem(item)}
+          style={styles.starWorkPoster}
+          imageKind="poster"
+          transition={160}
+        />
+        {operator ? (
+          <View pointerEvents="none" style={styles.starWorkOperatorBadge}>
+            <Text style={styles.starWorkOperatorText}>ویژه همراه</Text>
+          </View>
+        ) : null}
+      </View>
       <Text numberOfLines={2} style={styles.starWorkTitle}>{item.nameFa}</Text>
     </Pressable>
   );
@@ -2947,7 +2966,26 @@ function HomeStarsSectionBase({
       .map((itemId) => catalogById.get(String(itemId)))
       .filter((item): item is CatalogItem => Boolean(item));
     const matched = explicitMatched.length ? explicitMatched : personWorksFor(selected, catalog);
-    return sortForCatalogFilter(matched, 'latest').slice(0, 18);
+    // Free and operator variants share one movie identity. Show one poster and
+    // carry the operator flag onto it instead of rendering duplicate twins.
+    const uniqueWorks = new Map<string, CatalogItem>();
+    for (const item of sortForCatalogFilter(matched, 'latest')) {
+      const identity = item.imdb
+        ? `imdb:${String(item.imdb).toLowerCase()}`
+        : `title:${normalizeComparableText(item.name || item.nameFa)}:${item.year || 0}:${item.type}`;
+      const current = uniqueWorks.get(identity);
+      if (!current) {
+        uniqueWorks.set(identity, item);
+        continue;
+      }
+      const currentOperator = itemHasOperatorAccess(current);
+      const incomingOperator = itemHasOperatorAccess(item);
+      const preferred = currentOperator && !incomingOperator ? item : current;
+      uniqueWorks.set(identity, (currentOperator || incomingOperator) && !itemHasOperatorAccess(preferred)
+        ? { ...preferred, operatorOnly: true, operatorAccess: 'stream' }
+        : preferred);
+    }
+    return [...uniqueWorks.values()].slice(0, 18);
   }, [catalog, catalogById, selected]);
   const displayedWorks = useMemo(() => [...works].reverse(), [works]);
 
@@ -9367,7 +9405,10 @@ const styles = StyleSheet.create({
   starWorksRail: { flex: 1, height: 184, minWidth: 0 },
   starWorksList: { gap: 9, paddingHorizontal: 1, paddingTop: 0, paddingBottom: 1 },
   starWorkCard: { width: 104 },
-  starWorkPoster: { width: 104, height: 142, borderRadius: 13, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  starWorkPosterWrap: { width: 104, height: 142, borderRadius: 13, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong, borderWidth: 1, borderColor: COLORS.border },
+  starWorkPoster: { width: '100%', height: '100%' },
+  starWorkOperatorBadge: { position: 'absolute', top: 6, right: 6, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(0,153,204,0.96)', borderWidth: 1, borderColor: 'rgba(116,231,255,0.96)' },
+  starWorkOperatorText: { color: '#FFFFFF', fontSize: 7, fontWeight: '900' },
   starWorkTitle: { ...rtlText, width: '100%', minHeight: 29, marginTop: 6, color: COLORS.text, fontSize: 8.2, lineHeight: 13, fontWeight: '800', textAlign: 'center' },
   tabScreenContent: { paddingHorizontal: 16, paddingBottom: 28, paddingTop: 18 },
   header: {
