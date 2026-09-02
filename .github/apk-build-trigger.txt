@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.12 retry - Persian dub, Persian subtitle, operator, and Iranian only
+Aparatchi Android 0.16.12 retry - fix RTL home rails and dedupe operator star works
