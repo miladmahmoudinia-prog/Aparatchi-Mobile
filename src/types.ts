@@ -29,7 +29,7 @@ export type FeaturedPerson = CatalogPerson & {
 export type MediaLanguage = 'dubbed' | 'subtitled';
 
 export type OperatorAccessKind = 'stream' | 'download' | 'both';
-export type DownloadMode = 'download' | 'play' | 'public-play' | 'purchase' | 'operator-download' | 'operator-play';
+export type DownloadMode = 'download' | 'play' | 'purchase' | 'operator-download' | 'operator-play';
 
 export type DownloadFile = {
   id: string;
@@ -41,7 +41,6 @@ export type DownloadFile = {
   /**
    * download/play: لینک مستقیم داخل برنامه
    * purchase: صفحه خرید/دریافت منبع وقتی نسخه رایگان وجود ندارد
-   * public-play: پلیر عمومی تأییدشدهٔ آپرا، بدون خرید و بدون محدودیت اپراتور
    * operator-download/operator-play: درگاه رایگان ویژه اینترنت همراه
    */
   mode?: DownloadMode;
