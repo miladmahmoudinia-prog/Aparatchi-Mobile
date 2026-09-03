@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.13 retry - all visible version metadata aligned
+Aparatchi Android 0.16.14 - native branded splash and immediate interactions
