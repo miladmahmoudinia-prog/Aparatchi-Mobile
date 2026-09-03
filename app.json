@@ -3,7 +3,7 @@
     "name": "آپاراتچی",
     "slug": "aparatchi-mobile",
     "scheme": "aparatchi",
-    "version": "0.16.13",
+    "version": "0.16.14",
     "orientation": "default",
     "icon": "./assets/aparatchi-icon.png",
     "userInterfaceStyle": "dark",
@@ -25,7 +25,7 @@
         "backgroundColor": "#07090c"
       },
       "predictiveBackGestureEnabled": false,
-      "versionCode": 43,
+      "versionCode": 44,
       "permissions": [
         "android.permission.ACCESS_NETWORK_STATE"
       ]
@@ -45,6 +45,19 @@
         {
           "color": "#D6A84B",
           "defaultChannel": "episode-updates"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/aparatchi-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#07090c",
+          "dark": {
+            "image": "./assets/aparatchi-icon.png",
+            "backgroundColor": "#07090c"
+          }
         }
       ],
       "expo-web-browser"
