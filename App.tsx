@@ -202,12 +202,14 @@ const catalogArtworkCandidates = (
   const isTmdbArtwork = /^https?:\/\/image\.tmdb\.org\//i.test(image);
 
   if (isUperaArtwork) {
-    candidates.push(image, proxied);
+    // The origin can take several seconds to fail on a cold start.  Let the
+    // small image proxy paint the card first, then fall back to the origin.
+    candidates.push(proxied, image);
   } else if (isTmdbArtwork) {
     const tmdbWidth = kind === 'poster' ? 'w342' : 'w780';
     candidates.push(
-      proxied,
       image.replace(/\/t\/p\/(?:original|w\d+)\//i, `/t/p/${tmdbWidth}/`),
+      proxied,
       image,
     );
   } else {
@@ -1782,8 +1784,10 @@ const CatalogArtwork = memo(function CatalogArtwork({
   imageKind?: 'poster' | 'backdrop';
 }) {
   const candidates = useMemo(() => [...new Set([
-    ...catalogArtworkCandidates(primary, imageKind),
+    // Catalog fallbacks are normally stable, resized TMDB artwork.  Showing
+    // them first avoids an empty card while an Upera origin is warming up.
     ...catalogArtworkCandidates(fallback, imageKind),
+    ...catalogArtworkCandidates(primary, imageKind),
   ])], [fallback, imageKind, primary]);
   const [stage, setStage] = useState(0);
   useEffect(() => {
