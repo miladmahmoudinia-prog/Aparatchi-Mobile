@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.12 retry - native splash, truthful series hydration, targeted poster warmup
+Aparatchi Android 0.16.13 - branded native splash and cold-start poster fallbacks
