@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.13 - branded native splash and cold-start poster fallbacks
+Aparatchi Android 0.16.13 retry - version metadata aligned
