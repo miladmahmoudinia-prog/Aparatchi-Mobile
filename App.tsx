@@ -1,7 +1,6 @@
 declare const require: (assetPath: string) => number;
 
 import { StatusBar } from 'expo-status-bar';
-import * as SplashScreen from 'expo-splash-screen';
 import * as Notifications from 'expo-notifications';
 import * as Network from 'expo-network';
 import { useEventListener } from 'expo';
@@ -71,9 +70,7 @@ import {
   syncEpisodeAlerts,
 } from './src/notificationManager';
 
-const APP_DISPLAY_VERSION = '0.16.14';
-
-void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+const APP_DISPLAY_VERSION = '0.16.15';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -7662,7 +7659,6 @@ function StartupScreen() {
         contentFit="cover"
         cachePolicy="memory"
         transition={0}
-        onLoadEnd={() => { void SplashScreen.hideAsync().catch(() => undefined); }}
       />
       <LinearGradient
         colors={['rgba(7,9,12,0.30)', 'rgba(7,9,12,0.02)', 'rgba(7,9,12,0.48)']}
