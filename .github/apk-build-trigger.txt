@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.14 - native branded splash and immediate interactions
+Aparatchi Android 0.16.14 - retry complete optimized source
