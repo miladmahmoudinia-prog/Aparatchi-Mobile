@@ -1,1 +1,1 @@
-Aparatchi Android 0.16.14 - retry complete optimized source
+Aparatchi Android 0.16.14 - bundler verified retry
