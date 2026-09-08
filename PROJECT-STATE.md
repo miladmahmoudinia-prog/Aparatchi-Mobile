@@ -1,5 +1,15 @@
 # وضعیت پایدار پروژه آپاراتچی
 
+## checkpoint — 2026-09-08: startup cache and poster latency
+- Mobile functional commits: `90fdab63cda4d54f8f69e86877a224a61461732d` and `e3322e84fc7bc075a75005e8b35075f20651fc33`.
+- Cold launch restores the validated complete bootstrap cache and cumulative live cache before dismissing the startup cover. The old 1200ms delayed initial refresh was removed. Network availability runs concurrently with disk restoration; remote freshness never blocks a usable local snapshot indefinitely.
+- Startup/resume/manual refresh share an in-flight guard, including the awaited bootstrap fallback. Failed refresh preserves usable content. Completed losing mirror bodies are ignored before JSON parsing/normalization.
+- CatalogArtwork retains expo-image memory/disk caching and a stable image instance. A stalled source advances after 2500ms only when another real candidate exists; successful images and the final candidate are not timed out. Late callbacks cannot skip candidates or alter a replacement title.
+- The reported operator item «آخرین ملکه زمین» (`dc9bb870-0148-11f1-b640-e5d09b3360ce--operator`) has a real poster but `backdrop=.../posters/default.jpg`. Known Upera default artwork is now excluded before fallback-first selection, so it cannot precede or mask the real poster.
+- Validation: run `34263575819` passed raw/Metro TypeScript and 21 related tests; final run `34263748044` passed raw/Metro TypeScript and 22 related tests, including the reported artwork fixture. These are targeted tests, not a claim that the entire historical test suite passed.
+- Content was inspected but not changed in this batch. At inspected Content HEAD `bd80c4652b0c5eb797e564c506196f6b85c3fe66`, catalog-live.json is 12,789,200 bytes with 6067 upserts; it is no longer a small delta. First-time remote refresh can still depend on network speed; no on-device startup benchmark or guarantee of zero later new-title insertions was made.
+- No APK was built. The installed 0.16.15 app does not contain these code changes until the user explicitly requests a new APK build and installs it. Do not mark the older Iranian-series ingestion issue resolved based on these Mobile tests.
+
 این فایل حافظهٔ انتقال پروژه بین چت‌های ChatGPT است. در هر چت جدید اول این فایل و سپس HEAD واقعی `main` هر دو مخزن خوانده شود؛ HEAD واقعی مقدم است چون Content خودکار جلو می‌رود.
 
 ## مخزن‌ها
