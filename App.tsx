@@ -156,7 +156,11 @@ const toPersianDigits = (value: string | number) =>
 const isSafeHttpUrl = (url?: string) => Boolean(url && /^https?:\/\//i.test(url));
 
 const isPlaceholderUrl = (url?: string) =>
-  Boolean(url && (/example\.com/i.test(url) || /replace-with/i.test(url)));
+  Boolean(url && (
+    /example\.com/i.test(url) ||
+    /replace-with/i.test(url) ||
+    /^https?:\/\/thumb\.upera\.tv\/s3\/(?:posters|backdrops)\/default\.(?:jpg|jpeg|png|webp)(?:[?#]|$)/i.test(url)
+  ));
 
 
 const optimizedImageUrl = (

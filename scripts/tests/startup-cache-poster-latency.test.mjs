@@ -161,3 +161,15 @@ test('poster timeout stops after load and never cancels its last remaining sourc
     advance?.();
   }
 });
+
+test('the reported operator movie skips provider default artwork before its real poster', () => {
+  const from = app.indexOf('const isPlaceholderUrl =');
+  const to = app.indexOf('\n\nconst internetIsReachable', from);
+  const context = { isSafeHttpUrl: (url) => /^https?:\/\//i.test(url) };
+  const candidates = vm.runInNewContext(stripTypeScriptTypes(app.slice(from, to)) + '\ncatalogArtworkCandidates;', context);
+  assert.equal(candidates('https://thumb.upera.tv/s3/posters/default.jpg').length, 0);
+  const actual = candidates('https://thumb.upera.tv/s3/posters/JfIqVB8KSsv0h6WL2HiA.jpg');
+  assert.equal(actual.length, 2);
+  assert.ok(actual[0].startsWith('https://wsrv.nl/'));
+  assert.equal(actual[1], 'https://thumb.upera.tv/s3/posters/JfIqVB8KSsv0h6WL2HiA.jpg');
+});
