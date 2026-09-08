@@ -9,8 +9,8 @@ test('cold online start keeps compact snapshots ahead of the full index', async 
   const block = source.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.ok(block.includes('liveContent = await loadLiveContent(contentRef.current);'));
-  assert.ok(source.includes('const cachedLive = initialLoad ? await loadCachedLiveContent(contentRef.current) : null;'));
-  assert.ok(block.includes('firstContent = cachedLive || contentRef.current;'));
+  assert.ok(source.includes('const cachedLive = initialLoad ? await loadCachedLiveContent(cachedBase) : null;'));
+  assert.ok(block.includes('firstContent = contentRef.current;'));
   assert.ok(!block.includes('loadContent('));
   assert.ok(!block.includes('loadContent(false, true)'));
 });

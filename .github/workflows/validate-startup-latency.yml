@@ -1,0 +1,50 @@
+name: Validate startup and poster latency
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'App.tsx'
+      - 'src/contentService.ts'
+      - 'scripts/tests/startup-cache-poster-latency.test.mjs'
+      - '.github/workflows/validate-startup-latency.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: startup-latency-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --include=dev
+      - name: Typecheck raw application
+        run: npm run typecheck
+      - name: Startup, cache, detail and poster regressions
+        run: >-
+          node --test
+          scripts/tests/startup-cache-poster-latency.test.mjs
+          scripts/tests/startup-live-truth-v46.test.mjs
+          scripts/tests/device-startup-detail-stability-v32.test.mjs
+          scripts/tests/instant-startup-cache-v41.test.mjs
+          scripts/tests/complete-startup-catalog-v42.test.mjs
+      - name: Materialize the actual Metro source
+        run: node -e "const fs=require('node:fs'); const {applyMobileSourcePatches}=require('./scripts/mobile-source-patches.cjs'); fs.writeFileSync('App.tsx',applyMobileSourcePatches(fs.readFileSync('App.tsx','utf8')));"
+      - name: Typecheck actual Metro source
+        run: npm run typecheck
+      - name: Test actual Metro source
+        run: >-
+          node --test
+          scripts/tests/startup-cache-poster-latency.test.mjs
+          scripts/tests/startup-live-truth-v46.test.mjs
+          scripts/tests/device-startup-detail-stability-v32.test.mjs
+          scripts/tests/instant-startup-cache-v41.test.mjs
+          scripts/tests/complete-startup-catalog-v42.test.mjs

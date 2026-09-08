@@ -34,6 +34,6 @@ test('startup, resume and manual refresh use live delta before complete-bootstra
   const reload = app.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.ok(reload.includes('await loadLiveContent(contentRef.current)'));
-  assert.ok(reload.indexOf('await loadLiveContent(contentRef.current)') < reload.indexOf('loadBootstrapContent().then'));
+  assert.ok(reload.indexOf('await loadLiveContent(contentRef.current)') < reload.indexOf('await loadBootstrapContent()'));
   assert.ok(!reload.includes('loadContent('));
 });

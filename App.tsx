@@ -41,7 +41,7 @@ import {
 import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
-import { getBundledContent, loadBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, loadContent, loadLiveContent, LoadedContent } from './src/contentService';
+import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, loadContent, loadLiveContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
   checkMobileOperatorAccess,
@@ -1789,16 +1789,33 @@ const CatalogArtwork = memo(function CatalogArtwork({
     ...catalogArtworkCandidates(fallback, imageKind),
     ...catalogArtworkCandidates(primary, imageKind),
   ])], [fallback, imageKind, primary]);
-  const [stage, setStage] = useState(0);
-  useEffect(() => {
-    setStage(0);
-  }, [candidates.join('|')]);
-
+  const artworkIdentity = candidates.join('|');
+  const artworkIdentityRef = useRef(artworkIdentity);
+  artworkIdentityRef.current = artworkIdentity;
+  const [attempt, setAttempt] = useState({ identity: artworkIdentity, stage: 0, loaded: false });
+  const currentAttempt = attempt.identity === artworkIdentity
+    ? attempt
+    : { identity: artworkIdentity, stage: 0, loaded: false };
+  const { stage, loaded } = currentAttempt;
   const remoteUrl = candidates[stage] || '';
-
-  const handleRemoteError = () => {
-    setStage((current) => current + 1);
-  };
+  const finishAttempt = useCallback((success: boolean) => {
+    if (artworkIdentityRef.current !== artworkIdentity) return;
+    setAttempt((previous) => {
+      const current = previous.identity === artworkIdentity
+        ? previous
+        : { identity: artworkIdentity, stage: 0, loaded: false };
+      // Ignore a late error/load from a source that has already been replaced.
+      if (current.stage !== stage || current.loaded) return previous;
+      return { identity: artworkIdentity, stage: success ? stage : stage + 1, loaded: success };
+    });
+  }, [artworkIdentity, stage]);
+  useEffect(() => {
+    // A hanging origin may never emit onError promptly. Advance only while a
+    // real alternative exists; leave the final request alive on slow networks.
+    if (!remoteUrl || loaded || stage + 1 >= candidates.length) return;
+    const timer = setTimeout(() => finishAttempt(false), 2500);
+    return () => clearTimeout(timer);
+  }, [remoteUrl, loaded, stage, candidates.length, finishAttempt]);
 
   return (
     <View style={[style, styles.catalogArtworkContainer]}>
@@ -1835,7 +1852,8 @@ const CatalogArtwork = memo(function CatalogArtwork({
           cachePolicy="memory-disk"
           transition={transition}
           recyclingKey={String(primary || fallback || remoteUrl)}
-          onError={handleRemoteError}
+          onLoad={() => finishAttempt(true)}
+          onError={() => finishAttempt(false)}
         />
       ) : null}
     </View>
@@ -7767,6 +7785,7 @@ function AppContent() {
   const detailHistoryRef = useRef<CatalogItem[]>([]);
   const lastDeepLinkRef = useRef<{ key: string; receivedAt: number } | null>(null);
   const lastContentLoadRef = useRef(0);
+  const contentLoadInFlightRef = useRef(false);
   const startupStartedAtRef = useRef(Date.now());
   const startupDismissedRef = useRef(false);
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -7855,9 +7874,10 @@ function AppContent() {
   }, []);
 
   const reloadContent = async (force = true, options: { silent?: boolean } = {}) => {
+    if (contentLoadInFlightRef.current) return;
     if (!force && Date.now() - lastContentLoadRef.current < 2 * 60 * 1000) return;
-    const online = await internetIsReachable();
-    setContentOffline(!online);
+    contentLoadInFlightRef.current = true;
+    const onlinePromise = internetIsReachable();
     const initialLoad = lastContentLoadRef.current === 0;
     const showRefreshIndicator = force && !initialLoad && !options.silent;
     const hadVisibleCatalog = contentRef.current.items.length > 0;
@@ -7897,12 +7917,20 @@ function AppContent() {
       // inserts every title added/changed by later syncs. The complete 8+ MB
       // bootstrap is only a compatibility fallback, never the normal refresh.
       let firstContent: LoadedContent;
-      const cachedLive = initialLoad ? await loadCachedLiveContent(contentRef.current) : null;
+      const cachedBootstrap = initialLoad ? await loadCachedBootstrapContent() : null;
+      const cachedBase = cachedBootstrap || contentRef.current;
+      const cachedLive = initialLoad ? await loadCachedLiveContent(cachedBase) : null;
 
-      if (cachedLive?.items.length) {
-        startupFallbackContentRef.current = cachedLive;
-        applyContent(cachedLive);
+      const cachedContent = cachedLive || cachedBootstrap;
+      if (cachedContent?.items.length) {
+        startupFallbackContentRef.current = cachedContent;
+        applyContent(cachedContent);
       }
+      // Reveal a complete local snapshot only after restoring last session's
+      // changes. The network must not hold a returning user behind Splash.
+      if (contentRef.current.items.length) dismissStartup();
+      const online = await onlinePromise;
+      setContentOffline(!online);
 
       if (online) {
         let liveContent: LoadedContent | null = null;
@@ -7922,14 +7950,14 @@ function AppContent() {
 
         // Compatibility fallback for an APK older than the immutable live
         // baseline. Keep the current screen interactive while it downloads.
-        void loadBootstrapContent().then((bootstrapContent) => {
-          if (!bootstrapContent?.items.length) return;
+        const bootstrapContent = await loadBootstrapContent();
+        if (bootstrapContent?.items.length) {
           startupFallbackContentRef.current = bootstrapContent;
           applyContent(bootstrapContent);
-        }).catch(() => undefined);
-        firstContent = cachedLive || contentRef.current;
+        }
+        firstContent = contentRef.current;
       } else {
-        firstContent = cachedLive || contentRef.current;
+        firstContent = contentRef.current;
       }
 
       const firstApplied = applyContent(firstContent);
@@ -7943,10 +7971,11 @@ function AppContent() {
       setContentResolved(true);
       dismissStartup();
     } catch {
-      setContentReady(false);
+      setContentReady(contentRef.current.items.length > 0);
       setContentResolved(true);
       dismissStartup();
     } finally {
+      contentLoadInFlightRef.current = false;
       if (showRefreshIndicator) setContentLoading(false);
     }
   };
@@ -7954,7 +7983,6 @@ function AppContent() {
   useEffect(() => {
     const hasBundledCatalog = contentRef.current.items.length > 0;
     let startupFallbackTimer: ReturnType<typeof setTimeout> | null = null;
-    let initialRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingIdleRefresh: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
 
     const reloadContentWhenIdle = () => {
@@ -7966,19 +7994,16 @@ function AppContent() {
     };
 
     if (hasBundledCatalog) {
-      // Paint the bundled catalog immediately. Reconcile the live delta only
-      // after the first interaction window so launch and taps stay responsive.
+      // Restore disk changes before revealing Home; start immediately instead
+      // of rendering the APK snapshot and inserting cached titles 1.2s later.
       setContentReady(true);
       setContentResolved(true);
-      dismissStartup();
-      initialRefreshTimer = setTimeout(reloadContentWhenIdle, 1200);
+      void reloadContent(false);
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
     }
-    // Five seconds is the normal minimum, not permission to reveal stale data.
-    // The Raw-first bootstrap has bounded failover; this ten-second timer is only
-    // an emergency escape for a broken network stack.
+    // Emergency escape for failed disk/network operations, not a launch delay.
     startupFallbackTimer = setTimeout(() => {
       if (startupDismissedRef.current) return;
       const fallback = startupFallbackContentRef.current;
@@ -8047,7 +8072,6 @@ function AppContent() {
 
     return () => {
       pendingIdleRefresh?.cancel();
-      if (initialRefreshTimer) clearTimeout(initialRefreshTimer);
       if (startupFallbackTimer) clearTimeout(startupFallbackTimer);
       clearInterval(catalogRefreshTimer);
       clearTimeout(vpnRetryTimer);

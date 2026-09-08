@@ -1689,6 +1689,7 @@ export async function loadCachedBootstrapContent(): Promise<LoadedContent | null
   ) return null;
   const cached = await readCachedBootstrapPayload();
   if (!cached?.items.length) return null;
+  if (Date.parse(cached.updatedAt) < Date.parse(LOCAL_PAYLOAD.updatedAt)) return null;
   // Never let an older sampled cache replace the complete catalog bundled in a
   // newer APK. Future complete snapshots can still grow beyond the APK count.
   if (cached.items.length < LOCAL_PAYLOAD.items.length) return null;
@@ -1788,11 +1789,13 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
           if (!response.ok) return;
 
           const rawBootstrapText = await response.text();
+          if (settled) return;
           const rawBootstrap = JSON.parse(rawBootstrapText);
           const bootstrapRecord = rawBootstrap && typeof rawBootstrap === 'object'
             ? rawBootstrap as Record<string, unknown>
             : {};
           const manifest = await manifestPromise;
+          if (settled) return;
           const payloadClientRevision = asString(
             bootstrapRecord.clientRevision ?? bootstrapRecord.client_revision,
           );
@@ -2060,6 +2063,9 @@ export async function loadLiveContent(base: LoadedContent): Promise<LoadedConten
           );
           if (!response.ok) return;
           const rawText = await response.text();
+          // A mirror may finish despite abort(). Never parse/normalize its
+          // multi-megabyte duplicate after another mirror has already won.
+          if (settled) return;
           const live = JSON.parse(rawText) as Record<string, unknown>;
           if (asString(live.clientRevision) !== manifest.clientRevision) return;
           const merged = mergeLiveCatalogDelta(base, live);
