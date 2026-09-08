@@ -1,2 +1,4 @@
 Aparatchi Android 0.16.14 - bundler verified retry
 Android 0.16.15 launcher and instant splash fix: 2026-09-05T08:35:00Z
+
+Android 0.16.16: user-requested APK with verified startup cache and poster latency fixes.
