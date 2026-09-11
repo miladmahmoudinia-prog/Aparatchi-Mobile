@@ -70,7 +70,7 @@ import {
   syncEpisodeAlerts,
 } from './src/notificationManager';
 
-const APP_DISPLAY_VERSION = '0.16.16';
+const APP_DISPLAY_VERSION = '0.16.17';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -1579,6 +1579,45 @@ const collectionMembersFor = (item: CatalogItem, catalog: CatalogItem[]) => {
 
 const personName = (person: CatalogPerson) => person.name || person.nameFa || 'Unknown';
 
+const dedupeCatalogPeople = (people: CatalogPerson[]) => {
+  const unique = new Map<string, CatalogPerson>();
+  for (const person of people) {
+    if (person.role !== 'director' && person.role !== 'actor') continue;
+    const normalizedName = normalizeComparableText(personName(person));
+    const identity = normalizedName
+      ? `${person.role}:name:${normalizedName}`
+      : person.tmdbId
+        ? `${person.role}:tmdb:${person.tmdbId}`
+        : `${person.role}:id:${person.id}`;
+    const current = unique.get(identity);
+    if (!current) {
+      unique.set(identity, person);
+      continue;
+    }
+
+    const quality = (candidate: CatalogPerson) =>
+      Number(Boolean(optimizedImageUrl(candidate.image, 'person'))) * 100 +
+      Number(Boolean(candidate.tmdbId)) * 20 +
+      Number(Boolean(candidate.character)) * 5 +
+      Number(Boolean(candidate.nameFa));
+    const preferred = quality(person) > quality(current) ? person : current;
+    const secondary = preferred === person ? current : person;
+    unique.set(identity, {
+      ...secondary,
+      ...preferred,
+      id: preferred.id || secondary.id,
+      name: preferred.name || secondary.name,
+      nameFa: preferred.nameFa || secondary.nameFa,
+      image: preferred.image || secondary.image,
+      tmdbId: preferred.tmdbId || secondary.tmdbId,
+      character: preferred.character || secondary.character,
+      roleLabel: preferred.roleLabel || secondary.roleLabel,
+      order: Math.min(Number(current.order || 0), Number(person.order || 0)),
+    });
+  }
+  return [...unique.values()];
+};
+
 const personRoleTitle = (person: CatalogPerson) =>
   person.roleLabel || (person.role === 'director' ? 'کارگردان' : 'بازیگر');
 
@@ -2750,18 +2789,7 @@ function PeopleSection({
   onOpen: (person: CatalogPerson) => void;
 }) {
   const people = useMemo(() => {
-    const unique = new Map<string, CatalogPerson>();
-    for (const person of item.people || []) {
-      if (person.role !== 'director' && person.role !== 'actor') continue;
-      const identity = person.tmdbId
-        ? `tmdb:${person.tmdbId}:${person.role}`
-        : `name:${normalizeComparableText(personName(person))}:${person.role}`;
-      const current = unique.get(identity);
-      if (!current || (!optimizedImageUrl(current.image, 'person') && optimizedImageUrl(person.image, 'person'))) {
-        unique.set(identity, person);
-      }
-    }
-    return [...unique.values()].sort((a, b) => {
+    return dedupeCatalogPeople(item.people || []).sort((a, b) => {
       const roleDifference = (a.role === 'director' ? 0 : 1) - (b.role === 'director' ? 0 : 1);
       return roleDifference || (a.order || 0) - (b.order || 0) || personName(a).localeCompare(personName(b));
     });
@@ -3654,11 +3682,11 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={2}
-        maxToRenderPerBatch={2}
-        updateCellsBatchingPeriod={60}
-        windowSize={4}
-        removeClippedSubviews
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
+        updateCellsBatchingPeriod={16}
+        windowSize={6}
+        removeClippedSubviews={false}
         keyboardShouldPersistTaps="always"
         onScrollEndDrag={rememberVisibleOffset}
         onMomentumScrollEnd={rememberVisibleOffset}
@@ -7717,19 +7745,10 @@ const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): C
   const visiblePoster = current.poster || current.posterFallback || '';
   const visibleBackdrop = current.backdrop || current.backdropFallback || visiblePoster;
   const visibleOverview = String(current.overview || '').trim();
-  const visiblePeople = Array.isArray(current.people) && current.people.length ? current.people : null;
-  const mergedPeople = visiblePeople ? [...visiblePeople] : [];
-  const visiblePersonKeys = new Set(mergedPeople.map((person) => person.tmdbId
-    ? `${person.role}:tmdb:${person.tmdbId}`
-    : `${person.role}:name:${normalizeComparableText(person.nameFa || person.name || '')}`));
-  for (const person of incoming.people || []) {
-    const key = person.tmdbId
-      ? `${person.role}:tmdb:${person.tmdbId}`
-      : `${person.role}:name:${normalizeComparableText(person.nameFa || person.name || '')}`;
-    if (!key || visiblePersonKeys.has(key)) continue;
-    visiblePersonKeys.add(key);
-    mergedPeople.push(person);
-  }
+  const mergedPeople = dedupeCatalogPeople([
+    ...(current.people || []),
+    ...(incoming.people || []),
+  ]);
   return {
     ...incoming,
     ...(visiblePoster ? {
@@ -8234,28 +8253,10 @@ function AppContent() {
       let fullItem = await loadCatalogItemDetail(activeSummary);
 
       if (!fullItem && !cancelled) {
-        // A cached lightweight index can outlive a content-addressed detail shard.
-        // Force one direct index refresh (bypassing manifest/cache short-circuits),
-        // then retry using the refreshed detailPath for the same title.
-        const refreshed = await loadContent(false, true);
-        if (cancelled) return;
-        const refreshedSummary = refreshed.items.find((candidate) =>
-          candidate.type === summary.type && String(candidate.id) === String(summary.id),
-        );
-        if (refreshedSummary) {
-          setContent(refreshed);
-          activeSummary = refreshedSummary;
-          setSelectedItem((current) => {
-            if (!current) return current;
-            if (current.type !== summary.type || String(current.id) !== String(summary.id)) return current;
-            return mergeOpenDetailSnapshot(current, refreshedSummary);
-          });
-          fullItem = await loadCatalogItemDetail(activeSummary);
-        }
-      }
-
-      if (!fullItem && !cancelled) {
-        await new Promise((resolve) => setTimeout(resolve, 900));
+        // Detail recovery already checks the immutable shard and stable pointer.
+        // Never download/parse the complete catalog from an open Detail screen;
+        // that blocked scrolling and image rendering on slower Android devices.
+        await new Promise((resolve) => setTimeout(resolve, 350));
         fullItem = await loadCatalogItemDetail(activeSummary);
       }
       if (cancelled || !fullItem) return;
