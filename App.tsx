@@ -9,6 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, createVideoPlayer, useVideoPlayer } from 'expo-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import * as SplashScreen from 'expo-splash-screen';
 import * as WebBrowser from 'expo-web-browser';
 import AparatchiCustomTab from './modules/aparatchi-custom-tab/src';
 import {
@@ -70,7 +71,9 @@ import {
   syncEpisodeAlerts,
 } from './src/notificationManager';
 
-const APP_DISPLAY_VERSION = '0.16.18';
+void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+
+const APP_DISPLAY_VERSION = '0.16.19';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -206,9 +209,9 @@ const catalogArtworkCandidates = (
   const isTmdbArtwork = /^https?:\/\/image\.tmdb\.org\//i.test(image);
 
   if (isUperaArtwork) {
-    // Upera is the first-party thumbnail CDN and is normally the lowest-latency
-    // route. A third-party resize proxy added a visible fallback delay on Home.
-    candidates.push(image, proxied);
+    // The origin is unreliable on some Iranian mobile networks. Paint the
+    // small proxy response first and retain the provider URL as fallback.
+    candidates.push(proxied, image);
   } else if (isTmdbArtwork) {
     const tmdbWidth = kind === 'poster' ? 'w342' : 'w780';
     candidates.push(
@@ -2872,10 +2875,10 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
       inverted
-      initialNumToRender={4}
-      maxToRenderPerBatch={4}
-      updateCellsBatchingPeriod={32}
-      windowSize={5}
+      initialNumToRender={10}
+      maxToRenderPerBatch={10}
+      updateCellsBatchingPeriod={16}
+      windowSize={10}
       removeClippedSubviews={false}
       nestedScrollEnabled
       keyboardShouldPersistTaps="always"
@@ -3511,37 +3514,10 @@ const buildHomeCatalogRows = (catalog: CatalogItem[]): HomeCatalogRow[] => {
     .slice(0, 10)
     .forEach((item) => buckets.get('updated')!.push(item));
 
-  const shelfIdentity = (item: CatalogItem) => {
-    const imdb = String(item.imdb || '').trim().toLowerCase();
-    if (imdb) return `imdb:${imdb}`;
-    return [
-      item.type,
-      normalizeComparableText(item.name || item.nameFa || ''),
-      Number(item.year || 0),
-    ].join(':');
-  };
-  const dedupeShelf = (items: CatalogItem[], filter: SearchFilter) => {
-    const unique = new Map<string, CatalogItem>();
-    for (const item of items) {
-      const key = shelfIdentity(item);
-      const current = unique.get(key);
-      if (!current) {
-        unique.set(key, item);
-      } else if (
-        filter !== 'mobile-operator' &&
-        itemHasOperatorAccess(current) &&
-        !itemHasOperatorAccess(item)
-      ) {
-        unique.set(key, item);
-      }
-    }
-    return [...unique.values()];
-  };
-
-  return HOME_CATALOG_ROWS.map((row) => ({
-    ...row,
-    items: dedupeShelf(buckets.get(row.filter) || [], row.filter).slice(0, 10),
-  }));
+  // Repetition across different shelves is intentional: one title can be new,
+  // recently updated and a member of its own category. Free and operator
+  // editions are also distinct access choices and must both remain visible.
+  return HOME_CATALOG_ROWS.map((row) => ({ ...row, items: buckets.get(row.filter) || [] }));
 };
 
 const HomeCatalogSection = memo(function HomeCatalogSection({
@@ -3718,10 +3694,10 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={3}
-        maxToRenderPerBatch={2}
-        updateCellsBatchingPeriod={32}
-        windowSize={5}
+        initialNumToRender={4}
+        maxToRenderPerBatch={3}
+        updateCellsBatchingPeriod={16}
+        windowSize={6}
         removeClippedSubviews={false}
         keyboardShouldPersistTaps="always"
         onScrollEndDrag={rememberVisibleOffset}
@@ -8038,6 +8014,16 @@ function AppContent() {
   };
 
   useEffect(() => {
+    // Keep Android's native launch surface visible until React has committed
+    // the branded startup artwork. This removes the black hand-off gap visible
+    // on slower devices without delaying Home data.
+    const frame = requestAnimationFrame(() => {
+      void SplashScreen.hideAsync().catch(() => undefined);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
     const hasBundledCatalog = contentRef.current.items.length > 0;
     let startupFallbackTimer: ReturnType<typeof setTimeout> | null = null;
     let startupRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -8058,7 +8044,7 @@ function AppContent() {
       setContentReady(true);
       setContentResolved(true);
       dismissStartup();
-      startupRefreshTimer = setTimeout(reloadContentWhenIdle, 500);
+      startupRefreshTimer = setTimeout(reloadContentWhenIdle, 12_000);
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
