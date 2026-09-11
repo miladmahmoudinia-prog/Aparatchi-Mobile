@@ -5,19 +5,19 @@ import test from 'node:test';
 const app = fs.readFileSync('App.tsx', 'utf8');
 const service = fs.readFileSync('src/contentService.ts', 'utf8');
 const refresh = fs.readFileSync('scripts/refresh-bundled-bootstrap.mjs', 'utf8');
-const bootstrap = JSON.parse(fs.readFileSync('src/catalogBootstrap.json', 'utf8'));
+const bootstrap = JSON.parse(fs.readFileSync('src/catalogStartup.json', 'utf8'));
 
-test('bundled startup navigation is complete, unique and uncapped', () => {
-  assert.ok(bootstrap.items.length > 1000, 'bundled catalog unexpectedly tiny');
+test('bundled startup navigation is compact, unique and shelf-complete', () => {
+  assert.ok(bootstrap.items.length >= 100 && bootstrap.items.length <= 240);
   assert.equal(new Set(bootstrap.items.map((item) => `${item.type}:${item.id}`)).size, bootstrap.items.length);
   assert.ok(bootstrap.items.some((item) => item.categoryKeys?.includes('iranian-series')));
-  assert.ok(fs.statSync('src/catalogBootstrap.json').size < 10_000_000);
+  assert.ok(fs.statSync('src/catalogStartup.json').size < 900_000);
 });
 
 test('release refresh accepts only manifest-declared complete title counts', () => {
   assert.ok(refresh.includes('bootstrapItemCount !== clientItemCount'));
   assert.ok(refresh.includes('value.items.length !== Number(manifest.bootstrapItemCount)'));
-  assert.ok(!refresh.includes('items.length < 100'));
+  assert.ok(refresh.includes('MAX_STARTUP_BYTES = 900_000'));
 });
 
 test('runtime rejects truncated remote and legacy sampled caches', () => {
