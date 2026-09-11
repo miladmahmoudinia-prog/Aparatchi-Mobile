@@ -5,3 +5,4 @@ Android 0.16.16: user-requested APK with verified startup cache and poster laten
 Android 0.16.17: cast dedupe and responsive detail/home rendering.
 Android 0.16.18: compact instant startup, faster rails, artwork and duplicate fixes.
 Android 0.16.19: restore valid shelf variants, proxy-first posters, native splash handoff.
+Android 0.16.20: restore complete 6000+ title catalog and Aparatchi launch icon.
