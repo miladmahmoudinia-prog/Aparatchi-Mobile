@@ -170,6 +170,6 @@ test('the reported operator movie skips provider default artwork before its real
   assert.equal(candidates('https://thumb.upera.tv/s3/posters/default.jpg').length, 0);
   const actual = candidates('https://thumb.upera.tv/s3/posters/JfIqVB8KSsv0h6WL2HiA.jpg');
   assert.equal(actual.length, 2);
-  assert.ok(actual[0].startsWith('https://wsrv.nl/'));
-  assert.equal(actual[1], 'https://thumb.upera.tv/s3/posters/JfIqVB8KSsv0h6WL2HiA.jpg');
+  assert.equal(actual[0], 'https://thumb.upera.tv/s3/posters/JfIqVB8KSsv0h6WL2HiA.jpg');
+  assert.ok(actual[1].startsWith('https://wsrv.nl/'));
 });
