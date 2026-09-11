@@ -5,6 +5,7 @@ on:
     paths:
       - 'App.tsx'
       - 'src/contentService.ts'
+      - 'app.json'
       - 'src/catalogStartup.json'
       - 'scripts/refresh-bundled-bootstrap.mjs'
       - 'scripts/tests/instant-startup-cache-v41.test.mjs'
