@@ -37,3 +37,12 @@ test('startup, resume and manual refresh use live delta before complete-bootstra
   assert.ok(reload.indexOf('await loadLiveContent(contentRef.current)') < reload.indexOf('await loadBootstrapContent()'));
   assert.ok(!reload.includes('loadContent('));
 });
+
+test('home keeps legitimate cross-shelf and free/operator editions', () => {
+  const start = app.indexOf('const buildHomeCatalogRows =');
+  const end = app.indexOf('\nconst HomeCatalogSection', start);
+  const homeRows = app.slice(start, end);
+  assert.ok(homeRows.includes('Repetition across different shelves is intentional'));
+  assert.ok(!homeRows.includes('shelfIdentity'));
+  assert.ok(!homeRows.includes('dedupeShelf'));
+});
