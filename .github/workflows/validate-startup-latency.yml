@@ -5,6 +5,10 @@ on:
     paths:
       - 'App.tsx'
       - 'src/contentService.ts'
+      - 'src/catalogStartup.json'
+      - 'scripts/refresh-bundled-bootstrap.mjs'
+      - 'scripts/tests/instant-startup-cache-v41.test.mjs'
+      - 'scripts/tests/complete-startup-catalog-v42.test.mjs'
       - 'scripts/tests/startup-cache-poster-latency.test.mjs'
       - '.github/workflows/validate-startup-latency.yml'
   workflow_dispatch:
