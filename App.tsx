@@ -70,7 +70,7 @@ import {
   syncEpisodeAlerts,
 } from './src/notificationManager';
 
-const APP_DISPLAY_VERSION = '0.16.17';
+const APP_DISPLAY_VERSION = '0.16.18';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -206,14 +206,14 @@ const catalogArtworkCandidates = (
   const isTmdbArtwork = /^https?:\/\/image\.tmdb\.org\//i.test(image);
 
   if (isUperaArtwork) {
-    // The origin can take several seconds to fail on a cold start.  Let the
-    // small image proxy paint the card first, then fall back to the origin.
-    candidates.push(proxied, image);
+    // Upera is the first-party thumbnail CDN and is normally the lowest-latency
+    // route. A third-party resize proxy added a visible fallback delay on Home.
+    candidates.push(image, proxied);
   } else if (isTmdbArtwork) {
     const tmdbWidth = kind === 'poster' ? 'w342' : 'w780';
     candidates.push(
-      image.replace(/\/t\/p\/(?:original|w\d+)\//i, `/t/p/${tmdbWidth}/`),
       proxied,
+      image.replace(/\/t\/p\/(?:original|w\d+)\//i, `/t/p/${tmdbWidth}/`),
       image,
     );
   } else {
@@ -1584,11 +1584,11 @@ const dedupeCatalogPeople = (people: CatalogPerson[]) => {
   for (const person of people) {
     if (person.role !== 'director' && person.role !== 'actor') continue;
     const normalizedName = normalizeComparableText(personName(person));
-    const identity = normalizedName
-      ? `${person.role}:name:${normalizedName}`
-      : person.tmdbId
-        ? `${person.role}:tmdb:${person.tmdbId}`
-        : `${person.role}:id:${person.id}`;
+    const identity = person.tmdbId
+      ? `tmdb:${person.tmdbId}`
+      : normalizedName
+        ? `name:${normalizedName}`
+        : `id:${person.id}`;
     const current = unique.get(identity);
     if (!current) {
       unique.set(identity, person);
@@ -1602,6 +1602,7 @@ const dedupeCatalogPeople = (people: CatalogPerson[]) => {
       Number(Boolean(candidate.nameFa));
     const preferred = quality(person) > quality(current) ? person : current;
     const secondary = preferred === person ? current : person;
+    const rolesDiffer = current.role !== person.role;
     unique.set(identity, {
       ...secondary,
       ...preferred,
@@ -1611,7 +1612,12 @@ const dedupeCatalogPeople = (people: CatalogPerson[]) => {
       image: preferred.image || secondary.image,
       tmdbId: preferred.tmdbId || secondary.tmdbId,
       character: preferred.character || secondary.character,
-      roleLabel: preferred.roleLabel || secondary.roleLabel,
+      role: rolesDiffer && (current.role === 'director' || person.role === 'director')
+        ? 'director'
+        : preferred.role,
+      roleLabel: rolesDiffer
+        ? 'کارگردان و بازیگر'
+        : preferred.roleLabel || secondary.roleLabel,
       order: Math.min(Number(current.order || 0), Number(person.order || 0)),
     });
   }
@@ -2866,10 +2872,10 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
       inverted
-      initialNumToRender={10}
-      maxToRenderPerBatch={10}
-      updateCellsBatchingPeriod={16}
-      windowSize={10}
+      initialNumToRender={4}
+      maxToRenderPerBatch={4}
+      updateCellsBatchingPeriod={32}
+      windowSize={5}
       removeClippedSubviews={false}
       nestedScrollEnabled
       keyboardShouldPersistTaps="always"
@@ -3505,7 +3511,37 @@ const buildHomeCatalogRows = (catalog: CatalogItem[]): HomeCatalogRow[] => {
     .slice(0, 10)
     .forEach((item) => buckets.get('updated')!.push(item));
 
-  return HOME_CATALOG_ROWS.map((row) => ({ ...row, items: buckets.get(row.filter) || [] }));
+  const shelfIdentity = (item: CatalogItem) => {
+    const imdb = String(item.imdb || '').trim().toLowerCase();
+    if (imdb) return `imdb:${imdb}`;
+    return [
+      item.type,
+      normalizeComparableText(item.name || item.nameFa || ''),
+      Number(item.year || 0),
+    ].join(':');
+  };
+  const dedupeShelf = (items: CatalogItem[], filter: SearchFilter) => {
+    const unique = new Map<string, CatalogItem>();
+    for (const item of items) {
+      const key = shelfIdentity(item);
+      const current = unique.get(key);
+      if (!current) {
+        unique.set(key, item);
+      } else if (
+        filter !== 'mobile-operator' &&
+        itemHasOperatorAccess(current) &&
+        !itemHasOperatorAccess(item)
+      ) {
+        unique.set(key, item);
+      }
+    }
+    return [...unique.values()];
+  };
+
+  return HOME_CATALOG_ROWS.map((row) => ({
+    ...row,
+    items: dedupeShelf(buckets.get(row.filter) || [], row.filter).slice(0, 10),
+  }));
 };
 
 const HomeCatalogSection = memo(function HomeCatalogSection({
@@ -3682,10 +3718,10 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={4}
-        maxToRenderPerBatch={3}
-        updateCellsBatchingPeriod={16}
-        windowSize={6}
+        initialNumToRender={3}
+        maxToRenderPerBatch={2}
+        updateCellsBatchingPeriod={32}
+        windowSize={5}
         removeClippedSubviews={false}
         keyboardShouldPersistTaps="always"
         onScrollEndDrag={rememberVisibleOffset}
@@ -5638,21 +5674,12 @@ function ExactEpisodeArtwork({
   style?: any;
 }) {
   // Episode cards are navigation controls, so mounting them must never start
-  // video decoders or thumbnail extraction. Paint artwork already seen on the
-  // detail page immediately, then layer the exact server frame when available.
-  const fallbackArtwork = item.backdrop || item.poster || item.posterFallback || '';
+  // video decoders or thumbnail extraction. If the server has no exact frame,
+  // use a lightweight neutral tile instead of repeating the series backdrop.
   const exactArtwork = artwork ? optimizedImageUrl(artwork, 'backdrop') : '';
 
   return (
     <View style={[styles.episodeShowcaseArtwork, style]}>
-      <CatalogArtwork
-        primary={fallbackArtwork}
-        fallback={item.posterFallback || item.poster || item.backdrop}
-        localFallback={localArtworkForItem(item)}
-        style={StyleSheet.absoluteFill}
-        contentFit="cover"
-        imageKind="backdrop"
-      />
       {exactArtwork ? (
         <Image
           source={{ uri: exactArtwork }}
@@ -5661,7 +5688,14 @@ function ExactEpisodeArtwork({
           cachePolicy="memory-disk"
           transition={120}
         />
-      ) : null}
+      ) : (
+        <LinearGradient
+          colors={['#202633', '#11151d', '#090c12']}
+          style={[StyleSheet.absoluteFill, styles.episodeArtworkPlaceholder]}
+        >
+          <Ionicons name="film-outline" color="rgba(214,168,75,0.78)" size={34} />
+        </LinearGradient>
+      )}
     </View>
   );
 }
@@ -7764,7 +7798,7 @@ const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): C
   };
 };
 
-const STARTUP_MIN_VISIBLE_MS = 900;
+const STARTUP_MIN_VISIBLE_MS = 650;
 
 function AppContent() {
   const appInsets = useSafeAreaInsets();
@@ -8006,6 +8040,7 @@ function AppContent() {
   useEffect(() => {
     const hasBundledCatalog = contentRef.current.items.length > 0;
     let startupFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let startupRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingIdleRefresh: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
 
     const reloadContentWhenIdle = () => {
@@ -8017,11 +8052,13 @@ function AppContent() {
     };
 
     if (hasBundledCatalog) {
-      // Restore disk changes before revealing Home; start immediately instead
-      // of rendering the APK snapshot and inserting cached titles 1.2s later.
+      // The compact APK snapshot paints Home immediately. Parsing the complete
+      // disk/network catalog must happen only after the first interactions so
+      // it can never hold the splash or the first frame hostage.
       setContentReady(true);
       setContentResolved(true);
-      void reloadContent(false);
+      dismissStartup();
+      startupRefreshTimer = setTimeout(reloadContentWhenIdle, 500);
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
@@ -8095,6 +8132,7 @@ function AppContent() {
 
     return () => {
       pendingIdleRefresh?.cancel();
+      if (startupRefreshTimer) clearTimeout(startupRefreshTimer);
       if (startupFallbackTimer) clearTimeout(startupFallbackTimer);
       clearInterval(catalogRefreshTimer);
       clearTimeout(vpnRetryTimer);
@@ -9720,6 +9758,7 @@ const styles = StyleSheet.create({
   episodeShowcaseCard: { width: '100%', minHeight: 132, borderRadius: 16, overflow: 'hidden', flexDirection: 'row-reverse', alignItems: 'stretch', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   episodeShowcaseArtworkWrap: { flex: 1, aspectRatio: 16 / 9, minHeight: 132, overflow: 'hidden', backgroundColor: COLORS.surfaceStrong },
   episodeShowcaseArtwork: { width: '100%', height: '100%' },
+  episodeArtworkPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   episodeShowcaseArtworkShade: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(3,5,8,0.46)' },
   episodeShowcaseArtworkForeground: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   episodeShowcasePlay: { position: 'absolute', left: '50%', top: '50%', width: 42, height: 42, marginLeft: -21, marginTop: -21, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(222,35,66,0.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)' },
