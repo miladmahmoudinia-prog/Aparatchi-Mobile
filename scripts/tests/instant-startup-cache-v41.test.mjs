@@ -22,7 +22,7 @@ test('startup reveals compact Home before restoring the full disk catalog', () =
   const end = app.indexOf('} else {', start);
   const block = app.slice(start, end);
   assert.ok(block.includes('dismissStartup();'));
-  assert.ok(block.includes('setTimeout(reloadContentWhenIdle, 500)'));
+  assert.ok(block.includes('setTimeout(reloadContentWhenIdle, 12_000)'));
   const cachedStart = app.indexOf('if (cachedContent?.items.length) {', app.indexOf('const reloadContent = async'));
   const reveal = app.indexOf('if (contentRef.current.items.length) dismissStartup();', cachedStart);
   assert.ok(cachedStart >= 0 && reveal > cachedStart);
