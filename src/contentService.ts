@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { CATALOG, VERIFIED_IRANIAN_SCHEDULE } from './data';
-import bundledBootstrapJson from './catalogStartup.json';
+import bundledBootstrapJson from './catalogBootstrap.json';
 import {
   CONTENT_REPOSITORY_BASES,
   REMOTE_CONTENT_BOOTSTRAP_URL,
