@@ -55,6 +55,24 @@ const validate = (raw, manifest) => {
   return value;
 };
 
+// Keep the APK's synchronous startup payload small enough for low-memory
+// Android devices. Full episode lists remain in the remote detail shards and
+// hydrate as soon as a series opens; the bundled snapshot only needs the newest
+// playable episode so Home can mount without parsing thousands of media URLs.
+const compactForApkStartup = (value) => ({
+  ...value,
+  items: value.items.map((item) => {
+    if (item?.type !== 'series' || !Array.isArray(item.downloads) || item.downloads.length <= 1) return item;
+    const newestEpisode = [...item.downloads]
+      .filter((group) => Number(group?.episodeNumber || 0) > 0)
+      .sort((a, b) =>
+        Number(b?.seasonNumber || 0) - Number(a?.seasonNumber || 0) ||
+        Number(b?.episodeNumber || 0) - Number(a?.episodeNumber || 0),
+      )[0];
+    return { ...item, downloads: newestEpisode ? [newestEpisode] : [] };
+  }),
+});
+
 const [manifestRaw, freshRaw] = await Promise.all([
   fetchCurrent('catalog-manifest.json'),
   fetchCurrent('catalog-bootstrap.json'),
@@ -63,8 +81,10 @@ const [manifestRaw, freshRaw] = await Promise.all([
 if (manifestRaw && freshRaw) {
   const manifest = parseManifest(manifestRaw);
   const value = validate(freshRaw, manifest);
-  await fs.writeFile(outputPath, `${freshRaw.trim()}\n`, 'utf8');
-  console.log(JSON.stringify({ bundledItems: value.items.length, clientRevision: value.clientRevision }));
+  const compact = compactForApkStartup(value);
+  const serialized = `${JSON.stringify(compact)}\n`;
+  await fs.writeFile(outputPath, serialized, 'utf8');
+  console.log(JSON.stringify({ bundledItems: compact.items.length, bundledBytes: Buffer.byteLength(serialized), clientRevision: compact.clientRevision }));
 } else {
   const current = await fs.readFile(outputPath, 'utf8');
   const value = validate(current, null);
