@@ -62,14 +62,18 @@ const validate = (raw, manifest) => {
 const compactForApkStartup = (value) => ({
   ...value,
   items: value.items.map((item) => {
-    if (item?.type !== 'series' || !Array.isArray(item.downloads) || item.downloads.length <= 1) return item;
-    const newestEpisode = [...item.downloads]
+    // Story and cast belong to the detail shard, not the synchronous Home
+    // payload. Removing them saves several megabytes and avoids the launch
+    // freeze seen on older/low-memory Android phones.
+    const { overview: _overview, people: _people, ...startupItem } = item || {};
+    if (startupItem?.type !== 'series' || !Array.isArray(startupItem.downloads) || startupItem.downloads.length <= 1) return startupItem;
+    const newestEpisode = [...startupItem.downloads]
       .filter((group) => Number(group?.episodeNumber || 0) > 0)
       .sort((a, b) =>
         Number(b?.seasonNumber || 0) - Number(a?.seasonNumber || 0) ||
         Number(b?.episodeNumber || 0) - Number(a?.episodeNumber || 0),
       )[0];
-    return { ...item, downloads: newestEpisode ? [newestEpisode] : [] };
+    return { ...startupItem, downloads: newestEpisode ? [newestEpisode] : [] };
   }),
 });
 
