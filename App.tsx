@@ -73,7 +73,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.20';
+const APP_DISPLAY_VERSION = '0.16.21';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -1583,20 +1583,25 @@ const collectionMembersFor = (item: CatalogItem, catalog: CatalogItem[]) => {
 const personName = (person: CatalogPerson) => person.name || person.nameFa || 'Unknown';
 
 const dedupeCatalogPeople = (people: CatalogPerson[]) => {
-  const unique = new Map<string, CatalogPerson>();
+  const unique: CatalogPerson[] = [];
+  const aliasesFor = (candidate: CatalogPerson) => [...new Set(
+    [candidate.name, candidate.nameFa, personName(candidate)]
+      .map((value) => normalizeComparableText(value))
+      .filter(Boolean),
+  )];
   for (const person of people) {
     if (person.role !== 'director' && person.role !== 'actor') continue;
-    const normalizedName = normalizeComparableText(personName(person));
-    const identity = person.tmdbId
-      ? `tmdb:${person.tmdbId}`
-      : normalizedName
-        ? `name:${normalizedName}`
-        : `id:${person.id}`;
-    const current = unique.get(identity);
-    if (!current) {
-      unique.set(identity, person);
+    const aliases = aliasesFor(person);
+    const existingIndex = unique.findIndex((candidate) => {
+      if (person.tmdbId && candidate.tmdbId && Number(person.tmdbId) === Number(candidate.tmdbId)) return true;
+      const candidateAliases = aliasesFor(candidate);
+      return aliases.some((alias) => candidateAliases.includes(alias));
+    });
+    if (existingIndex < 0) {
+      unique.push(person);
       continue;
     }
+    const current = unique[existingIndex];
 
     const quality = (candidate: CatalogPerson) =>
       Number(Boolean(optimizedImageUrl(candidate.image, 'person'))) * 100 +
@@ -1606,7 +1611,7 @@ const dedupeCatalogPeople = (people: CatalogPerson[]) => {
     const preferred = quality(person) > quality(current) ? person : current;
     const secondary = preferred === person ? current : person;
     const rolesDiffer = current.role !== person.role;
-    unique.set(identity, {
+    unique[existingIndex] = {
       ...secondary,
       ...preferred,
       id: preferred.id || secondary.id,
@@ -1622,9 +1627,9 @@ const dedupeCatalogPeople = (people: CatalogPerson[]) => {
         ? 'کارگردان و بازیگر'
         : preferred.roleLabel || secondary.roleLabel,
       order: Math.min(Number(current.order || 0), Number(person.order || 0)),
-    });
+    };
   }
-  return [...unique.values()];
+  return unique;
 };
 
 const personRoleTitle = (person: CatalogPerson) =>
@@ -6101,13 +6106,15 @@ function DetailModal({
                     <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
                   </>
                 ) : null}
-                {item.type === 'series' ? (
-                  <View style={styles.detailEpisodesLoading}>
-                    <ActivityIndicator color={COLORS.gold} size="small" />
-                    <Text style={styles.detailEpisodesLoadingText}>در حال دریافت همهٔ قسمت‌ها…</Text>
-                  </View>
-                ) : null}
                 <PeopleSection item={item} onOpen={onOpenPerson} />
+                {item.type === 'series' && episodeGroups.length ? (
+                  <SeriesEpisodeShowcase
+                    item={item}
+                    onPlay={(group) => onStream(item, group)}
+                    onOpenDownloads={(group) => { setDownloadInitialGroup(group.id); setDownloadSheetOpen(true); }}
+                    onOpenOperator={(file) => onOperatorOpen(item, file)}
+                  />
+                ) : null}
                 {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile || hasDownloads) ? (
                   <View style={styles.detailActions}>
                     {(hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
