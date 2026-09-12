@@ -3135,10 +3135,10 @@ function HomeStarsSectionBase({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.starsPeopleList}
         inverted
-        initialNumToRender={10}
-        maxToRenderPerBatch={10}
-        updateCellsBatchingPeriod={32}
-        windowSize={7}
+        initialNumToRender={6}
+        maxToRenderPerBatch={4}
+        updateCellsBatchingPeriod={64}
+        windowSize={4}
         removeClippedSubviews={false}
         nestedScrollEnabled
         renderItem={renderStarPerson}
@@ -3168,10 +3168,10 @@ function HomeStarsSectionBase({
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.starWorksList}
           inverted
-          initialNumToRender={6}
-          maxToRenderPerBatch={6}
-          updateCellsBatchingPeriod={35}
-          windowSize={5}
+          initialNumToRender={4}
+          maxToRenderPerBatch={3}
+          updateCellsBatchingPeriod={64}
+          windowSize={4}
           removeClippedSubviews={false}
           nestedScrollEnabled
           renderItem={renderStarWork}
@@ -6006,24 +6006,45 @@ function RelatedTitlesSection({
         horizontal
         data={related}
         keyExtractor={(relatedItem) => relatedItem.id}
-        renderItem={({ item: relatedItem }) => (
-          <Pressable style={styles.relatedTitleCard} onPress={() => onOpen(relatedItem)}>
-            <CatalogArtwork
-              primary={relatedItem.poster}
-              fallback={relatedItem.posterFallback}
-              style={styles.relatedTitlePoster}
-              contentFit="cover"
-              imageKind="poster"
-            />
-            <Text numberOfLines={1} style={styles.relatedTitleName}>{relatedItem.nameFa}</Text>
-            {Number(relatedItem.rate || 0) > 0 ? (
-              <View style={styles.relatedTitleRate}>
-                <Ionicons name="star" color={COLORS.gold} size={11} />
-                <Text style={styles.relatedTitleRateText}>{toPersianDigits(Number(relatedItem.rate).toFixed(1))}</Text>
+        renderItem={({ item: relatedItem }) => {
+          const relatedBadges = itemPosterBadges(relatedItem);
+          return (
+            <Pressable style={styles.relatedTitleCard} onPress={() => onOpen(relatedItem)}>
+              <View style={styles.relatedTitlePoster}>
+                <CatalogArtwork
+                  primary={relatedItem.poster}
+                  fallback={relatedItem.posterFallback}
+                  style={styles.relatedTitlePoster}
+                  contentFit="cover"
+                  imageKind="poster"
+                />
+                {relatedBadges.length ? (
+                  <View pointerEvents="none" style={styles.posterAccessStack}>
+                    {relatedBadges.map((badge) => (
+                      <View
+                        key={badge.id}
+                        style={[styles.posterAccess, badge.kind === 'operator' && styles.posterOperatorAccess]}
+                      >
+                        <Text
+                          style={[styles.posterAccessText, badge.kind === 'operator' && styles.posterOperatorAccessText]}
+                        >
+                          {badge.label}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
               </View>
-            ) : null}
-          </Pressable>
-        )}
+              <Text numberOfLines={1} style={styles.relatedTitleName}>{relatedItem.nameFa || relatedItem.name}</Text>
+              {Number(relatedItem.rate || 0) > 0 ? (
+                <View style={styles.relatedTitleRate}>
+                  <Ionicons name="star" color={COLORS.gold} size={11} />
+                  <Text style={styles.relatedTitleRateText}>{toPersianDigits(Number(relatedItem.rate).toFixed(1))}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          );
+        }}
         contentContainerStyle={styles.relatedTitlesRail}
         inverted
         showsHorizontalScrollIndicator={false}

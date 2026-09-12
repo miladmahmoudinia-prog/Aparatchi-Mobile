@@ -5,6 +5,9 @@ function replaceOnce(source, before, after, label) {
   if (label === 'collection scroll callback' && source.includes('const rememberCollectionFolderOffset = useCallback')) return source;
   if (label === 'collection scroll restore' && source.includes('onScroll={rememberCollectionFolderOffset}')) return source;
   if (label === 'collection folder identity' && source.includes("firstFa && hasPersianScript(firstFa)")) return source;
+  if (label === 'poster own-title and latest episode fast path' && source.includes('const compactGridCard = width < 100;')) return source;
+  if (label === 'collection detail identity' && source.includes('localizedCollectionTitleFa(item.collectionId')) return source;
+  if (label === 'collection folder identity' && source.includes('localizedCollectionTitleFa(id, rawFa, members)')) return source;
   if (label === 'vertical Home virtualization' && source.includes('const eagerRows = useMemo(() => populatedRows.slice(0, 1)')) return source;
   const count = source.split(before).length - 1;
   if (count !== 1) {
