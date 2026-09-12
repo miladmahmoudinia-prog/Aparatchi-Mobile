@@ -10,3 +10,4 @@ Android 0.16.21: instant full episodes, episode artwork backfill, cast dedupe, l
 Android 0.16.21 rebuild: Android-compatible launcher icon.
 Android 0.16.21 rebuild: repaired native splash PNG.
 Android 0.16.22 hotfix: bounded startup catalog and safe native splash.
+Android 0.16.22 final rebuild: 8 MB low-memory startup payload.
