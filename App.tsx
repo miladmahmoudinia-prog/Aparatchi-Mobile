@@ -20,6 +20,7 @@ import {
   BackHandler,
   FlatList,
   InteractionManager,
+  LayoutAnimation,
   Linking,
   Modal,
   PanResponder,
@@ -73,7 +74,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.22';
+const APP_DISPLAY_VERSION = '0.16.23';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -117,8 +118,56 @@ type SearchFilter =
 let collectionBrowserBackHandler: (() => boolean) | null = null;
 let collectionBrowserSelectedId: string | null = null;
 let collectionBrowserScrollOffset = 0;
+let catalogGridColumnPreference: 2 | 4 = 2;
 
 const hasPersianScript = (value?: string | null) => /[\u0600-\u06FF]/.test(String(value || ''));
+
+// TMDB's Persian collection field sometimes contains a phonetic rendering of
+// the English phrase (for example "دِ نوت جوب") rather than the established
+// Persian franchise name. These stable collection ids keep the UI accurate
+// while individual movie titles continue to come only from item.nameFa.
+const VERIFIED_COLLECTION_TITLES_FA: Record<string, string> = {
+  'tmdb:1281901': 'دختر توت‌فرنگی در شهر بزرگ',
+  'tmdb:334996': 'پسر بتمن',
+  'tmdb:897238': 'دفتر خاطرات یک بچه بی‌عرضه',
+  'tmdb:920054': 'برادران فراری',
+  'tmdb:1037353': 'کارآگاه نایت',
+  'tmdb:489724': 'ترول‌ها',
+  'tmdb:89137': 'مربی اژدها',
+  'tmdb:304': 'یاران اوشن',
+  'tmdb:10919': 'طالع نحس',
+  'tmdb:1376905': 'دوستان قطبی',
+  'tmdb:148065': 'دورایمون',
+  'tmdb:1022790': 'درون و بیرون',
+  'tmdb:1004630': 'لگو جنگ ستارگان',
+  'tmdb:593251': 'مرگ سوپرمن',
+  'tmdb:1139039': 'وحشت در بیابان مرتفع',
+  'tmdb:1196403': 'کد ۸',
+  'tmdb:713330': 'جابه‌جایی شاهزاده',
+  'tmdb:464308': 'عملیات آجیلی',
+  'tmdb:954596': 'سه‌گانه روز ملی',
+  'tmdb:1434561': 'سوپر ماریو',
+  'tmdb:1186471': 'کریسمس تو یا من',
+  'tmdb:1043070': 'خانواده کلاوس',
+  'tmdb:1010712': 'کیمیاگر تمام‌فلزی',
+};
+
+const localizedCollectionTitleFa = (
+  collectionId: string | undefined,
+  rawFa: string | undefined,
+  members: CatalogItem[],
+) => {
+  const verified = VERIFIED_COLLECTION_TITLES_FA[String(collectionId || '')];
+  if (verified) return verified;
+  const cleaned = String(rawFa || '')
+    .trim()
+    .replace(/^(?:کالکشن|مجموعه(?:\s+فیلم(?:‌?ها)?)?)\s*/u, '')
+    .replace(/\s*(?:کالکشن|مجموعه)\s*$/u, '')
+    .trim();
+  if (cleaned && hasPersianScript(cleaned)) return cleaned;
+  const firstFa = String(members[0]?.nameFa || '').trim();
+  return firstFa && hasPersianScript(firstFa) ? `مجموعه ${firstFa}` : 'مجموعه فیلم‌ها';
+};
 
 type CatalogDeepLink = {
   id: string;
@@ -1666,7 +1715,17 @@ const personWorksFor = (
   const indexed = refs
     .map((ref) => typeof ref === 'number' ? catalog[ref] : catalogById?.get(String(ref)))
     .filter((item): item is CatalogItem => Boolean(item));
-  if (indexed.length) return sortForCatalogFilter(indexed, 'latest');
+  // The person is opened from a concrete detail page. Keep that source title as
+  // a stable fallback even before the compact reverse index has refreshed.
+  const sourceItemId = String((person as CatalogPerson & { sourceItemId?: string }).sourceItemId || '');
+  const sourceItem = sourceItemId ? catalog.find((item) => String(item.id) === sourceItemId) : undefined;
+  const indexedWithSource = sourceItem ? [...indexed, sourceItem] : indexed;
+  if (indexedWithSource.length) {
+    return sortForCatalogFilter(
+      [...new Map(indexedWithSource.map((item) => [`${item.type}:${item.id}`, item] as const)).values()],
+      'latest',
+    );
+  }
 
   const identityNames = [person.name, person.nameFa, personName(person)]
     .map((value) => normalizeComparableText(String(value || '')))
@@ -2603,6 +2662,7 @@ const PosterCard = memo(function PosterCard({
   width?: number;
 }) {
   const posterBadges = itemPosterBadges(item);
+  const compactGridCard = width < 100;
   // Prefer compact catalog metadata. Sorting every episode group while a poster
   // is being mounted makes taps feel delayed on large series shelves.
   const latestEpisodeMeta = item.latestEpisode || (item.type === 'series' ? newestEpisodeGroup(item) : null);
@@ -2618,7 +2678,7 @@ const PosterCard = memo(function PosterCard({
       android_ripple={{ color: 'rgba(216,180,90,0.12)', borderless: false }}
       style={({ pressed }) => [styles.posterCard, { width }, pressed && styles.posterCardPressed]}
     >
-      <View style={[styles.posterImageWrap, { width, height: Math.round(width * 1.42) }]}>
+      <View style={[styles.posterImageWrap, compactGridCard && styles.posterImageWrapCompact, { width, height: Math.round(width * 1.42) }]}> 
         <CatalogArtwork
           primary={item.poster}
           fallback={item.posterFallback || item.backdropFallback || item.backdrop}
@@ -2629,18 +2689,20 @@ const PosterCard = memo(function PosterCard({
         />
         <LinearGradient colors={['transparent', 'rgba(7,9,12,0.88)']} style={styles.posterGradient} />
         {posterBadges.length ? (
-          <View pointerEvents="none" style={styles.posterAccessStack}>
+          <View pointerEvents="none" style={[styles.posterAccessStack, compactGridCard && styles.posterAccessStackCompact]}>
             {posterBadges.map((badge) => (
               <View
                 key={badge.id}
                 style={[
                   styles.posterAccess,
+                  compactGridCard && styles.posterAccessCompact,
                   badge.kind === 'operator' && styles.posterOperatorAccess,
                 ]}
               >
                 <Text
                   style={[
                     styles.posterAccessText,
+                    compactGridCard && styles.posterAccessTextCompact,
                     badge.kind === 'operator' && styles.posterOperatorAccessText,
                   ]}
                 >
@@ -2651,8 +2713,8 @@ const PosterCard = memo(function PosterCard({
           </View>
         ) : null}
         {item.type === 'series' && (latestEpisodeMeta || Number(item.episodeCount || 0) > 0) ? (
-          <View style={styles.posterEpisodeBadge}>
-            <Text style={styles.posterEpisodeText}>
+          <View style={[styles.posterEpisodeBadge, compactGridCard && styles.posterEpisodeBadgeCompact]}>
+            <Text style={[styles.posterEpisodeText, compactGridCard && styles.posterEpisodeTextCompact]}>
               {Number(item.seasonCount || 0) > 1 && latestEpisodeMeta
                 ? `فصل ${toPersianDigits(latestEpisodeMeta.seasonNumber || item.seasonCount || 1)} - قسمت ${toPersianDigits(latestEpisodeMeta.episodeNumber || 0)}`
                 : `قسمت ${toPersianDigits(latestEpisodeMeta?.episodeNumber || item.episodeCount || 0)}`}
@@ -2660,14 +2722,14 @@ const PosterCard = memo(function PosterCard({
           </View>
         ) : null}
         {typeof item.rate === 'number' ? (
-          <View style={styles.posterRating}>
-            <Ionicons name="star" color={COLORS.gold} size={11} />
-            <Text style={styles.posterRatingText}>{toPersianDigits(item.rate)}</Text>
+          <View style={[styles.posterRating, compactGridCard && styles.posterRatingCompact]}>
+            <Ionicons name="star" color={COLORS.gold} size={compactGridCard ? 8 : 11} />
+            <Text style={[styles.posterRatingText, compactGridCard && styles.posterRatingTextCompact]}>{toPersianDigits(item.rate)}</Text>
           </View>
         ) : null}
       </View>
-      <Text numberOfLines={1} style={styles.posterName}>{posterNameFa}</Text>
-      <Text numberOfLines={1} style={styles.posterEnglish}>{item.name || toPersianDigits(item.year)}</Text>
+      <Text numberOfLines={compactGridCard ? 2 : 1} style={[styles.posterName, compactGridCard && styles.posterNameCompact]}>{posterNameFa}</Text>
+      {!compactGridCard ? <Text numberOfLines={1} style={styles.posterEnglish}>{item.name || toPersianDigits(item.year)}</Text> : null}
     </Pressable>
   );
 });
@@ -2682,20 +2744,10 @@ function MovieCollectionSection({
   onOpen: (item: CatalogItem) => void;
 }) {
   const members = collectionMembersFor(item, catalog);
-  const collectionRailRef = useRef<ScrollView>(null);
-  const collectionRailPositionedRef = useRef('');
-  const collectionRailKey = members.map((member) => String(member.id)).join('|');
-  const positionCollectionRail = useCallback(() => {
-    if (!collectionRailKey || collectionRailPositionedRef.current === collectionRailKey) return;
-    collectionRailPositionedRef.current = collectionRailKey;
-    requestAnimationFrame(() => collectionRailRef.current?.scrollToEnd({ animated: false }));
-  }, [collectionRailKey]);
   if (members.length < 2) return null;
   const rawCollectionFa = String(item.collectionNameFa || '').trim();
   const rawCollectionEn = String(item.collectionName || '').trim();
-  const collectionTitleFa = rawCollectionFa && hasPersianScript(rawCollectionFa)
-    ? rawCollectionFa
-    : `مجموعه ${String(members[0]?.nameFa || item.nameFa || 'فیلم‌ها').trim()}`;
+  const collectionTitleFa = localizedCollectionTitleFa(item.collectionId, rawCollectionFa, members);
   const collectionTitleEn = rawCollectionEn && !hasPersianScript(rawCollectionEn)
     ? rawCollectionEn
     : '';
@@ -2716,11 +2768,9 @@ function MovieCollectionSection({
       </View>
 
       <ScrollView
-        ref={collectionRailRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.collectionList}
-        onContentSizeChange={positionCollectionRail}
       >
         {members.map((member, index) => {
           const current = member.id === item.id;
@@ -2809,14 +2859,6 @@ function PeopleSection({
     });
   }, [item.people]);
 
-  const displayedPeople = useMemo(() => [...people].reverse(), [people]);
-  const peopleRailRef = useRef<FlatList<CatalogPerson>>(null);
-  const positionPeopleRailAtStart = useCallback(() => {
-    requestAnimationFrame(() => {
-      peopleRailRef.current?.scrollToEnd({ animated: false });
-    });
-  }, [item.id, displayedPeople.length]);
-
   if (!people.length) return null;
 
   return (
@@ -2831,21 +2873,22 @@ function PeopleSection({
         </View>
       </View>
       <FlatList
-        ref={peopleRailRef}
         horizontal
-        data={displayedPeople}
+        data={people}
         keyExtractor={(person) => person.tmdbId
           ? `tmdb:${person.tmdbId}:${person.role}`
           : `person:${normalizeComparableText(personName(person))}:${person.role}`}
-        renderItem={({ item: person }) => <CastPersonCard person={person} onOpen={onOpen} />}
+        renderItem={({ item: person }) => (
+          <CastPersonCard
+            person={person}
+            onOpen={(selected) => onOpen({ ...selected, sourceItemId: item.id } as CatalogPerson)}
+          />
+        )}
         showsHorizontalScrollIndicator={false}
         nestedScrollEnabled
         style={styles.peopleRail}
         contentContainerStyle={styles.peopleList}
-        initialScrollIndex={displayedPeople.length - 1}
-        getItemLayout={(_data, index) => ({ length: 100, offset: 100 * index, index })}
-        onContentSizeChange={positionPeopleRailAtStart}
-        onScrollToIndexFailed={positionPeopleRailAtStart}
+        inverted
         initialNumToRender={4}
         maxToRenderPerBatch={3}
         updateCellsBatchingPeriod={60}
@@ -3009,7 +3052,6 @@ function HomeStarsSectionBase({
       .slice(0, 60);
   }, [catalog, catalogById, people]);
   const [selectedId, setSelectedId] = useState('');
-  const displayedPeople = useMemo(() => [...resolvedPeople].reverse(), [resolvedPeople]);
 
   useEffect(() => {
     if (!resolvedPeople.length) return;
@@ -3045,7 +3087,6 @@ function HomeStarsSectionBase({
     }
     return [...uniqueWorks.values()].slice(0, 18);
   }, [catalog, catalogById, selected]);
-  const displayedWorks = useMemo(() => [...works].reverse(), [works]);
 
   const selectedIdForRender = selected?.id || '';
   const selectPerson = useCallback((personId: string) => {
@@ -3089,12 +3130,11 @@ function HomeStarsSectionBase({
       <FlatList
         horizontal
         style={styles.starPeopleRail}
-        data={displayedPeople}
+        data={resolvedPeople}
         keyExtractor={(person) => person.tmdbId ? `tmdb:${person.tmdbId}` : person.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.starsPeopleList}
-        initialScrollIndex={displayedPeople.length - 1}
-        getItemLayout={(_data, index) => ({ length: 66, offset: 66 * index, index })}
+        inverted
         initialNumToRender={10}
         maxToRenderPerBatch={10}
         updateCellsBatchingPeriod={32}
@@ -3123,12 +3163,11 @@ function HomeStarsSectionBase({
           key={`star-works-${selected.id}`}
           horizontal
           style={styles.starWorksRail}
-          data={displayedWorks}
+          data={works}
           keyExtractor={(item) => item.id}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.starWorksList}
-          initialScrollIndex={displayedWorks.length - 1}
-          getItemLayout={(_data, index) => ({ length: 113, offset: 113 * index, index })}
+          inverted
           initialNumToRender={6}
           maxToRenderPerBatch={6}
           updateCellsBatchingPeriod={35}
@@ -4056,6 +4095,7 @@ function CatalogListScreen({
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(normalizeComparableText(query));
   const { width: screenWidth } = useWindowDimensions();
+  const [preferredColumns, setPreferredColumns] = useState<2 | 4>(() => catalogGridColumnPreference);
   const listRef = useRef<FlatList<CatalogItem>>(null);
   const scrollKey = String(initialFilter);
 
@@ -4063,7 +4103,13 @@ function CatalogListScreen({
   // made a normal tap feel ignored whenever an image list or slider animation
   // was active. Open the destination immediately and read the cached list.
   const baseItems = useMemo(
-    () => catalogItemsForFilter(catalog, initialFilter),
+    () => {
+      const filtered = catalogItemsForFilter(catalog, initialFilter);
+      // "مشاهده همه" for Latest is intentionally a bounded editorial page.
+      // One hundred titles keeps it complete enough without turning the first
+      // category render into a multi-thousand item job.
+      return initialFilter === 'latest' ? filtered.slice(0, 100) : filtered;
+    },
     [catalog, initialFilter],
   );
   const results = useMemo(() => {
@@ -4077,7 +4123,7 @@ function CatalogListScreen({
       ...(item.people || []).flatMap((person) => [person.nameFa, person.name || '']),
     ].join(' ')).includes(deferredQuery));
   }, [baseItems, deferredQuery]);
-  const columnCount = screenWidth >= 720 ? 5 : screenWidth >= 590 ? 4 : screenWidth >= 480 ? 3 : 2;
+  const columnCount = preferredColumns;
   const gridGap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
 
@@ -4123,7 +4169,27 @@ function CatalogListScreen({
         />
         {query ? <Pressable onPress={() => setQuery('')} hitSlop={8}><Ionicons name="close-circle" color={COLORS.muted} size={18} /></Pressable> : null}
       </View>
-      <Text style={styles.resultCount}>{toPersianDigits(results.length)} نتیجه</Text>
+      <View style={styles.catalogGridToolbar}>
+        <Text style={styles.resultCountInline}>{toPersianDigits(results.length)} نتیجه</Text>
+        <View style={styles.gridDensityToggle}>
+          {([2, 4] as const).map((count) => (
+            <Pressable
+              key={count}
+              onPress={() => {
+                if (count === preferredColumns) return;
+                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                catalogGridColumnPreference = count;
+                setPreferredColumns(count);
+              }}
+              hitSlop={8}
+              style={[styles.gridDensityButton, preferredColumns === count && styles.gridDensityButtonActive]}
+            >
+              <Ionicons name={count === 2 ? 'grid-outline' : 'apps-outline'} color={preferredColumns === count ? COLORS.gold : COLORS.muted} size={18} />
+              <Text style={[styles.gridDensityText, preferredColumns === count && styles.gridDensityTextActive]}>{toPersianDigits(count)} ستونه</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
     </View>
   );
 
@@ -4308,12 +4374,7 @@ const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGr
       // Never show an English-only collection name as the Persian line. If TMDB
       // does not provide a Persian collection title, use a deterministic local
       // label based on the first Persian movie title instead of bad machine text.
-      const firstFa = String(first?.nameFa || '').trim();
-      const titleFa = rawFa && hasPersianScript(rawFa)
-        ? rawFa
-        : firstFa && hasPersianScript(firstFa)
-          ? `مجموعه ${firstFa}`
-          : 'مجموعه فیلم‌ها';
+      const titleFa = localizedCollectionTitleFa(id, rawFa, members);
       return {
         id,
         titleFa,
@@ -4331,8 +4392,9 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
   const [selectedCollectionId, setSelectedCollectionIdState] = useState<string | null>(() => collectionBrowserSelectedId);
   const collectionFoldersRef = useRef<FlatList<any>>(null);
   const { width: screenWidth } = useWindowDimensions();
+  const [preferredColumns, setPreferredColumns] = useState<2 | 4>(() => catalogGridColumnPreference);
   const selected = groups.find((group) => group.id === selectedCollectionId) || null;
-  const columns = screenWidth >= 720 ? 4 : screenWidth >= 520 ? 3 : 2;
+  const columns = preferredColumns;
   const gap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - gap * (columns - 1)) / columns);
 
@@ -4378,6 +4440,34 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
     }
   }, [groups, selectedCollectionId, setSelectedCollectionId]);
 
+  const collectionGridControls = (
+    <View style={styles.catalogGridToolbar}>
+      <Text style={styles.resultCountInline}>
+        {selected
+          ? `${toPersianDigits(selected.members.length)} فیلم`
+          : `${toPersianDigits(groups.length)} کالکشن`}
+      </Text>
+      <View style={styles.gridDensityToggle}>
+        {([2, 4] as const).map((count) => (
+          <Pressable
+            key={count}
+            onPress={() => {
+              if (count === preferredColumns) return;
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              catalogGridColumnPreference = count;
+              setPreferredColumns(count);
+            }}
+            hitSlop={8}
+            style={[styles.gridDensityButton, preferredColumns === count && styles.gridDensityButtonActive]}
+          >
+            <Ionicons name={count === 2 ? 'grid-outline' : 'apps-outline'} color={preferredColumns === count ? COLORS.gold : COLORS.muted} size={18} />
+            <Text style={[styles.gridDensityText, preferredColumns === count && styles.gridDensityTextActive]}>{toPersianDigits(count)} ستونه</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+
   if (selected) {
     return (
       <FlatList
@@ -4401,6 +4491,7 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
                 <Ionicons name="arrow-forward" color="#fff" size={21} />
               </Pressable>
             </View>
+            {collectionGridControls}
           </View>
         )}
         renderItem={({ item }) => (
@@ -4438,7 +4529,7 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
             <Logo />
             <Text numberOfLines={1} style={styles.simpleHeaderTitle}>کالکشن‌ها</Text>
           </View>
-          <Text style={styles.resultCount}>{toPersianDigits(groups.length)} کالکشن با حداقل ۲ فیلم</Text>
+          {collectionGridControls}
         </View>
       )}
       ListEmptyComponent={(
@@ -4450,14 +4541,14 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
       )}
       renderItem={({ item: group }) => (
         <View style={{ width: cardWidth, marginBottom: 16 }}>
-          <Pressable onPress={() => setSelectedCollectionId(group.id)} style={[styles.collectionFolderCard, { width: cardWidth }]}>
+          <Pressable onPress={() => setSelectedCollectionId(group.id)} style={[styles.collectionFolderCard, columns === 4 && styles.collectionFolderCardCompact, { width: cardWidth }]}> 
             <CatalogArtwork primary={group.cover} fallback={group.members[1]?.poster} style={StyleSheet.absoluteFill} contentFit="cover" imageKind="poster" />
             <LinearGradient colors={['rgba(5,7,10,0.05)', 'rgba(5,7,10,0.94)']} style={StyleSheet.absoluteFill} />
-            <View style={styles.collectionFolderIcon}><Ionicons name="folder-open-outline" color={COLORS.gold} size={20} /></View>
+            <View style={[styles.collectionFolderIcon, columns === 4 && styles.collectionFolderIconCompact]}><Ionicons name="folder-open-outline" color={COLORS.gold} size={columns === 4 ? 14 : 20} /></View>
             <View style={styles.collectionFolderText}>
-              <Text numberOfLines={2} style={styles.collectionFolderTitle}>{group.titleFa}</Text>
-              <Text numberOfLines={2} style={styles.collectionFolderEnglish}>{group.titleEn}</Text>
-              <Text style={styles.collectionFolderCount}>{toPersianDigits(group.members.length)} فیلم</Text>
+              <Text numberOfLines={2} style={[styles.collectionFolderTitle, columns === 4 && styles.collectionFolderTitleCompact]}>{group.titleFa}</Text>
+              {columns !== 4 ? <Text numberOfLines={2} style={styles.collectionFolderEnglish}>{group.titleEn}</Text> : null}
+              <Text style={[styles.collectionFolderCount, columns === 4 && styles.collectionFolderCountCompact]}>{toPersianDigits(group.members.length)} فیلم</Text>
             </View>
           </Pressable>
         </View>
@@ -5903,7 +5994,6 @@ function RelatedTitlesSection({
   selectionSeed: number;
 }) {
   const related = useMemo(() => relatedCatalogItems(item, catalog, 5, selectionSeed), [item, catalog, selectionSeed]);
-  const displayedRelated = useMemo(() => [...related].reverse(), [related]);
   if (!related.length) return null;
 
   return (
@@ -5914,7 +6004,7 @@ function RelatedTitlesSection({
       </View>
       <FlatList
         horizontal
-        data={displayedRelated}
+        data={related}
         keyExtractor={(relatedItem) => relatedItem.id}
         renderItem={({ item: relatedItem }) => (
           <Pressable style={styles.relatedTitleCard} onPress={() => onOpen(relatedItem)}>
@@ -5935,8 +6025,7 @@ function RelatedTitlesSection({
           </Pressable>
         )}
         contentContainerStyle={styles.relatedTitlesRail}
-        initialScrollIndex={displayedRelated.length - 1}
-        getItemLayout={(_data, index) => ({ length: 138, offset: 138 * index, index })}
+        inverted
         showsHorizontalScrollIndicator={false}
         initialNumToRender={5}
         maxToRenderPerBatch={5}
@@ -9620,20 +9709,29 @@ const styles = StyleSheet.create({
   posterCard: { width: 137, alignItems: 'center' },
   posterCardPressed: { opacity: 0.86, transform: [{ scale: 0.985 }] },
   posterImageWrap: { width: 137, height: 194, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', backgroundColor: COLORS.surface },
+  posterImageWrapCompact: { borderRadius: 10 },
   posterImage: { width: '100%', height: '100%' },
   catalogArtworkContainer: { overflow: 'hidden', backgroundColor: '#141820' },
   catalogArtworkFallback: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#141820' },
   posterGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 65 },
   posterAccessStack: { position: 'absolute', top: 8, right: 8, alignItems: 'flex-end', gap: 4, maxWidth: '88%' },
+  posterAccessStackCompact: { top: 4, right: 4, gap: 2 },
   posterAccess: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, backgroundColor: 'rgba(222,35,66,0.92)' },
+  posterAccessCompact: { paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4 },
   posterAccessText: { color: '#fff', fontSize: 8, fontWeight: '900' },
+  posterAccessTextCompact: { fontSize: 5.8 },
   posterOperatorAccess: { backgroundColor: 'rgba(0,153,204,0.96)', borderWidth: 1, borderColor: 'rgba(116,231,255,0.96)' },
   posterOperatorAccessText: { color: '#FFFFFF' },
   posterEpisodeBadge: { position: 'absolute', bottom: 8, right: 8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.84)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)' },
+  posterEpisodeBadgeCompact: { bottom: 4, right: 4, paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4 },
   posterEpisodeText: { color: COLORS.text, fontSize: 8, fontWeight: '900' },
+  posterEpisodeTextCompact: { fontSize: 5.6 },
   posterRating: { position: 'absolute', bottom: 8, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 7, backgroundColor: 'rgba(7,9,12,0.82)' },
+  posterRatingCompact: { bottom: 4, left: 4, gap: 2, paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4 },
   posterRatingText: { color: COLORS.text, fontSize: 9, fontWeight: '800' },
+  posterRatingTextCompact: { fontSize: 6 },
   posterName: { ...rtlText, color: COLORS.text, fontSize: 11, lineHeight: 18, fontWeight: '700', letterSpacing: -0.15, marginTop: 8, width: '100%', textAlign: 'center' },
+  posterNameCompact: { minHeight: 25, fontSize: 7.5, lineHeight: 12, marginTop: 5 },
   posterEnglish: { color: '#777D87', fontSize: 8.5, lineHeight: 14, marginTop: 1, width: '100%', textAlign: 'center' },
   simpleHeader: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 },
   simpleHeaderTitle: { ...rtlText, color: COLORS.text, fontSize: 18, lineHeight: 27, fontWeight: '900', letterSpacing: -0.35 },
@@ -9678,6 +9776,13 @@ const styles = StyleSheet.create({
   searchPreparing: { minHeight: 54, marginTop: 14, paddingHorizontal: 14, borderRadius: 13, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 9, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   searchPreparingText: { ...rtlText, color: COLORS.muted, fontSize: 9, fontWeight: '800' },
   resultCount: { ...rtlText, color: COLORS.muted, fontSize: 10, marginTop: 22, marginBottom: 12 },
+  catalogGridToolbar: { minHeight: 48, marginTop: 14, marginBottom: 12, paddingHorizontal: 4, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  resultCountInline: { ...rtlText, color: COLORS.muted, fontSize: 10, flexShrink: 1 },
+  gridDensityToggle: { flexDirection: 'row-reverse', alignItems: 'center', gap: 4, padding: 4, borderRadius: 12, backgroundColor: '#0B0E13', borderWidth: 1, borderColor: COLORS.border },
+  gridDensityButton: { minHeight: 34, paddingHorizontal: 9, borderRadius: 9, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  gridDensityButtonActive: { backgroundColor: 'rgba(216,180,90,0.11)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.38)' },
+  gridDensityText: { ...rtlText, color: COLORS.muted, fontSize: 8, fontWeight: '800' },
+  gridDensityTextActive: { color: COLORS.gold },
   searchGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', rowGap: 20 },
   searchGridRow: { flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 12 },
   searchEmptyState: { minHeight: 330, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 38 },
@@ -10045,11 +10150,15 @@ const styles = StyleSheet.create({
   headerBrandRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 9 },
   catalogListContent: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 112 },
   collectionFolderCard: { aspectRatio: 0.72, borderRadius: 18, overflow: 'hidden', justifyContent: 'space-between', padding: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  collectionFolderCardCompact: { borderRadius: 10, padding: 6 },
   collectionFolderIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.82)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.34)' },
+  collectionFolderIconCompact: { width: 25, height: 25, borderRadius: 7 },
   collectionFolderText: { width: '100%', alignItems: 'center' },
   collectionFolderTitle: { ...rtlText, color: '#fff', textAlign: 'center', fontSize: 13, lineHeight: 20, fontWeight: '900', width: '100%' },
+  collectionFolderTitleCompact: { fontSize: 7.2, lineHeight: 11 },
   collectionFolderEnglish: { color: COLORS.muted, textAlign: 'center', fontSize: 8.5, lineHeight: 13, marginTop: 2, width: '100%', writingDirection: 'ltr' },
   collectionFolderCount: { color: COLORS.gold, textAlign: 'center', fontSize: 10, marginTop: 4 },
+  collectionFolderCountCompact: { fontSize: 6.5, marginTop: 2 },
   collectionMemberHeaderTitle: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
   categoryGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'flex-start', marginTop: 16, marginBottom: 24 },
   categoryCard: { minHeight: 176, padding: 13, borderRadius: 18, overflow: 'hidden', alignItems: 'flex-end', justifyContent: 'space-between', backgroundColor: COLORS.surface, borderWidth: 1, borderColor: 'rgba(216,180,90,0.25)' },

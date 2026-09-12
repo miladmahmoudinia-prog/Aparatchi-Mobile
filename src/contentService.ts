@@ -1614,7 +1614,7 @@ export const mergeLiveCatalogDelta = (
     iranianSchedule: normalizeSchedule(live.iranianSchedule ?? base.iranianSchedule),
     weeklySchedule: normalizeSchedule(live.weeklySchedule ?? base.weeklySchedule),
     featuredPeople: normalizeFeaturedPeople(live.featuredPeople ?? base.featuredPeople),
-    peopleWorks: {},
+    peopleWorks: normalizePeopleWorks(live.peopleWorks ?? base.peopleWorks),
     imdbTop100: normalizeImdbTop100(live.imdbTop100 ?? base.imdbTop100, items, updatedAt),
   };
 };
