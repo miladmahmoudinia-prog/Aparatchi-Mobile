@@ -7,3 +7,4 @@ Android 0.16.18: compact instant startup, faster rails, artwork and duplicate fi
 Android 0.16.19: restore valid shelf variants, proxy-first posters, native splash handoff.
 Android 0.16.20: restore complete 6000+ title catalog and Aparatchi launch icon.
 Android 0.16.21: instant full episodes, episode artwork backfill, cast dedupe, launcher and splash correction.
+Android 0.16.21 rebuild: Android-compatible launcher icon.
