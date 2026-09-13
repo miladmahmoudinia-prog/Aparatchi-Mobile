@@ -12,3 +12,4 @@ Android 0.16.21 rebuild: repaired native splash PNG.
 Android 0.16.22 hotfix: bounded startup catalog and safe native splash.
 Android 0.16.22 final rebuild: 8 MB low-memory startup payload.
 Android 0.16.23: latest 100, instant people works, stable RTL rails, verified collection names, 2/4 column grids.
+0.16.24 cooperative refresh and v2 live baseline (validated)
