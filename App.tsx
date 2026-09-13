@@ -74,7 +74,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.23';
+const APP_DISPLAY_VERSION = '0.16.24';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -8051,7 +8051,7 @@ function AppContent() {
       // The first usable catalog must be committed before the startup cover is
       // dismissed. Deferring this initial render could briefly expose the false
       // "catalog is empty" screen. Only later background refreshes are non-urgent.
-      if (initialLoad || !hadVisibleCatalog) setContent(visibleContent);
+      if (!hadVisibleCatalog) setContent(visibleContent);
       else startTransition(() => setContent(visibleContent));
       lastContentLoadRef.current = Date.now();
       setContentReady(true);
@@ -8161,7 +8161,7 @@ function AppContent() {
       setContentReady(true);
       setContentResolved(true);
       dismissStartup();
-      startupRefreshTimer = setTimeout(reloadContentWhenIdle, 12_000);
+      startupRefreshTimer = setTimeout(reloadContentWhenIdle, 0);
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.

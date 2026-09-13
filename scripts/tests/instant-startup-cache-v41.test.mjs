@@ -22,7 +22,7 @@ test('complete bundled catalog reveals Home before delayed cache refresh', () =>
   const end = app.indexOf('} else {', start);
   const block = app.slice(start, end);
   assert.ok(block.includes('dismissStartup();'));
-  assert.ok(block.includes('setTimeout(reloadContentWhenIdle, 12_000)'));
+  assert.ok(block.includes('setTimeout(reloadContentWhenIdle, 0)'));
   const cachedStart = app.indexOf('if (cachedContent?.items.length) {', app.indexOf('const reloadContent = async'));
   const reveal = app.indexOf('if (contentRef.current.items.length) dismissStartup();', cachedStart);
   assert.ok(cachedStart >= 0 && reveal > cachedStart);

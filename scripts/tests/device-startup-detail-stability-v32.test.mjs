@@ -29,6 +29,6 @@ test('startup bootstrap is accepted only when it belongs to the manifest client 
   assert.ok(source.includes('bootstrapRecord.clientRevision'));
   assert.ok(source.includes('payloadClientRevision !== manifest.clientRevision'));
   const revisionGuard = source.indexOf('payloadClientRevision !== manifest.clientRevision');
-  const parsePayload = source.indexOf('const parsed = parsePayload(rawBootstrap)', revisionGuard);
+  const parsePayload = source.indexOf('const parsed = await parsePayloadCooperatively(rawBootstrap)', revisionGuard);
   assert.ok(revisionGuard >= 0 && parsePayload > revisionGuard, 'revision guard must run before bootstrap parsing/application');
 });

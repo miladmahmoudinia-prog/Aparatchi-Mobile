@@ -54,7 +54,7 @@ const BOOTSTRAP_CACHE_URI = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}aparatchi-bootstrap-v2-cache.json`
   : '';
 const LIVE_CACHE_URI = FileSystem.documentDirectory
-  ? `${FileSystem.documentDirectory}aparatchi-live-v2-cache.json`
+  ? `${FileSystem.documentDirectory}aparatchi-live-v3-cache.json`
   : '';
 
 type RemoteCacheMetadata = {
@@ -1514,12 +1514,12 @@ const normalizeSchedule = (value: unknown) =>
         .filter((entry): entry is ScheduleEntry => Boolean(entry))
     : [];
 
-const parsePayload = (value: unknown): CatalogPayload | null => {
+const parsePayload = (value: unknown, preparedItems?: CatalogItem[]): CatalogPayload | null => {
   if (!value || typeof value !== 'object') return null;
   const payload = value as Record<string, unknown>;
   if (!Array.isArray(payload.items)) return null;
 
-  const items = payload.items
+  const items = preparedItems ?? payload.items
     .map(normalizeCatalogItem)
     .filter((item): item is CatalogItem => Boolean(item));
   if (!items.length) return null;
@@ -1574,6 +1574,7 @@ const liveCatalogItemKey = (item: Pick<CatalogItem, 'type' | 'id'>) => `${item.t
 export const mergeLiveCatalogDelta = (
   base: CatalogPayload,
   value: unknown,
+  preparedUpserts?: CatalogItem[],
 ): CatalogPayload | null => {
   if (!value || typeof value !== 'object') return null;
   const live = value as Record<string, unknown>;
@@ -1587,13 +1588,17 @@ export const mergeLiveCatalogDelta = (
 
   const liveUpdatedAt = asString(live.updatedAt ?? live.updated_at);
   const baseTime = Date.parse(asString(base.updatedAt));
+  const baselineTime = Date.parse(asString(live.baseUpdatedAt));
+  // Older APK/cache snapshots cannot reconstruct a delta against a newer
+  // baseline. Fall back to the complete verified bootstrap, not partial data.
+  if (Number.isFinite(baselineTime) && (!Number.isFinite(baseTime) || baseTime < baselineTime)) return null;
   const liveTime = Date.parse(liveUpdatedAt);
   if (Number.isFinite(baseTime) && Number.isFinite(liveTime) && baseTime > liveTime) return null;
 
   const byKey = new Map<string, CatalogItem>();
   for (const item of base.items || []) byKey.set(liveCatalogItemKey(item), item);
-  for (const rawItem of Array.isArray(live.upserts) ? live.upserts : []) {
-    const item = normalizeCatalogItem(rawItem);
+  for (const rawItem of preparedUpserts ?? (Array.isArray(live.upserts) ? live.upserts : [])) {
+    const item = preparedUpserts ? rawItem as CatalogItem : normalizeCatalogItem(rawItem);
     if (item) byKey.set(liveCatalogItemKey(item), item);
   }
 
@@ -1617,6 +1622,36 @@ export const mergeLiveCatalogDelta = (
     peopleWorks: normalizePeopleWorks(live.peopleWorks ?? base.peopleWorks),
     imdbTop100: normalizeImdbTop100(live.imdbTop100 ?? base.imdbTop100, items, updatedAt),
   };
+};
+
+// Yield to input/painting between bounded batches. startTransition alone does
+// not interrupt normalization performed before React receives the new state.
+const normalizeCatalogItemsCooperatively = async (values: unknown[]): Promise<CatalogItem[]> => {
+  const items: CatalogItem[] = [];
+  let sliceStarted = Date.now();
+  for (let index = 0; index < values.length; index += 1) {
+    const item = normalizeCatalogItem(values[index]);
+    if (item) items.push(item);
+    if (index + 1 < values.length && ((index + 1) % 16 === 0 || Date.now() - sliceStarted >= 4)) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      sliceStarted = Date.now();
+    }
+  }
+  return items;
+};
+
+const parsePayloadCooperatively = async (value: unknown): Promise<CatalogPayload | null> => {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  if (!Array.isArray(raw.items)) return null;
+  return parsePayload(value, await normalizeCatalogItemsCooperatively(raw.items));
+};
+
+const mergeLiveCatalogDeltaCooperatively = async (base: CatalogPayload, value: unknown): Promise<CatalogPayload | null> => {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const items = await normalizeCatalogItemsCooperatively(Array.isArray(raw.upserts) ? raw.upserts : []);
+  return mergeLiveCatalogDelta(base, value, items);
 };
 
 const normalizedLocalPayload = (): CatalogPayload => {
@@ -1658,7 +1693,7 @@ const readCachedBootstrapPayload = async (): Promise<CatalogPayload | null> => {
   try {
     const info = await FileSystem.getInfoAsync(BOOTSTRAP_CACHE_URI);
     if (!info.exists) return null;
-    const parsed = parsePayload(JSON.parse(await FileSystem.readAsStringAsync(BOOTSTRAP_CACHE_URI)));
+    const parsed = await parsePayloadCooperatively(JSON.parse(await FileSystem.readAsStringAsync(BOOTSTRAP_CACHE_URI)));
     if (parsed?.items.length) memoryBootstrapContent = parsed;
     return parsed;
   } catch {
@@ -1722,7 +1757,7 @@ const writeCachedLiveDelta = async (rawPayload: string, parsed: unknown) => {
 
 export async function loadCachedLiveContent(base: LoadedContent): Promise<LoadedContent | null> {
   const live = await readCachedLiveDelta();
-  const merged = mergeLiveCatalogDelta(base, live);
+  const merged = await mergeLiveCatalogDeltaCooperatively(base, live);
   return merged ? { ...merged, source: 'cache' } : null;
 }
 
@@ -1801,7 +1836,8 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
           );
           if (manifest?.clientRevision && payloadClientRevision !== manifest.clientRevision) return;
 
-          const parsed = parsePayload(rawBootstrap);
+          const parsed = await parsePayloadCooperatively(rawBootstrap);
+          if (settled) return;
           if (!parsed?.items.length) return;
           if (
             manifest?.clientItemCount &&
@@ -2068,7 +2104,7 @@ export async function loadLiveContent(base: LoadedContent): Promise<LoadedConten
           if (settled) return;
           const live = JSON.parse(rawText) as Record<string, unknown>;
           if (asString(live.clientRevision) !== manifest.clientRevision) return;
-          const merged = mergeLiveCatalogDelta(base, live);
+          const merged = await mergeLiveCatalogDeltaCooperatively(base, live);
           if (!merged) return;
           if (manifest.clientItemCount && merged.items.length !== manifest.clientItemCount) return;
           if (manifest.catalogUpdatedAt && merged.updatedAt !== manifest.catalogUpdatedAt) return;
@@ -2252,7 +2288,7 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
           continue;
         }
 
-        const nextParsed = parsePayload(nextRawPayload);
+        const nextParsed = await parsePayloadCooperatively(nextRawPayload);
         if (!nextParsed || !nextParsed.items.length) {
           lastCatalogError = new Error(`Invalid/empty catalog payload from ${candidate}`);
           continue;

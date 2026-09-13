@@ -28,7 +28,7 @@ export const REMOTE_CONTENT_BOOTSTRAP_URL =
  * برای ترتیب دقیق دارد، اما فقط عنوان‌های تازه/تغییرکرده را دوباره حمل می‌کند.
  */
 export const REMOTE_CONTENT_LIVE_URL =
-  `${CONTENT_REPOSITORY_BASES[0]}catalog-live.json`;
+  `${CONTENT_REPOSITORY_BASES[0]}catalog-live-v2.json`;
 
 /**
  * نسخهٔ کامل قدیمی فقط برای سازگاری با اولین اجرای مهاجرت نگه داشته شده است.
