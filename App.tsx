@@ -43,7 +43,7 @@ import {
 import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
-import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, loadContent, loadLiveContent, LoadedContent } from './src/contentService';
+import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, getCachedCatalogItemDetail, loadContent, loadLiveContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
   checkMobileOperatorAccess,
@@ -74,7 +74,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.24';
+const APP_DISPLAY_VERSION = '0.16.25';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -1836,46 +1836,62 @@ const deriveFeaturedPeople = (catalog: CatalogItem[]): FeaturedPerson[] => {
   return result;
 };
 
+// Share the first successful URL across recycled cards in this session. Native
+// memory/disk caching then serves the same URL on Home, grids and Detail.
+const successfulArtworkUrls = new Map<string, string>();
+const useArtworkSources = (input: string[]) => {
+  const identity = input.join('|');
+  const candidates = useMemo(() => {
+    const winner = successfulArtworkUrls.get(identity);
+    return winner && input.includes(winner) ? [winner, ...input.filter((url) => url !== winner)] : input;
+  }, [identity]);
+  const [state, setState] = useState({ identity, failed: [] as string[], winner: '', hedged: false });
+  const current = state.identity === identity ? state : { identity, failed: [] as string[], winner: '', hedged: false };
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  const sources = current.winner ? [current.winner] : candidates.filter((url) => !current.failed.includes(url)).slice(0, current.hedged ? 2 : 1);
+  useEffect(() => {
+    if (current.winner || current.hedged || candidates.length < 2) return;
+    // Keep the slow request alive: a second route can win without repeatedly
+    // cancelling image downloads on a slow connection. At most two per image.
+    const timer = setTimeout(() => setState((previous) => {
+      if (identityRef.current !== identity) return previous;
+      const next = previous.identity === identity ? previous : { identity, failed: [], winner: '', hedged: false };
+      return { ...next, hedged: true };
+    }), 700);
+    return () => clearTimeout(timer);
+  }, [identity, current.winner, current.hedged, candidates.length]);
+  const finish = (url: string, success: boolean) => {
+    if (identityRef.current !== identity) return;
+    setState((previous) => {
+      const next = previous.identity === identity ? previous : { identity, failed: [], winner: '', hedged: false };
+      if (next.winner || next.failed.includes(url)) return previous;
+      return success ? { ...next, winner: url } : { ...next, failed: [...next.failed, url] };
+    });
+  };
+  useEffect(() => {
+    if (!current.winner) return;
+    successfulArtworkUrls.delete(identity);
+    successfulArtworkUrls.set(identity, current.winner);
+    if (successfulArtworkUrls.size > 512) successfulArtworkUrls.delete(successfulArtworkUrls.keys().next().value!);
+  }, [identity, current.winner]);
+  return { sources, finish };
+};
+
 const PersonAvatar = memo(function PersonAvatar({ person, style }: { person: CatalogPerson; style: any }) {
   const candidates = useMemo(() => personImageCandidates(person.image), [person.image]);
-  const [candidateIndex, setCandidateIndex] = useState(0);
-
-  useEffect(() => {
-    setCandidateIndex(0);
-  }, [person.id, person.tmdbId, person.image]);
-
-  const initials = personName(person)
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase();
-  const image = candidates[candidateIndex] || '';
-
-  if (!image) {
-    return (
-      <View style={[style, styles.personImageFallback]}>
-        {initials ? (
-          <Text style={styles.personImageFallbackText}>{initials}</Text>
-        ) : (
-          <Ionicons name="person-outline" color={COLORS.gold} size={26} />
-        )}
-      </View>
-    );
-  }
-
+  const { sources, finish } = useArtworkSources(candidates);
+  const initials = personName(person).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
   return (
-    <Image
-      key={`${person.tmdbId || person.id}:${candidateIndex}:${image}`}
-      source={{ uri: image }}
-      style={style}
-      contentFit="cover"
-      cachePolicy="memory-disk"
-      transition={0}
-      recyclingKey={`person:${person.tmdbId || person.id}:${candidateIndex}`}
-      onError={() => setCandidateIndex((current) => current + 1)}
-    />
+    <View style={[style, styles.personImageFallback, { overflow: 'hidden' }]}>
+      {initials ? <Text style={styles.personImageFallbackText}>{initials}</Text> : <Ionicons name="person-outline" color={COLORS.gold} size={26} />}
+      {sources.map((image) => (
+        <Image key={image} source={{ uri: image }} style={StyleSheet.absoluteFill}
+          contentFit="cover" cachePolicy="memory-disk" transition={0}
+          recyclingKey={`person:${person.tmdbId || person.id}:${image}`}
+          onLoad={() => finish(image, true)} onError={() => finish(image, false)} />
+      ))}
+    </View>
   );
 });
 
@@ -1905,33 +1921,7 @@ const CatalogArtwork = memo(function CatalogArtwork({
     ...catalogArtworkCandidates(fallback, imageKind),
     ...catalogArtworkCandidates(primary, imageKind),
   ])], [fallback, imageKind, primary]);
-  const artworkIdentity = candidates.join('|');
-  const artworkIdentityRef = useRef(artworkIdentity);
-  artworkIdentityRef.current = artworkIdentity;
-  const [attempt, setAttempt] = useState({ identity: artworkIdentity, stage: 0, loaded: false });
-  const currentAttempt = attempt.identity === artworkIdentity
-    ? attempt
-    : { identity: artworkIdentity, stage: 0, loaded: false };
-  const { stage, loaded } = currentAttempt;
-  const remoteUrl = candidates[stage] || '';
-  const finishAttempt = useCallback((success: boolean) => {
-    if (artworkIdentityRef.current !== artworkIdentity) return;
-    setAttempt((previous) => {
-      const current = previous.identity === artworkIdentity
-        ? previous
-        : { identity: artworkIdentity, stage: 0, loaded: false };
-      // Ignore a late error/load from a source that has already been replaced.
-      if (current.stage !== stage || current.loaded) return previous;
-      return { identity: artworkIdentity, stage: success ? stage : stage + 1, loaded: success };
-    });
-  }, [artworkIdentity, stage]);
-  useEffect(() => {
-    // A hanging origin may never emit onError promptly. Advance only while a
-    // real alternative exists; leave the final request alive on slow networks.
-    if (!remoteUrl || loaded || stage + 1 >= candidates.length) return;
-    const timer = setTimeout(() => finishAttempt(false), 2500);
-    return () => clearTimeout(timer);
-  }, [remoteUrl, loaded, stage, candidates.length, finishAttempt]);
+  const { sources, finish } = useArtworkSources(candidates);
 
   return (
     <View style={[style, styles.catalogArtworkContainer]}>
@@ -1960,28 +1950,31 @@ const CatalogArtwork = memo(function CatalogArtwork({
         />
       ) : null}
 
-      {remoteUrl ? (
+      {sources.map((remoteUrl) => (
         <Image
+          key={remoteUrl}
           source={{ uri: remoteUrl }}
           style={StyleSheet.absoluteFill}
           contentFit={contentFit}
           cachePolicy="memory-disk"
           transition={transition}
           recyclingKey={String(primary || fallback || remoteUrl)}
-          onLoad={() => finishAttempt(true)}
-          onError={() => finishAttempt(false)}
+          onLoad={() => finish(remoteUrl, true)}
+          onError={() => finish(remoteUrl, false)}
         />
-      ) : null}
+      ))}
     </View>
   );
 });
 
 const warmDetailArtwork = (item: CatalogItem) => {
-  const url = catalogArtworkCandidates(
-    item.backdrop || item.backdropFallback || item.poster,
-    'backdrop',
-  )[0];
-  if (url) void Image.prefetch(url).catch(() => undefined);
+  // Use exactly the same resized URL as the visible artwork component.
+  const urls = [
+    catalogArtworkCandidates(item.backdropFallback || item.backdrop || item.poster, 'backdrop')[0],
+    catalogArtworkCandidates(item.posterFallback || item.poster, 'poster')[0],
+  ].filter(Boolean);
+  if (urls.length) void Image.prefetch(urls).catch(() => undefined);
+  void loadCatalogItemDetail(item).catch(() => undefined);
 };
 
 const localArtworkForItem = (_item: CatalogItem) => undefined;
@@ -2132,7 +2125,7 @@ function HeroSlide({
             ) : null}
           </View>
         </View>
-        <Pressable onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
+        <Pressable onPress={onOpen} onPressIn={() => warmDetailArtwork(item)} hitSlop={8} style={styles.primaryButton}>
           <Ionicons name="play" color="#fff" size={18} />
           <Text style={styles.primaryButtonText}>مشاهده و دریافت</Text>
         </Pressable>
@@ -2180,7 +2173,7 @@ function HeroSlider({
   useEffect(() => {
     const urls = safeItems
       .slice(0, 3)
-      .map((item) => optimizedImageUrl(item.backdrop || item.poster, 'backdrop'))
+      .map((item) => catalogArtworkCandidates(item.backdropFallback || item.backdrop || item.poster, 'backdrop')[0])
       .filter((url): url is string => Boolean(isSafeHttpUrl(url)));
     if (urls.length) void Image.prefetch(urls).catch(() => undefined);
   }, [safeItems]);
@@ -2672,6 +2665,7 @@ const PosterCard = memo(function PosterCard({
   return (
     <Pressable
       onPress={onOpen}
+      onPressIn={() => warmDetailArtwork(item)}
       unstable_pressDelay={0}
       hitSlop={12}
       pressRetentionOffset={{ top: 24, right: 24, bottom: 24, left: 24 }}
@@ -3641,11 +3635,28 @@ const HomeScreen = memo(function HomeScreen({
       ...eagerRows.flatMap((row) => row.items.slice(0, 3)),
     ];
     const urls = [...new Set(firstScreenItems.flatMap((item) => [
-      optimizedImageUrl(item.poster || item.posterFallback, 'poster'),
-      optimizedImageUrl(item.backdrop || item.backdropFallback, 'backdrop'),
+      catalogArtworkCandidates(item.posterFallback || item.poster, 'poster')[0],
+      catalogArtworkCandidates(item.backdropFallback || item.backdrop || item.poster, 'backdrop')[0],
     ]).filter((url): url is string => Boolean(url && isSafeHttpUrl(url))))].slice(0, 6);
     if (urls.length) void Image.prefetch(urls).catch(() => undefined);
   }, [eagerRows, newest]);
+
+  const detailWarmKey = newest.slice(0, 2).map((item) => `${item.type}:${item.id}:${item.detailPath}`).join('|');
+  useEffect(() => {
+    if (!isActive) return;
+    let cancelled = false;
+    // Only two likely titles, one request at a time, after the first screen.
+    // The loader deduplicates these with a tap and stores immutable detail.
+    const timer = setTimeout(() => {
+      void (async () => {
+        for (const item of newest.slice(0, 2)) {
+          if (cancelled) break;
+          await loadCatalogItemDetail(item).catch(() => undefined);
+        }
+      })();
+    }, 1200);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [isActive, detailWarmKey]);
 
   useEffect(() => {
     if (initialScrollOffset > 0) {
@@ -8247,7 +8258,7 @@ function AppContent() {
 
   const openRootDetail = useCallback((nextItem: CatalogItem) => {
     detailHistoryRef.current = [];
-    setSelectedItem(nextItem);
+    setSelectedItem(getCachedCatalogItemDetail(nextItem) || nextItem);
   }, []);
 
   const openNestedDetail = useCallback((nextItem: CatalogItem) => {
@@ -8255,14 +8266,14 @@ function AppContent() {
     if (current && String(current.id) !== String(nextItem.id)) {
       detailHistoryRef.current = [...detailHistoryRef.current.slice(-19), current];
     }
-    setSelectedItem(nextItem);
+    setSelectedItem(getCachedCatalogItemDetail(nextItem) || nextItem);
   }, []);
 
   // Related cards are a replacement of the current detail, not a navigation
   // stack. One Back always returns to the screen that originally opened detail.
   const openRelatedDetail = useCallback((nextItem: CatalogItem) => {
     detailHistoryRef.current = [];
-    setSelectedItem(nextItem);
+    setSelectedItem(getCachedCatalogItemDetail(nextItem) || nextItem);
   }, []);
 
   const closeOrBackDetail = useCallback(() => {

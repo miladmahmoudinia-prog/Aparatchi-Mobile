@@ -1,15 +1,1 @@
-Aparatchi Android 0.16.14 - bundler verified retry
-Android 0.16.15 launcher and instant splash fix: 2026-09-05T08:35:00Z
-
-Android 0.16.16: user-requested APK with verified startup cache and poster latency fixes.
-Android 0.16.17: cast dedupe and responsive detail/home rendering.
-Android 0.16.18: compact instant startup, faster rails, artwork and duplicate fixes.
-Android 0.16.19: restore valid shelf variants, proxy-first posters, native splash handoff.
-Android 0.16.20: restore complete 6000+ title catalog and Aparatchi launch icon.
-Android 0.16.21: instant full episodes, episode artwork backfill, cast dedupe, launcher and splash correction.
-Android 0.16.21 rebuild: Android-compatible launcher icon.
-Android 0.16.21 rebuild: repaired native splash PNG.
-Android 0.16.22 hotfix: bounded startup catalog and safe native splash.
-Android 0.16.22 final rebuild: 8 MB low-memory startup payload.
-Android 0.16.23: latest 100, instant people works, stable RTL rails, verified collection names, 2/4 column grids.
-0.16.24 cooperative refresh and v2 live baseline (validated)
+Build Android 0.16.25: faster detail cache and bounded artwork fallback
