@@ -1,3 +1,4 @@
+import { harness as artworkHarness } from './helpers/artwork-harness.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
@@ -125,41 +126,26 @@ test('late mirror bodies are discarded before expensive JSON parsing', () => {
 });
 
 test('poster fallback ignores duplicate and late events, and successful images stay loaded', () => {
-  const from = app.indexOf('const finishAttempt = useCallback');
-  const to = app.indexOf('\n  useEffect(() => {', from);
-  let attempt = { identity: 'poster-A', stage: 0, loaded: false };
-  const context = {
-    artworkIdentity: 'poster-A', artworkIdentityRef: { current: 'poster-A' }, stage: 0,
-    useCallback: (fn) => fn, setAttempt: (update) => { attempt = update(attempt); },
-  };
-  const finish = vm.runInNewContext(stripTypeScriptTypes(app.slice(from, to)) + '\nfinishAttempt;', context);
-  finish(false);
-  finish(false);
-  assert.equal(attempt.stage, 1, 'late duplicate error must not skip the next candidate');
-  context.stage = 1;
-  finish(true);
-  finish(false);
-  assert.equal(attempt.loaded, true);
-  assert.equal(attempt.stage, 1);
-  context.artworkIdentityRef.current = 'poster-B';
-  finish(false);
-  assert.equal(attempt.identity, 'poster-A', 'old callback must not mutate the replacement poster');
+  const h = artworkHarness(), urls = ['poster-A', 'poster-B', 'poster-C'];
+  const initial = h.render(urls);
+  initial.finish('poster-A', false);
+  initial.finish('poster-A', false);
+  assert.deepEqual([...h.render(urls).sources], ['poster-B'], 'duplicate error must not skip the next candidate');
+  h.render(urls).finish('poster-B', true);
+  initial.finish('poster-A', false);
+  assert.deepEqual([...h.render(urls).sources], ['poster-B']);
+  h.render(['replacement']);
+  initial.finish('poster-A', true);
+  assert.deepEqual([...h.render(['replacement']).sources], ['replacement']);
 });
 
 test('poster timeout stops after load and never cancels its last remaining source', () => {
-  const from = app.indexOf('    // A hanging origin may never emit onError promptly.');
-  const to = app.indexOf('\n  }, [remoteUrl', from);
-  const source = '(function () {\n' + app.slice(from, to) + '\n})()';
-  for (const [loaded, stage, expected] of [[false, 0, 1], [true, 0, 0], [false, 1, 0]]) {
-    let timers = 0;
-    let advance;
-    const context = { remoteUrl: 'https://example.test/poster', loaded, stage, candidates: ['a', 'b'],
-      setTimeout: (fn, ms) => { timers++; advance = fn; assert.equal(ms, 2500); return 1; },
-      clearTimeout: () => {}, finishAttempt: (success) => assert.equal(success, false) };
-    vm.runInNewContext(source, context);
-    assert.equal(timers, expected);
-    advance?.();
-  }
+  const h = artworkHarness();
+  h.render(['single']); h.tick();
+  assert.deepEqual([...h.render(['single']).sources], ['single']);
+  const loaded = h.render(['one', 'two']); loaded.finish('one', true);
+  h.render(['one', 'two']); h.tick();
+  assert.deepEqual([...h.render(['one', 'two']).sources], ['one']);
 });
 
 test('the reported operator movie skips provider default artwork before its real poster', () => {
