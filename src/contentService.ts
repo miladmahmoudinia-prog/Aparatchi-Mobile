@@ -2462,6 +2462,42 @@ const resolveStableDetailPath = async (summary: CatalogItem, fallbackPath: strin
   return fallbackPath;
 };
 
+const detailSatisfiesSummary = (summary: CatalogItem, detail: CatalogItem) => {
+  if (summary.type !== 'series') return true;
+  const episodeSections = (detail.downloads || []).filter(
+    (section) => Number(section.episodeNumber || 0) > 0,
+  );
+  // Old immutable shards can contain all episode rows but no media files.
+  // Never accept those as a complete detail: otherwise reopening a title can
+  // alternate between the healthy shard and a cached link-less copy.
+  const playableEpisodeSections = episodeSections.filter(
+    (section) => (section.files || []).length > 0,
+  );
+  const expectedLatestEpisode = Number(summary.latestEpisode?.episodeNumber || 0);
+  const expectedLatestSeason = Number(summary.latestEpisode?.seasonNumber || 0);
+  if (expectedLatestEpisode > 0) {
+    return playableEpisodeSections.some((section) => {
+      const episode = Number(section.episodeNumber || 0);
+      const season = Number(section.seasonNumber || 1);
+      if (expectedLatestSeason > 0) {
+        return season > expectedLatestSeason ||
+          (season === expectedLatestSeason && episode >= expectedLatestEpisode);
+      }
+      return episode >= expectedLatestEpisode;
+    });
+  }
+  const expectedCount = Number(summary.episodeCount || 0);
+  return expectedCount <= 0 || playableEpisodeSections.length >= expectedCount;
+};
+
+
+// Exact immutable path only: a refreshed series must never reuse older links.
+export function getCachedCatalogItemDetail(summary: CatalogItem): CatalogItem | null {
+  if (summary.detailLoaded) return summary;
+  const cached = detailMemoryCache.get(`${summary.type}:${summary.id}:${asString(summary.detailPath)}`);
+  return cached && detailSatisfiesSummary(summary, cached) ? cached : null;
+}
+
 export async function loadCatalogItemDetail(summary: CatalogItem): Promise<CatalogItem | null> {
   const summaryDetailPath = asString(summary?.detailPath);
   if (!summaryDetailPath || summary.detailLoaded) return { ...summary, detailLoaded: true };
@@ -2473,36 +2509,8 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
   const detailPath = summaryDetailPath;
   const memoryKey = `${summary.type}:${summary.id}:${detailPath}`;
 
-  const detailSatisfiesSummary = (detail: CatalogItem) => {
-    if (summary.type !== 'series') return true;
-    const episodeSections = (detail.downloads || []).filter(
-      (section) => Number(section.episodeNumber || 0) > 0,
-    );
-    // Old immutable shards can contain all episode rows but no media files.
-    // Never accept those as a complete detail: otherwise reopening a title can
-    // alternate between the healthy shard and a cached link-less copy.
-    const playableEpisodeSections = episodeSections.filter(
-      (section) => (section.files || []).length > 0,
-    );
-    const expectedLatestEpisode = Number(summary.latestEpisode?.episodeNumber || 0);
-    const expectedLatestSeason = Number(summary.latestEpisode?.seasonNumber || 0);
-    if (expectedLatestEpisode > 0) {
-      return playableEpisodeSections.some((section) => {
-        const episode = Number(section.episodeNumber || 0);
-        const season = Number(section.seasonNumber || 1);
-        if (expectedLatestSeason > 0) {
-          return season > expectedLatestSeason ||
-            (season === expectedLatestSeason && episode >= expectedLatestEpisode);
-        }
-        return episode >= expectedLatestEpisode;
-      });
-    }
-    const expectedCount = Number(summary.episodeCount || 0);
-    return expectedCount <= 0 || playableEpisodeSections.length >= expectedCount;
-  };
-
   const memory = detailMemoryCache.get(memoryKey);
-  if (memory && detailSatisfiesSummary(memory)) return memory;
+  if (memory && detailSatisfiesSummary(summary, memory)) return memory;
   if (memory) detailMemoryCache.delete(memoryKey);
   const pending = detailRequestCache.get(memoryKey);
   if (pending) return pending;
@@ -2515,7 +2523,7 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
       // A summary can already know that a series has 14 episodes while an old
       // detail cache/CDN response still contains none. Reject that stale detail
       // so another mirror/current shard is fetched instead of rendering an empty page.
-      if (!detailSatisfiesSummary(normalized)) return null;
+      if (!detailSatisfiesSummary(summary, normalized)) return null;
       // Keep the summary path on the selected object so App does not downgrade
       // a freshly resolved detail merely because its lightweight index was stale.
       return { ...normalized, detailPath: summaryDetailPath, detailLoaded: true } as CatalogItem;
@@ -2559,7 +2567,7 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
             const response = await fetch(
               `${candidate}${separator}v=${encodeURIComponent(detailPath)}`,
               {
-                headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+                headers: { Accept: 'application/json' },
                 signal: controller.signal,
               },
             );
