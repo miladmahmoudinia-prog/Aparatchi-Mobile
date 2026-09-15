@@ -29,7 +29,7 @@ test('cached series detail still enforces the newest playable episode and immuta
   const service = fs.readFileSync('src/contentService.ts','utf8');
   const snippet = service.slice(service.indexOf('const detailSatisfiesSummary ='),service.indexOf('export async function loadCatalogItemDetail'));
   const context = { detailMemoryCache: new Map(), asString: v => String(v || '') }; vm.createContext(context);
-  vm.runInContext(ts.transpileModule(snippet.replace('export function','function')+'\nglobalThis.getCached = getCachedCatalogItemDetail;', {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText, context);
+  vm.runInContext(ts.transpileModule(snippet.replaceAll('export function','function')+'\nglobalThis.getCached = getCachedCatalogItemDetail;', {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText, context);
   const summary = {id:'s',type:'series',detailPath:'immutable-A',latestEpisode:{seasonNumber:1,episodeNumber:4}};
   const detail = {...summary,downloads:[{seasonNumber:1,episodeNumber:3,files:[{url:'stream'}]}]};
   context.detailMemoryCache.set('series:s:immutable-A', detail);

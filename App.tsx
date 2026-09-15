@@ -1,5 +1,6 @@
 declare const require: (assetPath: string) => number;
 
+import { markCatalogInteraction, commitCatalogWhenIdle } from './src/catalogInteraction';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import * as Network from 'expo-network';
@@ -43,7 +44,7 @@ import {
 import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
-import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, getCachedCatalogItemDetail, loadContent, loadLiveContent, LoadedContent } from './src/contentService';
+import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, getCatalogItemPreview, loadContent, loadLiveContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
   checkMobileOperatorAccess,
@@ -74,7 +75,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.25';
+const APP_DISPLAY_VERSION = '0.16.26';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -2125,7 +2126,7 @@ function HeroSlide({
             ) : null}
           </View>
         </View>
-        <Pressable onPress={onOpen} onPressIn={() => warmDetailArtwork(item)} hitSlop={8} style={styles.primaryButton}>
+        <Pressable onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
           <Ionicons name="play" color="#fff" size={18} />
           <Text style={styles.primaryButtonText}>مشاهده و دریافت</Text>
         </Pressable>
@@ -2665,7 +2666,6 @@ const PosterCard = memo(function PosterCard({
   return (
     <Pressable
       onPress={onOpen}
-      onPressIn={() => warmDetailArtwork(item)}
       unstable_pressDelay={0}
       hitSlop={12}
       pressRetentionOffset={{ top: 24, right: 24, bottom: 24, left: 24 }}
@@ -2882,6 +2882,8 @@ function PeopleSection({
         nestedScrollEnabled
         style={styles.peopleRail}
         contentContainerStyle={styles.peopleList}
+        onScroll={markCatalogInteraction}
+        scrollEventThrottle={80}
         inverted
         initialNumToRender={4}
         maxToRenderPerBatch={3}
@@ -2916,11 +2918,14 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       showsHorizontalScrollIndicator={false}
       style={styles.horizontalCatalogList}
       contentContainerStyle={styles.horizontalCatalog}
+      onScroll={markCatalogInteraction}
+      scrollEventThrottle={80}
       inverted
-      initialNumToRender={10}
-      maxToRenderPerBatch={10}
-      updateCellsBatchingPeriod={16}
-      windowSize={10}
+      getItemLayout={(_, index) => ({ length: 148, offset: 148 * index, index })}
+      initialNumToRender={3}
+      maxToRenderPerBatch={2}
+      updateCellsBatchingPeriod={40}
+      windowSize={3}
       removeClippedSubviews={false}
       nestedScrollEnabled
       keyboardShouldPersistTaps="always"
@@ -3285,6 +3290,7 @@ function ImdbTop100Section({
   ), [catalog]);
   const entries = selectedType === 'movie' ? ranking?.movies || [] : ranking?.series || [];
   const rememberFullListOffset = useCallback((event: any) => {
+    markCatalogInteraction();
     fullScrollOffsetsRef.current[selectedType] = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
   }, [selectedType]);
 
@@ -3641,23 +3647,6 @@ const HomeScreen = memo(function HomeScreen({
     if (urls.length) void Image.prefetch(urls).catch(() => undefined);
   }, [eagerRows, newest]);
 
-  const detailWarmKey = newest.slice(0, 2).map((item) => `${item.type}:${item.id}:${item.detailPath}`).join('|');
-  useEffect(() => {
-    if (!isActive) return;
-    let cancelled = false;
-    // Only two likely titles, one request at a time, after the first screen.
-    // The loader deduplicates these with a tap and stores immutable detail.
-    const timer = setTimeout(() => {
-      void (async () => {
-        for (const item of newest.slice(0, 2)) {
-          if (cancelled) break;
-          await loadCatalogItemDetail(item).catch(() => undefined);
-        }
-      })();
-    }, 1200);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [isActive, detailWarmKey]);
-
   useEffect(() => {
     if (initialScrollOffset > 0) {
       requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: initialScrollOffset, animated: false }));
@@ -3702,6 +3691,7 @@ const HomeScreen = memo(function HomeScreen({
   ), [catalog, featuredPeople, onBrowse, onOpen]);
 
   const rememberVisibleOffset = useCallback((event: any) => {
+    markCatalogInteraction();
     onScrollOffset(event.nativeEvent.contentOffset.y);
   }, [onScrollOffset]);
 
@@ -3749,12 +3739,14 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={4}
-        maxToRenderPerBatch={3}
-        updateCellsBatchingPeriod={16}
-        windowSize={6}
+        initialNumToRender={2}
+        maxToRenderPerBatch={1}
+        updateCellsBatchingPeriod={48}
+        windowSize={4}
         removeClippedSubviews={false}
         keyboardShouldPersistTaps="always"
+        onScroll={rememberVisibleOffset}
+        scrollEventThrottle={80}
         onScrollEndDrag={rememberVisibleOffset}
         onMomentumScrollEnd={rememberVisibleOffset}
         ListHeaderComponent={homeHeader}
@@ -3961,6 +3953,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   }, [columnCount, deferredQuery, isActive]);
 
   const rememberCategoriesOffset = useCallback((event: any) => {
+    markCatalogInteraction();
     if (deferredQuery) return;
     const next = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
     liveCategoriesOffsetRef.current = next;
@@ -4138,26 +4131,12 @@ function CatalogListScreen({
   const gridGap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
 
-  useEffect(() => {
-    const offset = catalogListScrollOffsets.get(scrollKey) || 0;
-    if (offset <= 0) return undefined;
-    const frame = requestAnimationFrame(() => {
-      listRef.current?.scrollToOffset({ offset, animated: false });
-    });
-    const retry = setTimeout(() => {
-      listRef.current?.scrollToOffset({ offset, animated: false });
-    }, 120);
-    const settle = setTimeout(() => {
-      listRef.current?.scrollToOffset({ offset, animated: false });
-    }, 420);
-    return () => {
-      cancelAnimationFrame(frame);
-      clearTimeout(retry);
-      clearTimeout(settle);
-    };
-  }, [columnCount, scrollKey]);
+  // A native initial offset avoids delayed scrollToOffset calls that can
+  // yank the list backwards after the user has already started scrolling.
+  const initialContentOffset = useMemo(() => ({ x: 0, y: catalogListScrollOffsets.get(scrollKey) || 0 }), [columnCount, scrollKey]);
 
   const rememberCatalogOffset = useCallback((event: any) => {
+    markCatalogInteraction();
     if (query) return;
     catalogListScrollOffsets.set(scrollKey, Math.max(0, Number(event.nativeEvent.contentOffset.y || 0)));
   }, [query, scrollKey]);
@@ -4207,6 +4186,7 @@ function CatalogListScreen({
   return (
     <FlatList
       ref={listRef}
+      contentOffset={initialContentOffset}
       key={`${initialFilter}-${columnCount}`}
       style={styles.screen}
       contentContainerStyle={styles.catalogListContent}
@@ -4232,7 +4212,7 @@ function CatalogListScreen({
       maxToRenderPerBatch={3}
       windowSize={4}
       updateCellsBatchingPeriod={48}
-      removeClippedSubviews
+      removeClippedSubviews={false}
       showsVerticalScrollIndicator={false}
       scrollEventThrottle={96}
       onScroll={rememberCatalogOffset}
@@ -4415,6 +4395,7 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
   }, []);
 
   const rememberCollectionFolderOffset = useCallback((event: any) => {
+    markCatalogInteraction();
     collectionBrowserScrollOffset = Math.max(0, Number(event?.nativeEvent?.contentOffset?.y || 0));
   }, []);
 
@@ -6215,42 +6196,6 @@ function DetailModal({
           </View>
 
           <View style={styles.detailBody}>
-            {!detailBodyReady ? (
-              <>
-                <View style={styles.genreRow}>
-                  {(item.countryCodes || []).map((code, index) => ({ code, index })).filter(({ code }) => String(code).toUpperCase() !== 'JP').map(({ code, index }) => <Pressable key={`country-loading-${code}`} onPress={() => browseAndClose(countryFilter(code))}><Text style={styles.detailGenre}>{item.countryLabels?.[index] || countryLabel(code, catalog)}</Text></Pressable>)}
-                  {item.genres.map((genre) => <Pressable key={`genre-loading-${genre}`} onPress={() => browseAndClose(genreFilter(genre))}><Text style={styles.detailGenre}>{genre}</Text></Pressable>)}
-                </View>
-                {catalogOverviewFor(item) ? (
-                  <>
-                    <Text style={styles.detailSectionTitle}>{isReligiousItem(item) ? 'درباره مجموعه' : `داستان ${item.nameFa}`}</Text>
-                    <Text style={styles.detailOverview}>{catalogOverviewFor(item)}</Text>
-                  </>
-                ) : null}
-                <PeopleSection item={item} onOpen={onOpenPerson} />
-                {item.type === 'series' && episodeGroups.length ? (
-                  <SeriesEpisodeShowcase
-                    item={item}
-                    onPlay={(group) => onStream(item, group)}
-                    onOpenDownloads={(group) => { setDownloadInitialGroup(group.id); setDownloadSheetOpen(true); }}
-                    onOpenOperator={(file) => onOperatorOpen(item, file)}
-                  />
-                ) : null}
-                {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile || hasDownloads) ? (
-                  <View style={styles.detailActions}>
-                    {(hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
-                    {hasDownloads ? (
-                      <Pressable onPress={() => { setDownloadInitialGroup(null); setDownloadSheetOpen(true); }} style={styles.detailDownloadAction}>
-                        <Ionicons name="download-outline" color={COLORS.gold} size={19} />
-                        <Text style={styles.detailDownloadActionText}>دانلود</Text>
-                      </Pressable>
-                    ) : null}
-                    <Pressable onPress={() => void shareCatalogItem(item)} style={styles.detailSecondaryButton}><Ionicons name="share-social-outline" color={COLORS.text} size={20} /></Pressable>
-                  </View>
-                ) : null}
-              </>
-            ) : (
-              <>
             <View style={styles.detailActions}>
               {item.type === 'movie' && (hasPlayableStream || primaryOperatorPlayFile) ? <Pressable onPress={() => hasPlayableStream ? onStream(item) : primaryOperatorPlayFile && onOperatorOpen(item, primaryOperatorPlayFile)} style={[styles.watchButton, !hasPlayableStream && styles.operatorWatchButton]}><Ionicons name={hasPlayableStream ? 'play' : 'phone-portrait-outline'} color="#fff" size={19} /><Text style={styles.watchButtonText}>{hasPlayableStream ? 'پخش آنلاین' : 'پخش با اینترنت همراه'}</Text></Pressable> : null}
               {item.type === 'movie' && hasDownloads ? (
@@ -6288,8 +6233,6 @@ function DetailModal({
                 <RelatedTitlesSection item={item} catalog={catalog} onOpen={onOpenRelated} selectionSeed={relatedSelectionSeed} />
               </>
             ) : null}
-              </>
-            )}
           </View>
         </ScrollView>
         <DownloadOptionsModal
@@ -8063,7 +8006,7 @@ function AppContent() {
       // dismissed. Deferring this initial render could briefly expose the false
       // "catalog is empty" screen. Only later background refreshes are non-urgent.
       if (!hadVisibleCatalog) setContent(visibleContent);
-      else startTransition(() => setContent(visibleContent));
+      else commitCatalogWhenIdle(() => startTransition(() => setContent(visibleContent)));
       lastContentLoadRef.current = Date.now();
       setContentReady(true);
       setContentResolved(true);
@@ -8258,7 +8201,7 @@ function AppContent() {
 
   const openRootDetail = useCallback((nextItem: CatalogItem) => {
     detailHistoryRef.current = [];
-    setSelectedItem(getCachedCatalogItemDetail(nextItem) || nextItem);
+    setSelectedItem(getCatalogItemPreview(nextItem));
   }, []);
 
   const openNestedDetail = useCallback((nextItem: CatalogItem) => {
@@ -8266,14 +8209,14 @@ function AppContent() {
     if (current && String(current.id) !== String(nextItem.id)) {
       detailHistoryRef.current = [...detailHistoryRef.current.slice(-19), current];
     }
-    setSelectedItem(getCachedCatalogItemDetail(nextItem) || nextItem);
+    setSelectedItem(getCatalogItemPreview(nextItem));
   }, []);
 
   // Related cards are a replacement of the current detail, not a navigation
   // stack. One Back always returns to the screen that originally opened detail.
   const openRelatedDetail = useCallback((nextItem: CatalogItem) => {
     detailHistoryRef.current = [];
-    setSelectedItem(getCachedCatalogItemDetail(nextItem) || nextItem);
+    setSelectedItem(getCatalogItemPreview(nextItem));
   }, []);
 
   const closeOrBackDetail = useCallback(() => {
@@ -9220,7 +9163,7 @@ function AppContent() {
   // blocker after the native splash.
 
   return (
-    <View style={styles.app}>
+    <View style={styles.app} onTouchStart={markCatalogInteraction} onTouchMove={markCatalogInteraction}>
       <StatusBar style="light" />
       <SafeAreaView
         style={styles.safeArea}
@@ -9241,7 +9184,7 @@ function AppContent() {
             initialScrollOffset={homeScrollOffsetRef.current}
             onScrollOffset={rememberHomeScrollOffset}
             scrollToTopSignal={homeScrollTopSignal}
-            isActive={activeTab === 'home'}
+            isActive={activeTab === 'home' && !selectedItem && !selectedPerson && !videoRequest}
             contentResolved={contentResolved}
             contentOffline={contentOffline}
           />

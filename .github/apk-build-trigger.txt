@@ -1,1 +1,1 @@
-Build Android 0.16.25: faster detail cache and bounded artwork fallback
+Build Android 0.16.26: lazy offline detail previews and stable scrolling

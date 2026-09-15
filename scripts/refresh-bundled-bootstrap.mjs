@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { buildDetailPreviews } from './build-detail-previews.mjs';
 
 const outputPath = new URL('../src/catalogBootstrap.json', import.meta.url);
 const repositoryBases = [
@@ -85,6 +86,7 @@ const [manifestRaw, freshRaw] = await Promise.all([
 if (manifestRaw && freshRaw) {
   const manifest = parseManifest(manifestRaw);
   const value = validate(freshRaw, manifest);
+  await buildDetailPreviews(value);
   const compact = compactForApkStartup(value);
   const serialized = `${JSON.stringify(compact)}\n`;
   await fs.writeFile(outputPath, serialized, 'utf8');
