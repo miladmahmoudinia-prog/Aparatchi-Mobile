@@ -39,3 +39,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Generated before typecheck and regenerated from fresh content for release
+src/detail-previews/
+src/detailPreviews.generated.ts

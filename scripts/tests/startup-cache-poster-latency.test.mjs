@@ -30,6 +30,7 @@ function harness(overrides = {}) {
     loadedContentRevision: (value) => value.clientRevision,
     visibleLoadedContent: (value) => value,
     startTransition: (run) => run(),
+    commitCatalogWhenIdle: (run) => run(),
     syncEpisodeAlerts: async () => {},
     setContent: (value) => events.push(['content', value.clientRevision]),
     setContentReady: (value) => events.push(['ready', value]),

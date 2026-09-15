@@ -2491,6 +2491,21 @@ const detailSatisfiesSummary = (summary: CatalogItem, detail: CatalogItem) => {
 };
 
 
+// Load one small bundled metadata bucket on navigation, never the whole story/
+// cast catalogue at startup. These are previews, not proof of playable links.
+export function getCatalogItemPreview(summary: CatalogItem): CatalogItem {
+  const full = getCachedCatalogItemDetail(summary);
+  if (full) return full;
+  if (!summary.detailPath || (summary.overview && summary.people?.length)) return summary;
+  const preview = require('./detailPreviews.generated').readDetailPreview(`${summary.type}:${summary.id}`);
+  if (!preview || preview.detailPath !== summary.detailPath) return summary;
+  return {
+    ...summary,
+    overview: summary.overview || asString(preview.overview),
+    people: summary.people?.length ? summary.people : normalizeSummaryPeoplePreview(preview.people, summary.id),
+  };
+}
+
 // Exact immutable path only: a refreshed series must never reuse older links.
 export function getCachedCatalogItemDetail(summary: CatalogItem): CatalogItem | null {
   if (summary.detailLoaded) return summary;

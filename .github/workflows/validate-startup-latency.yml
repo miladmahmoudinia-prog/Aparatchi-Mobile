@@ -42,7 +42,7 @@ jobs:
           scripts/tests/device-startup-detail-stability-v32.test.mjs
           scripts/tests/instant-startup-cache-v41.test.mjs
           scripts/tests/complete-startup-catalog-v42.test.mjs
-          scripts/tests/cooperative-catalog.test.mjs scripts/tests/artwork-detail-latency.test.mjs
+          scripts/tests/cooperative-catalog.test.mjs scripts/tests/artwork-detail-latency.test.mjs scripts/tests/detail-preview-scroll.test.mjs
       - name: Materialize the actual Metro source
         run: node -e "const fs=require('node:fs'); const {applyMobileSourcePatches}=require('./scripts/mobile-source-patches.cjs'); fs.writeFileSync('App.tsx',applyMobileSourcePatches(fs.readFileSync('App.tsx','utf8')));"
       - name: Typecheck actual Metro source
@@ -55,4 +55,4 @@ jobs:
           scripts/tests/device-startup-detail-stability-v32.test.mjs
           scripts/tests/instant-startup-cache-v41.test.mjs
           scripts/tests/complete-startup-catalog-v42.test.mjs
-          scripts/tests/cooperative-catalog.test.mjs scripts/tests/artwork-detail-latency.test.mjs
+          scripts/tests/cooperative-catalog.test.mjs scripts/tests/artwork-detail-latency.test.mjs scripts/tests/detail-preview-scroll.test.mjs
