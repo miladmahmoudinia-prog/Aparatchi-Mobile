@@ -7597,6 +7597,7 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
   const [openRoot, setOpenRoot] = useState<string | null>(null);
   const [openChild, setOpenChild] = useState<string | null>(null);
   const entries: MenuEntry[] = [
+    { key: 'home', title: 'خانه', action: 'home', icon: 'home-outline' },
     {
       key: 'movies', title: 'فیلم‌ها', icon: 'film-outline', children: [
         { key: 'iranian-movies', title: 'فیلم‌های ایرانی', filter: 'iranian-movies', icon: 'flag-outline' },
@@ -7620,24 +7621,36 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
       ],
     },
     {
-      key: 'anime', title: 'انیمه', icon: 'sparkles-outline', children: [
-        { key: 'anime-movies', title: 'انیمه سینمایی', filter: 'anime-movies' },
-        { key: 'anime-series', title: 'انیمه سریالی', filter: 'anime-series' },
+      key: 'anime-animation', title: 'انیمه و انیمیشن', icon: 'sparkles-outline', children: [
+        {
+          key: 'anime', title: 'انیمه', icon: 'sparkles-outline', children: [
+            { key: 'anime-movies', title: 'انیمه سینمایی', filter: 'anime-movies' },
+            { key: 'anime-series', title: 'انیمه سریالی', filter: 'anime-series' },
+          ],
+        },
+        {
+          key: 'animation', title: 'انیمیشن', icon: 'color-palette-outline', children: [
+            { key: 'animation-movies', title: 'انیمیشن سینمایی', filter: 'animation-movies' },
+            { key: 'animation-series', title: 'انیمیشن سریالی', filter: 'animation-series' },
+          ],
+        },
       ],
     },
     {
-      key: 'animation', title: 'انیمیشن', icon: 'color-palette-outline', children: [
-        { key: 'animation-movies', title: 'انیمیشن سینمایی', filter: 'animation-movies' },
-        { key: 'animation-series', title: 'انیمیشن سریالی', filter: 'animation-series' },
+      key: 'other-content', title: 'سایر محتوا', icon: 'apps-outline', children: [
+        { key: 'kids', title: 'کودکان', filter: 'kids', icon: 'happy-outline' },
+        { key: 'programs', title: 'برنامه‌ها و مسابقه‌ها', filter: 'programs', icon: 'mic-outline' },
+        { key: 'religious', title: 'مذهبی و مناسبتی', filter: 'religious', icon: 'book-outline' },
       ],
     },
-    { key: 'kids', title: 'کودکان', filter: 'kids', icon: 'happy-outline' },
-    { key: 'programs', title: 'برنامه‌ها و مسابقه‌ها', filter: 'programs', icon: 'mic-outline' },
-    { key: 'religious', title: 'مذهبی و مناسبتی', filter: 'religious', icon: 'book-outline' },
-    { key: 'updated', title: 'به‌روزشده‌ها', filter: 'updated', icon: 'refresh-outline' },
-    { key: 'operator', title: 'ویژه اینترنت همراه', filter: 'mobile-operator', icon: 'phone-portrait-outline' },
-    { key: 'imdb-top', title: '۱۰۰ برتر IMDb', action: 'home', icon: 'trophy-outline' },
-    { key: 'categories', title: 'همه دسته‌بندی‌ها', action: 'categories', icon: 'grid-outline' },
+    {
+      key: 'more', title: 'بیشتر', icon: 'ellipsis-horizontal-circle-outline', children: [
+        { key: 'updated', title: 'به‌روزشده‌ها', filter: 'updated', icon: 'refresh-outline' },
+        { key: 'operator', title: 'ویژه اینترنت همراه', filter: 'mobile-operator', icon: 'phone-portrait-outline' },
+        { key: 'imdb-top', title: '۱۰۰ برتر IMDb', action: 'home', icon: 'trophy-outline' },
+        { key: 'categories', title: 'همه دسته‌بندی‌ها', action: 'categories', icon: 'grid-outline' },
+      ],
+    },
   ];
 
   useEffect(() => {
