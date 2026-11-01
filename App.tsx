@@ -1595,7 +1595,7 @@ const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
   return matchesCatalogFilter(item, filter);
 };
 
-const catalogItemsForFilter = (catalog: CatalogItem[], filter: SearchFilter) => {
+const catalogItemsForFilter = async (catalog: CatalogItem[], filter: SearchFilter, isCancelled: () => boolean) => {
   let cache = catalogFilterCache.get(catalog);
   if (!cache) {
     cache = new Map<SearchFilter, CatalogItem[]>();
@@ -1607,7 +1607,17 @@ const catalogItemsForFilter = (catalog: CatalogItem[], filter: SearchFilter) => 
   // The server already writes the catalog newest-first and provides categoryKeys.
   // Keep that order for browse/search instead of sorting the whole archive after
   // every "مشاهده همه" tap. Only the episode-update feed has its own timestamp.
-  const filtered = catalog.filter((item) => fastCatalogFilterMatch(item, filter));
+  const filtered: CatalogItem[] = [];
+  let sliceStarted = Date.now();
+  for (const item of catalog) {
+    if (isCancelled()) return null;
+    if (fastCatalogFilterMatch(item, filter)) filtered.push(item);
+    if (Date.now() - sliceStarted >= 6) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      sliceStarted = Date.now();
+    }
+  }
+  if (isCancelled()) return null;
   const result = filter === 'updated' ? sortForCatalogFilter(filtered, filter) : filtered;
   cache.set(filter, result);
   return result;
@@ -4103,19 +4113,20 @@ function CatalogListScreen({
   const listRef = useRef<FlatList<CatalogItem>>(null);
   const scrollKey = String(initialFilter);
 
-  // Filter results are cached per catalog. Waiting for InteractionManager here
-  // made a normal tap feel ignored whenever an image list or slider animation
-  // was active. Open the destination immediately and read the cached list.
-  const baseItems = useMemo(
-    () => {
-      const filtered = catalogItemsForFilter(catalog, initialFilter);
-      // "مشاهده همه" for Latest is intentionally a bounded editorial page.
-      // One hundred titles keeps it complete enough without turning the first
-      // category render into a multi-thousand item job.
-      return initialFilter === 'latest' ? filtered.slice(0, 100) : filtered;
-    },
-    [catalog, initialFilter],
-  );
+  const [filteredState, setFilteredState] = useState<{ catalog: CatalogItem[]; filter: SearchFilter; items: CatalogItem[] } | null>(null);
+  const cachedItems = catalogFilterCache.get(catalog)?.get(initialFilter);
+  const matchingItems = cachedItems || (filteredState?.catalog === catalog && filteredState.filter === initialFilter ? filteredState.items : null);
+  const baseItems = matchingItems && initialFilter === 'latest' ? matchingItems.slice(0, 100) : matchingItems || [];
+  useEffect(() => {
+    if (cachedItems) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void catalogItemsForFilter(catalog, initialFilter, () => cancelled).then((items) => {
+        if (!cancelled && items) setFilteredState({ catalog, filter: initialFilter, items });
+      });
+    }, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [catalog, initialFilter, cachedItems]);
   const results = useMemo(() => {
     if (!deferredQuery) return baseItems;
     return baseItems.filter((item) => normalizeComparableText([
@@ -4196,7 +4207,9 @@ function CatalogListScreen({
       keyExtractor={(item) => item.id}
       columnWrapperStyle={columnCount > 1 ? { gap: gridGap, flexDirection: 'row-reverse' } : undefined}
       ListHeaderComponent={header}
-      ListEmptyComponent={(
+      ListEmptyComponent={!matchingItems ? (
+        <View style={styles.searchEmptyState}><ActivityIndicator color={COLORS.gold} /></View>
+      ) : (
         <View style={styles.searchEmptyState}>
           <View style={styles.largeEmptyIcon}><Ionicons name="search-outline" color={COLORS.gold} size={30} /></View>
           <Text style={styles.largeEmptyTitle}>نتیجه‌ای پیدا نشد</Text>
@@ -8212,25 +8225,34 @@ function AppContent() {
   }, []);
 
 
+  const showDetail = useCallback((nextItem: CatalogItem) => {
+    setSelectedItem(nextItem);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        setSelectedItem((current) => current === nextItem ? getCatalogItemPreview(current) : current);
+      }, 0);
+    });
+  }, []);
+
   const openRootDetail = useCallback((nextItem: CatalogItem) => {
     detailHistoryRef.current = [];
-    setSelectedItem(getCatalogItemPreview(nextItem));
-  }, []);
+    showDetail(nextItem);
+  }, [showDetail]);
 
   const openNestedDetail = useCallback((nextItem: CatalogItem) => {
     const current = navigationStateRef.current.selectedItem;
     if (current && String(current.id) !== String(nextItem.id)) {
       detailHistoryRef.current = [...detailHistoryRef.current.slice(-19), current];
     }
-    setSelectedItem(getCatalogItemPreview(nextItem));
-  }, []);
+    showDetail(nextItem);
+  }, [showDetail]);
 
   // Related cards are a replacement of the current detail, not a navigation
   // stack. One Back always returns to the screen that originally opened detail.
   const openRelatedDetail = useCallback((nextItem: CatalogItem) => {
     detailHistoryRef.current = [];
-    setSelectedItem(getCatalogItemPreview(nextItem));
-  }, []);
+    showDetail(nextItem);
+  }, [showDetail]);
 
   const closeOrBackDetail = useCallback(() => {
     const previous = detailHistoryRef.current.pop() || null;
@@ -8681,10 +8703,8 @@ function AppContent() {
   const openMainMenu = useCallback(() => setMenuOpen(true), []);
 
   useEffect(() => {
-    if (startupVisible || categoriesMounted || !content.items.length) return;
-    const task = InteractionManager.runAfterInteractions(() => setCategoriesMounted(true));
-    return () => task.cancel();
-  }, [categoriesMounted, content.items.length, startupVisible]);
+    if (activeTab === 'categories' && !categoriesMounted) setCategoriesMounted(true);
+  }, [activeTab, categoriesMounted]);
 
   const handleBottomTabChange = useCallback((tab: MainTab) => {
     if (tab === activeTabRef.current) {
