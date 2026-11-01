@@ -1,0 +1,65 @@
+name: Build Test APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      EXPO_NO_TELEMETRY: "1"
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name sdkmanager -perm -111 2>/dev/null | head -n 1 || true)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
+      - name: Install dependencies
+        run: npm install --include=dev
+      - name: Refresh bundled startup catalog
+        run: node scripts/refresh-bundled-bootstrap.mjs
+      - name: Type-check application
+        run: npm run typecheck
+      - name: Create Android project
+        run: npx expo prebuild --platform android
+        env:
+          NODE_ENV: production
+          CI: "1"
+      - name: Point Gradle to Android SDK
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+      - name: Build release APK
+        working-directory: android
+        shell: bash
+        env:
+          NODE_ENV: production
+        run: |
+          chmod +x gradlew
+          ./gradlew app:assembleRelease --no-daemon
+      - name: Upload test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aparatchi-Android-Test
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
