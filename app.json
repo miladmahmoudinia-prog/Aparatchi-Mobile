@@ -5,7 +5,7 @@
     "scheme": "aparatchi",
     "version": "0.16.27",
     "orientation": "default",
-    "icon": "./assets/aparatchi-logo-transparent.png",
+    "icon": "./assets/aparatchi-app-icon-white.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#07090c",
     "splash": {
@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "com.aparatchi.mobile",
-      "icon": "./assets/aparatchi-logo-transparent.png",
+      "icon": "./assets/aparatchi-app-icon-white.png",
       "predictiveBackGestureEnabled": false,
       "versionCode": 57,
       "permissions": [
