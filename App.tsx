@@ -3852,6 +3852,57 @@ const hasFastCategoryArtwork = (item: CatalogItem) =>
   [item.backdrop, item.poster, item.backdropFallback, item.posterFallback]
     .some((value) => Boolean(optimizedImageUrl(value, 'backdrop')));
 
+const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: () => boolean) => {
+  const result = new Map<SearchFilter, CatalogItem>();
+  const scoreByFilter = new Map<SearchFilter, number>();
+  const previewFilters = CATEGORY_CARDS.map((card) => card.filter);
+  let sliceStarted = Date.now();
+  const yieldIfNeeded = async () => {
+    if (Date.now() - sliceStarted < 6) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    sliceStarted = Date.now();
+  };
+
+  for (const item of catalog.slice(0, 1200)) {
+    if (isCancelled()) return null;
+    if (hasFastCategoryArtwork(item)) {
+      const keys = item.categoryKeys || [];
+      for (const filter of previewFilters) {
+        const matches = STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)
+          ? fastCatalogFilterMatch(item, filter)
+          : (SERVER_CATEGORY_FILTERS.has(filter) && keys.length
+            ? keys.includes(filter)
+            : fastCatalogFilterMatch(item, filter));
+        if (!matches) continue;
+        const score = categoryPreviewScore(item);
+        if (score <= (scoreByFilter.get(filter) ?? Number.NEGATIVE_INFINITY)) continue;
+        result.set(filter, item);
+        scoreByFilter.set(filter, score);
+      }
+    }
+    await yieldIfNeeded();
+  }
+
+  const missing = new Set(previewFilters.filter((filter) => !result.has(filter)));
+  if (missing.size) {
+    for (const item of catalog) {
+      if (isCancelled()) return null;
+      if (hasFastCategoryArtwork(item)) {
+        const keys = item.categoryKeys || [];
+        for (const filter of missing) {
+          if (keys.includes(filter) || fastCatalogFilterMatch(item, filter)) {
+            result.set(filter, item);
+            missing.delete(filter);
+          }
+        }
+      }
+      if (!missing.size) break;
+      await yieldIfNeeded();
+    }
+  }
+  return isCancelled() ? null : result;
+};
+
 const CategoriesScreen = memo(function CategoriesScreen({
   catalog,
   peopleWorks,
@@ -3871,53 +3922,14 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
   const liveCategoriesOffsetRef = useRef(categoriesScreenScrollOffset);
   const usableCatalog = catalog;
-  const categoryPreviewPool = useMemo(
-    () => usableCatalog.slice(0, 1200),
-    [usableCatalog],
-  );
-
-  const categoryPreviewItems = useMemo(() => {
-    const result = new Map<SearchFilter, CatalogItem>();
-    const scoreByFilter = new Map<SearchFilter, number>();
-    const previewFilters = CATEGORY_CARDS.map((card) => card.filter);
-
-    for (const item of categoryPreviewPool) {
-      if (!hasFastCategoryArtwork(item)) continue;
-      const keys = item.categoryKeys || [];
-      for (const filter of previewFilters) {
-        const matches = STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)
-          ? fastCatalogFilterMatch(item, filter)
-          : (SERVER_CATEGORY_FILTERS.has(filter) && keys.length
-            ? keys.includes(filter)
-            : fastCatalogFilterMatch(item, filter));
-        if (!matches) continue;
-        const score = categoryPreviewScore(item);
-        if (score <= (scoreByFilter.get(filter) ?? Number.NEGATIVE_INFINITY)) continue;
-        result.set(filter, item);
-        scoreByFilter.set(filter, score);
-      }
-    }
-
-    // The first 1200 rows keep Categories fast. Only filters with no artwork
-    // get one bounded fallback scan over the complete catalog, so Kids,
-    // Programs and Iranian Series never fall back to a blank icon card merely
-    // because their first matching poster is older than the preview window.
-    const missing = new Set(previewFilters.filter((filter) => !result.has(filter)));
-    if (missing.size) {
-      for (const item of usableCatalog) {
-        if (!hasFastCategoryArtwork(item)) continue;
-        const keys = item.categoryKeys || [];
-        for (const filter of [...missing]) {
-          if (keys.includes(filter) || fastCatalogFilterMatch(item, filter)) {
-            result.set(filter, item);
-            missing.delete(filter);
-          }
-        }
-        if (!missing.size) break;
-      }
-    }
-    return result;
-  }, [categoryPreviewPool, usableCatalog]);
+  const [categoryPreviewItems, setCategoryPreviewItems] = useState<Map<SearchFilter, CatalogItem>>(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    void buildCategoryPreviewItems(usableCatalog, () => cancelled).then((items) => {
+      if (!cancelled && items) setCategoryPreviewItems(items);
+    });
+    return () => { cancelled = true; };
+  }, [usableCatalog]);
 
   const categoryActorMatches = useMemo(
     () => peopleWorkItemIdsMatchingQuery(peopleWorks, usableCatalog, deferredQuery),
@@ -5068,12 +5080,12 @@ function FavoritesScreen({
   onClearHistory: () => void;
 }) {
   const [view, setView] = useState<'favorites' | 'history'>('favorites');
-  const items = catalog.filter(
-    (item) => favorites.includes(item.id),
-  );
+  const favoriteIds = useMemo(() => new Set(favorites), [favorites]);
+  const catalogIds = useMemo(() => new Set(catalog.map((item) => item.id)), [catalog]);
+  const items = useMemo(() => catalog.filter((item) => favoriteIds.has(item.id)), [catalog, favoriteIds]);
   const history = watchHistory
     .filter((record) =>
-      catalog.some((item) => item.id === record.itemId) ||
+      catalogIds.has(record.itemId) ||
       record.downloadId,
     )
     .slice(0, 100);
@@ -8227,6 +8239,7 @@ function AppContent() {
 
   const showDetail = useCallback((nextItem: CatalogItem) => {
     setSelectedItem(nextItem);
+    void loadCatalogItemDetail(nextItem).catch(() => undefined);
     requestAnimationFrame(() => {
       setTimeout(() => {
         setSelectedItem((current) => current === nextItem ? getCatalogItemPreview(current) : current);
@@ -8703,7 +8716,9 @@ function AppContent() {
   const openMainMenu = useCallback(() => setMenuOpen(true), []);
 
   useEffect(() => {
-    if (activeTab === 'categories' && !categoriesMounted) setCategoriesMounted(true);
+    if (activeTab !== 'categories' || categoriesMounted) return undefined;
+    const frame = requestAnimationFrame(() => setCategoriesMounted(true));
+    return () => cancelAnimationFrame(frame);
   }, [activeTab, categoriesMounted]);
 
   const handleBottomTabChange = useCallback((tab: MainTab) => {
@@ -9222,12 +9237,17 @@ function AppContent() {
             contentOffline={contentOffline}
           />
         </View>
-        {categoriesMounted || activeTab === 'categories' || (activeTab === 'search' && searchReturnTab === 'categories') ? (
+        {categoriesMounted ? (
           <View
             pointerEvents={activeTab === 'categories' ? 'auto' : 'none'}
             style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}
           >
             <CategoriesScreen catalog={content.items} peopleWorks={content.peopleWorks} onBrowse={openCatalogFilter} onOpen={openRootDetail} isActive={activeTab === 'categories'} />
+          </View>
+        ) : null}
+        {activeTab === 'categories' && !categoriesMounted ? (
+          <View style={[styles.tabScene, { justifyContent: 'center', alignItems: 'center' }]}>
+            <ActivityIndicator color={COLORS.gold} />
           </View>
         ) : null}
         {activeTab === 'search' ? (
