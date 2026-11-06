@@ -48,14 +48,22 @@ test('categories are not mounted in the background before the user visits them',
   assert.ok(app.includes('{categoriesMounted ? ('));
 });
 
-test('detail opens before loading a preview, and late previews cannot replace another selection', () => {
+test('home newest and updated shelves use the correct content identity', () => {
+  assert.ok(app.includes("const isLatestMovieItem = (item: CatalogItem) => item.type === 'movie';"));
+  assert.ok(app.includes("case 'latest': return isLatestMovieItem(item);"));
+  assert.ok(app.includes("if (filter === 'latest') return isLatestMovieItem(item);"));
+  assert.ok(app.includes('EPISODE_UPDATE_LABEL_PATTERN'));
+  assert.ok(app.includes("item.type === 'series' &&"));
+});
+
+test('detail opens immediately and hydrates without a late preview replacement', () => {
   const start = app.indexOf('const showDetail = useCallback');
   const end = app.indexOf('const openRootDetail', start);
   const showDetail = app.slice(start, end);
   assert.ok(start >= 0 && end > start);
-  assert.ok(showDetail.indexOf('setSelectedItem(nextItem)') < showDetail.indexOf('requestAnimationFrame'));
-  assert.ok(showDetail.indexOf('loadCatalogItemDetail(nextItem)') < showDetail.indexOf('requestAnimationFrame'));
-  assert.ok(showDetail.includes('current === nextItem ? getCatalogItemPreview(current) : current'));
+  assert.ok(showDetail.includes('setSelectedItem(nextItem)'));
+  assert.ok(showDetail.includes('loadCatalogItemDetail(nextItem)'));
+  assert.ok(!showDetail.includes('getCatalogItemPreview(current)'));
 });
 
 test('library membership checks avoid repeatedly scanning the complete catalog', () => {
