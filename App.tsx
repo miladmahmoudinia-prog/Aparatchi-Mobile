@@ -75,7 +75,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.26';
+const APP_DISPLAY_VERSION = '0.16.27';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -1155,7 +1155,12 @@ const hasCategory = (item: CatalogItem, key: string) =>
 
 const isIranianItem = (item: CatalogItem) => {
   const titleText = normalizeComparableText(`${item.nameFa || ''} ${item.name || ''}`);
-  if (titleText.includes('the westies') || titleText.includes('وستی ها') || titleText.includes('وستی‌ها')) return false;
+  if (
+    String(item.id || '') === '2fa8a430-d3de-11f1-b3f6-d5747067b29a' ||
+    titleText.includes('the westies') ||
+    titleText.includes('وستی ها') ||
+    titleText.includes('وستی‌ها')
+  ) return false;
   const language = String(item.originalLanguage || '').toLowerCase();
   const countryCodes = (item.countryCodes || []).map((value) => String(value).toUpperCase());
   const primaryCountry = countryCodes[0] || '';
@@ -1476,14 +1481,12 @@ const meaningfulUpdateLabel = (item: CatalogItem) => {
   return /قسمت|فصل|دوبله|زیر\s*نویس|subtitle|dubbed|کیفیت|quality/i.test(label) ? label : '';
 };
 
+const EPISODE_UPDATE_LABEL_PATTERN = /^\u0642\u0633\u0645\u062a\s+.+\s+\u0627\u0636\u0627\u0641\u0647\s+\u0634\u062f$/u;
+const isLatestMovieItem = (item: CatalogItem) => item.type === 'movie';
 const isUpdatedEpisodicItem = (item: CatalogItem) => Boolean(
-  meaningfulUpdateLabel(item) && (
-    item.type === 'series' ||
-    item.contentKind === 'anime-series' ||
-    item.contentKind === 'animation-series' ||
-    hasCategory(item, 'anime-series') ||
-    hasCategory(item, 'animation-series')
-  )
+  item.type === 'series' &&
+  EPISODE_UPDATE_LABEL_PATTERN.test(String(item.updateLabel || '').trim()) &&
+  Number(item.episodeCount || item.latestEpisode?.episodeNumber || 0) > 0
 );
 
 const filterTitle = (filter: SearchFilter) => {
@@ -1518,7 +1521,8 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
   if (year) return Number(item.year) === year;
 
   switch (filter) {
-    case 'all': case 'latest': return true;
+    case 'all': return true;
+    case 'latest': return isLatestMovieItem(item);
     case 'movie': return item.type === 'movie' && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item);
     case 'series': return item.type === 'series' && !isAnimatedItem(item) && !isDocumentaryItem(item) && !isProgramItem(item) && !isKidsItem(item) && !isReligiousItem(item);
     case 'dubbed':
@@ -1579,7 +1583,8 @@ const STRICT_DYNAMIC_CATEGORY_FILTERS = new Set<SearchFilter>([
 ]);
 
 const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
-  if (filter === 'all' || filter === 'latest') return true;
+  if (filter === 'all') return true;
+  if (filter === 'latest') return isLatestMovieItem(item);
   if (filter === 'movie' || filter === 'series') return matchesCatalogFilter(item, filter);
   if (filter === 'updated') return isUpdatedEpisodicItem(item);
   if (filter === 'mobile-operator') return itemHasOperatorAccess(item);
@@ -1587,6 +1592,13 @@ const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
   // blindly trust stale categoryKeys: that kept Iranian series at 18 and could
   // place anime movies inside Programs.
   if (STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)) {
+    if (
+      (item.categoryKeys || []).length &&
+      filter !== 'iranian-movies' &&
+      filter !== 'iranian-series'
+    ) {
+      return (item.categoryKeys || []).includes(filter);
+    }
     return matchesCatalogFilter(item, filter);
   }
   if (SERVER_CATEGORY_FILTERS.has(filter) && (item.categoryKeys || []).length) {
@@ -1899,6 +1911,7 @@ const PersonAvatar = memo(function PersonAvatar({ person, style }: { person: Cat
       {sources.map((image) => (
         <Image key={image} source={{ uri: image }} style={StyleSheet.absoluteFill}
           contentFit="cover" cachePolicy="memory-disk" transition={0}
+          priority="high"
           recyclingKey={`person:${person.tmdbId || person.id}:${image}`}
           onLoad={() => finish(image, true)} onError={() => finish(image, false)} />
       ))}
@@ -1968,6 +1981,7 @@ const CatalogArtwork = memo(function CatalogArtwork({
           style={StyleSheet.absoluteFill}
           contentFit={contentFit}
           cachePolicy="memory-disk"
+          priority={transition === 0 ? 'high' : 'normal'}
           transition={transition}
           recyclingKey={String(primary || fallback || remoteUrl)}
           onLoad={() => finish(remoteUrl, true)}
@@ -1993,9 +2007,12 @@ const localArtworkForItem = (_item: CatalogItem) => undefined;
 
 function Logo() {
   return (
-    <View style={styles.logoWrap}>
-      <Text style={styles.logo}>آپاراتچی</Text>
-      <Text style={styles.logoTag}>دنیای فیلم و سریال</Text>
+    <View style={styles.logoBrandRow}>
+      <Image source={require('./assets/aparatchi-logo-v2.png')} style={styles.logoMark} contentFit="cover" />
+      <View style={styles.logoWrap}>
+        <Text style={styles.logo}>آپاراتچی</Text>
+        <Text style={styles.logoTag}>دنیای فیلم و سریال</Text>
+      </View>
     </View>
   );
 }
@@ -3530,7 +3547,7 @@ const HOME_CATALOG_ROWS: Array<Omit<HomeCatalogRow, 'items'>> = [
 ];
 
 const summaryMatchesHomeFilter = (item: CatalogItem, filter: SearchFilter) => {
-  if (filter === 'latest') return true;
+  if (filter === 'latest') return isLatestMovieItem(item);
   if (filter === 'updated') {
     return isUpdatedEpisodicItem(item);
   }
@@ -6011,6 +6028,13 @@ function RelatedTitlesSection({
   selectionSeed: number;
 }) {
   const related = useMemo(() => relatedCatalogItems(item, catalog, 5, selectionSeed), [item, catalog, selectionSeed]);
+  useEffect(() => {
+    const urls = related
+      .slice(0, 5)
+      .map((relatedItem) => catalogArtworkCandidates(relatedItem.posterFallback || relatedItem.poster, 'poster')[0])
+      .filter((url): url is string => Boolean(isSafeHttpUrl(url)));
+    if (urls.length) void Image.prefetch(urls).catch(() => undefined);
+  }, [related]);
   if (!related.length) return null;
 
   return (
@@ -6148,6 +6172,15 @@ function DetailModal({
       task.cancel();
     };
   }, [item?.id, visible]);
+  useEffect(() => {
+    if (!visible || !item?.people?.length) return;
+    const urls = item.people
+      .slice(0, 8)
+      .flatMap((person) => personImageCandidates(person.image))
+      .filter((url): url is string => Boolean(isSafeHttpUrl(url)))
+      .slice(0, 12);
+    if (urls.length) void Image.prefetch(urls).catch(() => undefined);
+  }, [item?.id, item?.people, visible]);
   if (!item) return null;
 
   // Movie summaries now carry a compact actionable media preview. Do not hide
@@ -7843,9 +7876,7 @@ function StartupScreen() {
           },
         ]}
       >
-        <View style={styles.startupArtworkLogo}>
-          <Ionicons name="play" color="#F7E9BE" size={28} />
-        </View>
+        <Image source={require('./assets/aparatchi-logo-v2.png')} style={styles.startupArtworkLogo} contentFit="cover" />
         <Text style={styles.startupArtworkTitle}>آپاراتچی</Text>
         <Text style={styles.startupArtworkTagline}>دنیای فیلم و سریال در آپاراتچی</Text>
       </Animated.View>
@@ -8240,11 +8271,6 @@ function AppContent() {
   const showDetail = useCallback((nextItem: CatalogItem) => {
     setSelectedItem(nextItem);
     void loadCatalogItemDetail(nextItem).catch(() => undefined);
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        setSelectedItem((current) => current === nextItem ? getCatalogItemPreview(current) : current);
-      }, 0);
-    });
   }, []);
 
   const openRootDetail = useCallback((nextItem: CatalogItem) => {
@@ -9472,7 +9498,7 @@ const styles = StyleSheet.create({
   startupSpinner: { marginTop: 18 },
   startupOverlay: { ...absoluteFillObject, zIndex: 5000, elevation: 5000, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: '#05070A' },
   startupArtworkBrand: { position: 'absolute', top: '24%', left: 24, right: 24, alignItems: 'center' },
-  startupArtworkLogo: { width: 66, height: 66, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7,9,12,0.66)', borderWidth: 1, borderColor: 'rgba(216,180,90,0.52)', shadowColor: '#D8B45A', shadowOpacity: 0.24, shadowRadius: 18, elevation: 8 },
+  startupArtworkLogo: { width: 88, height: 88, borderRadius: 28, borderWidth: 1, borderColor: 'rgba(216,180,90,0.52)', shadowColor: '#D8B45A', shadowOpacity: 0.24, shadowRadius: 18, elevation: 8 },
   startupArtworkTitle: { ...rtlText, color: '#F7F2E8', fontSize: 34, lineHeight: 46, fontWeight: '900', textAlign: 'center', marginTop: 14, textShadowColor: 'rgba(0,0,0,0.88)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 12 },
   startupArtworkTagline: { ...rtlText, color: '#D8B45A', fontSize: 12, lineHeight: 22, fontWeight: '800', textAlign: 'center', marginTop: 2, textShadowColor: 'rgba(0,0,0,0.9)', textShadowRadius: 8 },
   startupArtworkLoading: { position: 'absolute', bottom: '8%', left: 30, right: 30, alignItems: 'center' },
@@ -9612,6 +9638,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
   },
+  logoBrandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  logoMark: { width: 34, height: 34, borderRadius: 11, borderWidth: 1, borderColor: 'rgba(216,180,90,0.36)' },
   logoWrap: { alignItems: 'flex-end' },
   logo: { ...rtlText, color: COLORS.text, fontSize: 22, fontWeight: '900', letterSpacing: -1 },
   logoTag: { ...rtlText, color: COLORS.gold, fontSize: 8, fontWeight: '700', marginTop: -1 },
