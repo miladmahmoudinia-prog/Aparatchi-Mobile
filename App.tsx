@@ -2008,7 +2008,7 @@ const localArtworkForItem = (_item: CatalogItem) => undefined;
 function Logo() {
   return (
     <View style={styles.logoBrandRow}>
-      <Image source={require('./assets/aparatchi-logo-v2.png')} style={styles.logoMark} contentFit="cover" />
+      <Image source={require('./assets/aparatchi-logo-transparent.png')} style={styles.logoMark} contentFit="contain" />
       <View style={styles.logoWrap}>
         <Text style={styles.logo}>آپاراتچی</Text>
         <Text style={styles.logoTag}>دنیای فیلم و سریال</Text>
@@ -7856,7 +7856,7 @@ function StartupScreen() {
   return (
     <View style={styles.startupOverlay}>
       <Image
-        source={require('./assets/splash-cinema-1080x2400.webp')}
+        source={require('./assets/splash-cinema-v2.png')}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
         cachePolicy="memory"
@@ -7876,7 +7876,7 @@ function StartupScreen() {
           },
         ]}
       >
-        <Image source={require('./assets/aparatchi-logo-v2.png')} style={styles.startupArtworkLogo} contentFit="cover" />
+        <Image source={require('./assets/aparatchi-logo-transparent.png')} style={styles.startupArtworkLogo} contentFit="contain" />
         <Text style={styles.startupArtworkTitle}>آپاراتچی</Text>
         <Text style={styles.startupArtworkTagline}>دنیای فیلم و سریال در آپاراتچی</Text>
       </Animated.View>

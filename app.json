@@ -5,11 +5,11 @@
     "scheme": "aparatchi",
     "version": "0.16.27",
     "orientation": "default",
-    "icon": "./assets/aparatchi-logo-v2.png",
+    "icon": "./assets/aparatchi-logo-transparent.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#07090c",
     "splash": {
-      "image": "./assets/splash-cinema-1080x2400.png",
+      "image": "./assets/splash-cinema-v2.png",
       "resizeMode": "cover",
       "backgroundColor": "#07090c"
     },
@@ -19,7 +19,7 @@
     },
     "android": {
       "package": "com.aparatchi.mobile",
-      "icon": "./assets/aparatchi-logo-v2.png",
+      "icon": "./assets/aparatchi-logo-transparent.png",
       "predictiveBackGestureEnabled": false,
       "versionCode": 57,
       "permissions": [
@@ -47,12 +47,12 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#07090c",
-          "image": "./assets/aparatchi-logo-v2.png",
+          "image": "./assets/aparatchi-logo-transparent.png",
           "imageWidth": 160,
           "resizeMode": "contain",
           "dark": {
             "backgroundColor": "#07090c",
-            "image": "./assets/aparatchi-logo-v2.png"
+            "image": "./assets/aparatchi-logo-transparent.png"
           }
         }
       ],
