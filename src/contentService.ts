@@ -2138,7 +2138,10 @@ const manifestMatchesCachedContent = (
   // while media/category/client-index fixes are published. Never let those
   // coarse fields bless an older cached client artifact.
   if (manifest.clientRevision) {
-    return Boolean(cacheMetadata.manifestRevision === manifest.clientRevision);
+    return Boolean(
+      cached.clientRevision === manifest.clientRevision &&
+      (!manifest.clientItemCount || cached.items.length === manifest.clientItemCount)
+    );
   }
   if (cacheMetadata.manifestRevision) {
     return cacheMetadata.manifestRevision === revision;
@@ -2231,8 +2234,10 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
       Accept: 'application/json',
       'Cache-Control': 'no-cache',
     };
-    if (!forceRemote && cacheMetadata.etag) requestHeaders['If-None-Match'] = cacheMetadata.etag;
-    if (!forceRemote && cacheMetadata.lastModified) requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
+    const canRevalidate = !forceRemote && (!manifest ||
+      cacheMetadata.manifestRevision === (manifest.clientRevision || manifest.revision));
+    if (canRevalidate && cacheMetadata.etag) requestHeaders['If-None-Match'] = cacheMetadata.etag;
+    if (canRevalidate && cacheMetadata.lastModified) requestHeaders['If-Modified-Since'] = cacheMetadata.lastModified;
 
     const catalogRevision = manifest?.clientRevision || manifest?.revision || '';
     type CatalogCandidateResult = {
@@ -2265,7 +2270,11 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
 
         if (nextResponse.status === 304) {
           const cachedCandidate = await resolveCachedContent();
-          if (cachedCandidate) return { ...cachedCandidate, source: 'remote' };
+          if (cachedCandidate && (!manifest || manifestMatchesCachedContent(manifest, cachedCandidate))) {
+            return { ...cachedCandidate, source: 'remote' };
+          }
+          delete requestHeaders['If-None-Match'];
+          delete requestHeaders['If-Modified-Since'];
           cacheMetadata = {};
           if (REMOTE_CACHE_META_URI) {
             void FileSystem.writeAsStringAsync(REMOTE_CACHE_META_URI, '{}').catch(() => undefined);
@@ -2295,7 +2304,9 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
         }
 
         const matchesManifest =
-          !manifest?.catalogUpdatedAt || nextParsed.updatedAt === manifest.catalogUpdatedAt;
+          (!manifest?.clientRevision || nextParsed.clientRevision === manifest.clientRevision) &&
+          (!manifest?.clientItemCount || nextParsed.items.length === manifest.clientItemCount) &&
+          (!manifest?.catalogUpdatedAt || nextParsed.updatedAt === manifest.catalogUpdatedAt);
         const candidateResult: CatalogCandidateResult = {
           response: nextResponse,
           rawText: nextRawText,
@@ -2332,9 +2343,9 @@ export async function loadContent(preferCache = false, forceRemote = false): Pro
     } = acceptedCatalog;
     const acceptedManifest = catalogMatchesManifest ? manifest : null;
     memoryContent = parsed;
-    const responseEtag = response.headers.get('etag') || cacheMetadata.etag;
+    const responseEtag = response.headers.get('etag');
     const responseLastModified =
-      response.headers.get('last-modified') || cacheMetadata.lastModified;
+      response.headers.get('last-modified');
     cacheMetadata = {
       ...(responseEtag ? { etag: responseEtag } : {}),
       ...(responseLastModified ? { lastModified: responseLastModified } : {}),
