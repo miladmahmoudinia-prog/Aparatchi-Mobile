@@ -2085,7 +2085,7 @@ export async function loadLiveContent(base: LoadedContent): Promise<LoadedConten
 
     candidates.forEach((candidate, index) => {
       const controller = controllers[index];
-      const timeout = setTimeout(() => controller.abort(), 6500);
+      const timeout = setTimeout(() => controller.abort(), 20000);
       const separator = candidate.includes('?') ? '&' : '?';
 
       void (async () => {
