@@ -77,6 +77,9 @@ jobs:
       - name: Refresh bundled startup catalog
         run: node scripts/refresh-bundled-bootstrap.mjs
 
+      - name: Check catalog and download recovery
+        run: node --test scripts/tests/catalog-revision-integrity.test.mjs scripts/tests/download-response-recovery.test.mjs
+
       - name: Type-check application
         run: npm run typecheck
 

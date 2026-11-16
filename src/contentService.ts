@@ -2646,7 +2646,8 @@ export async function loadCatalogItemDetail(summary: CatalogItem): Promise<Catal
                 );
                 if (!response.ok) return;
                 const raw = await response.text();
-                if (settled) return;
+                // A fast stale/invalid mirror must not cancel the healthy one.
+                if (!parseDetail(JSON.parse(raw)) || settled) return;
                 settled = true;
                 mirrorControllers.forEach((other, otherIndex) => {
                   if (otherIndex !== index) other.abort();

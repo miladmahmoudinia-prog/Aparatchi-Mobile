@@ -75,7 +75,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.27';
+const APP_DISPLAY_VERSION = '0.16.28';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -278,7 +278,9 @@ const catalogArtworkCandidates = (
 const internetIsReachable = async () => {
   try {
     const state = await Network.getNetworkStateAsync();
-    return state.isConnected !== false && state.isInternetReachable !== false;
+    // Android's validation probe can be blocked while the media host is
+    // reachable. Only a disconnected transport is proof we must block playback.
+    return state.isConnected !== false;
   } catch {
     return true;
   }
@@ -6115,8 +6117,12 @@ function DetailModal({
   onBrowse,
   vpnActive,
   onVpnRetry,
+  detailLoadFailed,
+  onRetryDetail,
 }: {
   item: CatalogItem | null;
+  detailLoadFailed: boolean;
+  onRetryDetail: () => void;
   catalog: CatalogItem[];
   visible: boolean;
   onClose: () => void;
@@ -6277,6 +6283,21 @@ function DetailModal({
               </>
             ) : null}
             <PeopleSection item={item} onOpen={onOpenPerson} />
+            {item.detailPath && !item.detailLoaded ? (
+              <View style={{ padding: 16, alignItems: 'center', gap: 10 }}>
+                {!detailLoadFailed ? <ActivityIndicator color={COLORS.gold} /> : null}
+                <Text style={{ color: COLORS.gold, textAlign: 'center' }}>
+                  {detailLoadFailed
+                    ? 'دریافت اطلاعات کامل ناموفق بود؛ فهرست فعلی ممکن است ناقص باشد.'
+                    : item.type === 'series' ? 'در حال دریافت فهرست کامل قسمت‌ها…' : 'در حال دریافت اطلاعات کامل…'}
+                </Text>
+                {detailLoadFailed ? (
+                  <Pressable onPress={onRetryDetail} style={{ padding: 12 }}>
+                    <Text style={{ color: '#fff' }}>دریافت دوباره</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
             {item.type === 'series' && episodeGroups.length ? (
               <SeriesEpisodeShowcase
                 item={item}
@@ -6544,6 +6565,8 @@ function VideoPlayerModal({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [isPlaying, setIsPlaying] = useState(true);
   const [networkOffline, setNetworkOffline] = useState(false);
+  const [playbackError, setPlaybackError] = useState('');
+  const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [controlsLocked, setControlsLocked] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [playerVolume, setPlayerVolume] = useState(1);
@@ -6616,6 +6639,31 @@ function VideoPlayerModal({
     instance.timeUpdateEventInterval = 0.5;
     instance.play();
   });
+  useEffect(() => {
+    const subscription = player.addListener('statusChange', ({ status, error }) => {
+      if (status === 'error') {
+        setPlaybackError(error?.message || 'دریافت ویدئو ناموفق بود. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
+        setSwitchingQuality(false);
+        setControlsVisible(true);
+      } else if (status === 'readyToPlay') {
+        setPlaybackError('');
+      }
+    });
+    // Loading may have failed before the listener was attached.
+    if (player.status === 'error') setPlaybackError('دریافت ویدئو ناموفق بود. دوباره تلاش کنید.');
+    return () => subscription.remove();
+  }, [player]);
+
+  useEffect(() => {
+    if (firstFrameReady || networkOffline || playbackError) return undefined;
+    const timer = setTimeout(() => {
+      setPlaybackError('دریافت ویدئو بیش از حد طول کشید. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
+      setSwitchingQuality(false);
+      setControlsVisible(true);
+    }, 25_000);
+    return () => clearTimeout(timer);
+  }, [activeSource.url, firstFrameReady, networkOffline, playbackError, playbackAttempt]);
+
   const requestIdentity = `${request.itemId || 'local'}:${request.episodeId || 'main'}:${request.resumeKey}`;
   const previousRequestIdentityRef = useRef(requestIdentity);
   const previousRequestRef = useRef(request);
@@ -6648,6 +6696,8 @@ function VideoPlayerModal({
     setNextEpisodeDismissed(false);
     setNextEpisodeCountdown(15);
     setActiveSource(initialSource);
+    setPlaybackError('');
+    setPlaybackAttempt((attempt) => attempt + 1);
     let cancelled = false;
     void (async () => {
       try {
@@ -6670,6 +6720,8 @@ function VideoPlayerModal({
   }, [isMuted, player, playerVolume]);
 
   const retryNetworkPlayback = useCallback(async () => {
+    setPlaybackError('');
+    setPlaybackAttempt((attempt) => attempt + 1);
     if (!isSafeHttpUrl(activeSource.url)) {
       setNetworkOffline(false);
       player.play();
@@ -6684,7 +6736,7 @@ function VideoPlayerModal({
         if (latestTimeRef.current > 0) player.currentTime = latestTimeRef.current;
         player.play();
       } catch {
-        Alert.alert('پخش آنلاین', 'اتصال برقرار شد اما ویدئو آماده نشد. دوباره تلاش کنید.');
+        setPlaybackError('ویدئو آماده نشد. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
       }
     }
   }, [activeSource.url, player]);
@@ -6941,6 +6993,8 @@ function VideoPlayerModal({
     const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
     const wasPlaying = Boolean(player.playing);
     setSwitchingQuality(true);
+    setPlaybackError('');
+    setPlaybackAttempt((attempt) => attempt + 1);
     setFirstFrameReady(false);
     clearControlsTimer();
     try {
@@ -7060,18 +7114,9 @@ function VideoPlayerModal({
         <StatusBar style="light" hidden={landscape || orientationTransitioning} />
 
         <View style={[styles.videoFrame, frameRect]}>
-          {request.artwork && !firstFrameReady && optimizedImageUrl(request.artwork, 'backdrop') ? (
-            <Image
-              source={{ uri: optimizedImageUrl(request.artwork, 'backdrop') }}
-              style={StyleSheet.absoluteFill}
-              contentFit="contain"
-              cachePolicy="memory-disk"
-              transition={0}
-            />
-          ) : null}
           <VideoView
             player={player}
-            style={[styles.videoView, !firstFrameReady && styles.videoViewPreparing]}
+            style={styles.videoView}
             nativeControls={false}
             contentFit="contain"
             allowsPictureInPicture
@@ -7080,24 +7125,36 @@ function VideoPlayerModal({
             useExoShutter
             onFirstFrameRender={() => {
               setFirstFrameReady(true);
+              setPlaybackError('');
               setControlsVisible(true);
             }}
           />
+          {/* Keep the native texture visible so it can render its first frame. */}
+          {request.artwork && !firstFrameReady && optimizedImageUrl(request.artwork, 'backdrop') ? (
+            <Image
+              pointerEvents="none"
+              source={{ uri: optimizedImageUrl(request.artwork, 'backdrop') }}
+              style={StyleSheet.absoluteFill}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              transition={0}
+            />
+          ) : null}
           <Pressable style={StyleSheet.absoluteFill} onPress={toggleSurfaceControls} />
         </View>
 
-        {!firstFrameReady || switchingQuality ? (
+        {(!firstFrameReady || switchingQuality) && !playbackError && !networkOffline ? (
           <View style={[styles.playerFramePortal, frameRect]} pointerEvents="none">
             <ActivityIndicator color={COLORS.gold} size="small" />
           </View>
         ) : null}
 
-        {networkOffline ? (
+        {networkOffline || playbackError ? (
           <View style={[styles.playerOfflineOverlay, frameRect]}>
             <View style={styles.playerOfflineCard}>
               <Ionicons name="cloud-offline-outline" color={COLORS.gold} size={34} />
-              <Text style={styles.playerOfflineTitle}>اتصال اینترنت قطع شد</Text>
-              <Text style={styles.playerOfflineText}>اینترنت را روشن کنید و دوباره تلاش کنید.</Text>
+              <Text style={styles.playerOfflineTitle}>{networkOffline ? 'اتصال اینترنت قطع شد' : 'ویدئو آمادهٔ پخش نشد'}</Text>
+              <Text selectable style={styles.playerOfflineText}>{networkOffline ? 'اینترنت را روشن کنید و دوباره تلاش کنید.' : playbackError}</Text>
               <View style={styles.playerOfflineActions}>
                 <Pressable onPress={() => void retryNetworkPlayback()} style={styles.playerOfflineRetry}>
                   <Ionicons name="refresh" color="#fff" size={17} />
@@ -7922,6 +7979,8 @@ function AppContent() {
   const [categoriesMounted, setCategoriesMounted] = useState(false);
   const [searchFilter, setSearchFilter] = useState<SearchFilter>('all');
   const [selectedItem, setSelectedItem] = useState<CatalogItem | null>(null);
+  const [detailLoadFailed, setDetailLoadFailed] = useState(false);
+  const [detailRetry, setDetailRetry] = useState(0);
   const [selectedPerson, setSelectedPerson] = useState<CatalogPerson | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [watchProgress, setWatchProgress] = useState<WatchProgressRecord[]>([]);
@@ -8414,6 +8473,7 @@ function AppContent() {
 
   useEffect(() => {
     const summary = selectedItem;
+    setDetailLoadFailed(false);
     if (!summary?.detailPath || summary.detailLoaded === true) return undefined;
 
     let cancelled = false;
@@ -8428,7 +8488,11 @@ function AppContent() {
         await new Promise((resolve) => setTimeout(resolve, 350));
         fullItem = await loadCatalogItemDetail(activeSummary);
       }
-      if (cancelled || !fullItem) return;
+      if (cancelled) return;
+      if (!fullItem) {
+        setDetailLoadFailed(true);
+        return;
+      }
 
       setSelectedItem((current) => {
         if (!current) return current;
@@ -8437,10 +8501,10 @@ function AppContent() {
 
         return mergeOpenDetailSnapshot(current, fullItem);
       });
-    })().catch(() => undefined);
+    })().catch(() => { if (!cancelled) setDetailLoadFailed(true); });
 
     return () => { cancelled = true; };
-  }, [selectedItem?.detailLoaded, selectedItem?.detailPath, selectedItem?.id, selectedItem?.type]);
+  }, [selectedItem?.detailLoaded, selectedItem?.detailPath, selectedItem?.id, selectedItem?.type, detailRetry]);
 
   useEffect(() => {
     if (!selectedItem) return;
@@ -8973,7 +9037,7 @@ function AppContent() {
                 totalBytes: undefined,
                 responseStatus: result.responseStatus,
                 mimeType: result.mimeType,
-                error: 'فایل این کیفیت در دسترس نیست.',
+                error: result.error || 'فایل این کیفیت در دسترس نیست.',
               }
             : item,
         ));
@@ -8986,8 +9050,9 @@ function AppContent() {
             ? {
                 ...item,
                 status: 'paused' as const,
-                destinationUri: result.destinationUri || item.destinationUri || runningRecord.destinationUri,
-                resumeData: result.resumeData || item.resumeData,
+                destinationUri: result.resetTransfer ? undefined : result.destinationUri || item.destinationUri || runningRecord.destinationUri,
+                resumeData: result.resetTransfer ? undefined : result.resumeData || item.resumeData,
+                ...(result.resetTransfer ? { progress: 0, bytesWritten: 0, totalBytes: undefined } : {}),
                 responseStatus: result.responseStatus || item.responseStatus,
                 mimeType: result.mimeType || item.mimeType,
                 error: friendlyNetworkError(result.error) || 'دانلود متوقف شده است؛ برای ادامه دوباره بزنید.',
@@ -9345,6 +9410,8 @@ function AppContent() {
         onHome={() => handleBottomTabChange('home')}
       />
       <DetailModal
+        detailLoadFailed={detailLoadFailed}
+        onRetryDetail={() => setDetailRetry((attempt) => attempt + 1)}
         item={selectedItem}
         catalog={content.items}
         visible={Boolean(selectedItem)}
@@ -10097,7 +10164,6 @@ const styles = StyleSheet.create({
   mediaModal: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#000' },
   playerOrientationCover: { ...absoluteFillObject, zIndex: 220, elevation: 220, backgroundColor: '#000' },
   detailCircleButtonPlaceholder: { width: 46, height: 46 },
-  videoViewPreparing: { opacity: 0 },
   playerPreparingOverlay: { ...absoluteFillObject, zIndex: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
   playerPreparingSpinner: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   playerFramePortal: { position: 'absolute', zIndex: 70, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },

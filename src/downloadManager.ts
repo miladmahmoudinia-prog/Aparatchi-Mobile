@@ -51,6 +51,8 @@ export type DownloadRunResult = {
   resumeData?: string;
   error?: string;
   unavailable?: boolean;
+  /** The invalid response was deleted; discard any older resume snapshot. */
+  resetTransfer?: boolean;
   responseStatus?: number;
   mimeType?: string;
 };
@@ -199,6 +201,7 @@ export async function runDownload({
     }
   }
 
+  let transferExpectedBytes = 0;
   const task = FileSystem.createDownloadResumable(
     record.sourceUrl,
     destination,
@@ -206,6 +209,7 @@ export async function runDownload({
       sessionType: FileSystem.FileSystemSessionType?.BACKGROUND,
     },
     ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
+      transferExpectedBytes = Math.max(0, Number(totalBytesExpectedToWrite || 0));
       const progress = totalBytesExpectedToWrite > 0
         ? totalBytesWritten / totalBytesExpectedToWrite
         : 0;
@@ -231,7 +235,9 @@ export async function runDownload({
 
     const info = await FileSystem.getInfoAsync(result.uri);
     const actualSize = Number((info as any).size || 0);
-    const expectedSize = Math.max(0, Number(record.totalBytes || 0));
+    // Catalog sizes can refer to an older encoding. Validate against this
+    // transfer's size, not stale metadata from when the download was created.
+    const expectedSize = transferExpectedBytes;
     const status = responseStatusCode(result);
     const mimeType = responseMimeType(result);
     const invalidHttpStatus = status > 0 && status !== 200 && status !== 206;
@@ -246,13 +252,22 @@ export async function runDownload({
 
     if (invalidFile) {
       await FileSystem.deleteAsync(result.uri, { idempotent: true }).catch(() => undefined);
+      const unavailable = status === 404 || status === 410;
+      const error = unavailable
+        ? 'فایل این کیفیت در سرور یافت نشد؛ کیفیت دیگری را امتحان کنید.'
+        : invalidHttpStatus
+          ? `سرور دانلود خطای HTTP ${status} برگرداند؛ دوباره تلاش کنید.`
+          : invalidMimeType
+            ? `سرور به‌جای ویدئو پاسخ ${mimeType} برگرداند؛ دوباره تلاش کنید.`
+            : 'فایل دریافتی ناقص یا نامعتبر است؛ دوباره تلاش کنید.';
       return {
-        paused: false,
-        unavailable: true,
+        paused: !unavailable,
+        unavailable,
         destinationUri: undefined,
         responseStatus: status || undefined,
         mimeType: mimeType || undefined,
-        error: 'فایل این کیفیت در دسترس نیست.',
+        resetTransfer: true,
+        error,
       };
     }
 
