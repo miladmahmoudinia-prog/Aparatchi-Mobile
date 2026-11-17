@@ -1693,8 +1693,14 @@ const readCachedBootstrapPayload = async (): Promise<CatalogPayload | null> => {
   try {
     const info = await FileSystem.getInfoAsync(BOOTSTRAP_CACHE_URI);
     if (!info.exists) return null;
-    const parsed = await parsePayloadCooperatively(JSON.parse(await FileSystem.readAsStringAsync(BOOTSTRAP_CACHE_URI)));
-    if (parsed?.items.length) memoryBootstrapContent = parsed;
+    const stored = JSON.parse(await FileSystem.readAsStringAsync(BOOTSTRAP_CACHE_URI));
+    const selfContained = stored?.cacheSchema === 1;
+    const parsed = await parsePayloadCooperatively(selfContained ? stored.payload : stored);
+    const expectedCount = selfContained ? stored.itemCount : cacheMetadata.bootstrapItemCount;
+    if (!parsed?.items.length || !expectedCount || parsed.items.length !== expectedCount) return null;
+    if (!selfContained && cacheMetadata.bootstrapClientRevision &&
+        parsed.clientRevision !== cacheMetadata.bootstrapClientRevision) return null;
+    memoryBootstrapContent = parsed;
     return parsed;
   } catch {
     return null;
@@ -1705,30 +1711,24 @@ const writeCachedBootstrapPayload = async (rawPayload: string, parsed: CatalogPa
   memoryBootstrapContent = parsed;
   if (!BOOTSTRAP_CACHE_URI) return;
   try {
-    await FileSystem.writeAsStringAsync(BOOTSTRAP_CACHE_URI, rawPayload);
+    // Completeness travels with the payload, never in a separately written file.
+    await FileSystem.writeAsStringAsync(BOOTSTRAP_CACHE_URI, JSON.stringify({
+      cacheSchema: 1, itemCount: parsed.items.length, payload: JSON.parse(rawPayload),
+    }));
   } catch {
-    // A bootstrap cache write must never delay or reject the visible catalog.
+    // Storage failure must not reject otherwise valid remote content.
   }
 };
 
 export async function loadCachedBootstrapContent(): Promise<LoadedContent | null> {
   await readCacheMetadata();
-  // Old versions wrote sampled caches without completeness metadata. Prefer the
-  // complete APK snapshot and avoid parsing that legacy JSON on the JS thread.
-  if (!cacheMetadata.bootstrapItemCount) return null;
-  if (cacheMetadata.bootstrapItemCount < LOCAL_PAYLOAD.items.length) return null;
-  if (
-    cacheMetadata.bootstrapItemCount === LOCAL_PAYLOAD.items.length &&
-    cacheMetadata.bootstrapClientRevision &&
-    cacheMetadata.bootstrapClientRevision === LOCAL_PAYLOAD.clientRevision
-  ) return null;
+  // The reader validates self-contained caches or legacy metadata. A newer
+  // complete catalog may legitimately shrink after removals.
   const cached = await readCachedBootstrapPayload();
   if (!cached?.items.length) return null;
-  if (Date.parse(cached.updatedAt) < Date.parse(LOCAL_PAYLOAD.updatedAt)) return null;
-  // Never let an older sampled cache replace the complete catalog bundled in a
-  // newer APK. Future complete snapshots can still grow beyond the APK count.
-  if (cached.items.length < LOCAL_PAYLOAD.items.length) return null;
-  if (cacheMetadata.bootstrapItemCount && cached.items.length !== cacheMetadata.bootstrapItemCount) return null;
+  const cachedTime = Date.parse(cached.updatedAt);
+  const bundledTime = Date.parse(LOCAL_PAYLOAD.updatedAt);
+  if (!Number.isFinite(cachedTime) || (Number.isFinite(bundledTime) && cachedTime < bundledTime)) return null;
   return { ...cached, source: 'cache' };
 }
 
@@ -1858,7 +1858,7 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
           controllers.forEach((other, otherIndex) => {
             if (otherIndex !== index) other.abort();
           });
-          void writeCachedBootstrapPayload(rawBootstrapText, parsed);
+          await writeCachedBootstrapPayload(rawBootstrapText, parsed);
           if (manifest?.bootstrapRevision) {
             cacheMetadata = {
               ...cacheMetadata,
@@ -2114,7 +2114,7 @@ export async function loadLiveContent(base: LoadedContent): Promise<LoadedConten
           controllers.forEach((other, otherIndex) => {
             if (otherIndex !== index) other.abort();
           });
-          void writeCachedLiveDelta(rawText, live);
+          await writeCachedLiveDelta(rawText, live);
           resolve({ ...merged, source: 'remote' });
         } catch {
           // Another mirror may still have the manifest-matching live revision.

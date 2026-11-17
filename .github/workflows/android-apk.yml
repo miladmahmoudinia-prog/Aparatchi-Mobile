@@ -78,7 +78,7 @@ jobs:
         run: node scripts/refresh-bundled-bootstrap.mjs
 
       - name: Check catalog and download recovery
-        run: node --test scripts/tests/catalog-revision-integrity.test.mjs scripts/tests/download-response-recovery.test.mjs
+        run: node --test scripts/tests/catalog-revision-integrity.test.mjs scripts/tests/download-response-recovery.test.mjs scripts/tests/playback-*.test.mjs scripts/tests/catalog-cache-recovery.test.mjs
 
       - name: Type-check application
         run: npm run typecheck
@@ -108,6 +108,18 @@ jobs:
           chmod +x gradlew
           ./gradlew app:assembleRelease --no-daemon
 
+      - name: Verify upgrade signing compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 'https://github.com/miladmahmoudinia-prog/Aparatchi-Mobile/releases/download/android-latest/Aparatchi-Android-Release.apk' -o /tmp/previous.apk
+          SIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
+          "$SIGNER" verify --print-certs /tmp/previous.apk > /tmp/previous-cert.txt
+          "$SIGNER" verify --print-certs android/app/build/outputs/apk/release/app-release.apk > /tmp/candidate-cert.txt
+          grep '^Signer #1 certificate SHA-256 digest:' /tmp/previous-cert.txt > /tmp/previous-sha.txt
+          grep '^Signer #1 certificate SHA-256 digest:' /tmp/candidate-cert.txt > /tmp/candidate-sha.txt
+          diff -u /tmp/previous-sha.txt /tmp/candidate-sha.txt
+
       - name: Prepare APK for release
         run: cp android/app/build/outputs/apk/release/app-release.apk Aparatchi-Android-Release.apk
 
@@ -115,6 +127,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           APP_VERSION: ${{ steps.app_version.outputs.version }}
-          RELEASE_TAG: android-latest
+          RELEASE_TAG: android-test-0.16.29
           APK_PATH: Aparatchi-Android-Release.apk
         run: node scripts/publish-apk-release.mjs

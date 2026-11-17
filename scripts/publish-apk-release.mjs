@@ -14,8 +14,8 @@ if (!fs.existsSync(apkPath)) throw new Error(`APK not found at ${apkPath}`);
 
 const [owner, repo] = repository.split('/');
 const apkName = path.basename(apkPath);
-const releaseName = `Aparatchi Android v${version}`;
-const releaseBody = `Latest Android APK for Aparatchi v${version}.`;
+const releaseName = `Aparatchi Android v${version} — Test build`;
+const releaseBody = `Experimental Android APK for Aparatchi v${version}. Device playback testing is pending. Includes playback retry, slow-start handling and catalog cache recovery. Does not publish server-side sync changes. Install over the existing app; do not clear app data.`;
 const apiBase = 'https://api.github.com';
 
 const commonHeaders = {
@@ -56,8 +56,8 @@ if (byTag.status === 404) {
       name: releaseName,
       body: releaseBody,
       draft: false,
-      prerelease: false,
-      make_latest: 'true',
+      prerelease: true,
+      make_latest: 'false',
     }),
   });
   release = await created.json();
@@ -70,8 +70,8 @@ if (byTag.status === 404) {
       name: releaseName,
       body: releaseBody,
       draft: false,
-      prerelease: false,
-      make_latest: 'true',
+      prerelease: true,
+      make_latest: 'false',
     }),
   });
   release = await updated.json();

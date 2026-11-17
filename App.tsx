@@ -75,7 +75,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.28';
+const APP_DISPLAY_VERSION = '0.16.29';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -158,16 +158,17 @@ const localizedCollectionTitleFa = (
   rawFa: string | undefined,
   members: CatalogItem[],
 ) => {
-  const verified = VERIFIED_COLLECTION_TITLES_FA[String(collectionId || '')];
-  if (verified) return verified;
   const cleaned = String(rawFa || '')
     .trim()
     .replace(/^(?:کالکشن|مجموعه(?:\s+فیلم(?:‌?ها)?)?)\s*/u, '')
     .replace(/\s*(?:کالکشن|مجموعه)\s*$/u, '')
     .trim();
   if (cleaned && hasPersianScript(cleaned)) return cleaned;
-  const firstFa = String(members[0]?.nameFa || '').trim();
-  return firstFa && hasPersianScript(firstFa) ? `مجموعه ${firstFa}` : 'مجموعه فیلم‌ها';
+  const verified = VERIFIED_COLLECTION_TITLES_FA[String(collectionId || '')];
+  if (verified) return verified;
+  // A member's title must never replace the collection's identity.
+  const sourceName = String(members.find((member) => member.collectionName)?.collectionName || '').trim();
+  return sourceName || cleaned || 'مجموعه فیلم‌ها';
 };
 
 type CatalogDeepLink = {
@@ -5405,7 +5406,7 @@ function DownloadsScreen({
                       <View style={[styles.progressFill, { width: `${percent}%` }]} />
                     </View>
                   ) : null}
-                  <Text style={styles.downloadLibraryBytes}>{record.totalBytes ? `${formatStorageSize(record.bytesWritten || 0)} از ${formatStorageSize(record.totalBytes)}` : isNetworkFailure(record.error) ? 'در انتظار اتصال به اینترنت' : 'حجم در حال محاسبه'}</Text>
+                  <Text style={styles.downloadLibraryBytes}>{record.totalBytes ? `${formatStorageSize(record.bytesWritten || 0)} از ${formatStorageSize(record.totalBytes)}` : record.status === 'downloading' ? 'حجم در حال محاسبه' : 'حجم فایل مشخص نیست'}</Text>
                   <Text style={styles.downloadLibraryStatus}>
                     {record.status === 'completed'
                       ? 'دانلود کامل شده و آماده پخش است'
@@ -5424,8 +5425,8 @@ function DownloadsScreen({
                     </Pressable>
                   ) : null}
                   {canResume ? (
-                    <Pressable onPress={() => onResume(record)} style={styles.downloadLibraryControl}>
-                      <Ionicons name="play" color={COLORS.text} size={18} />
+                    <Pressable accessibilityRole="button" accessibilityLabel={record.status === 'failed' ? 'تلاش مجدد دانلود' : 'ادامه دانلود'} onPress={() => onResume(record)} style={styles.downloadLibraryControl}>
+                      <Ionicons name="refresh" color={COLORS.text} size={18} />
                     </Pressable>
                   ) : null}
                   <Pressable onPress={() => onMenu(record)} style={styles.downloadLibraryMenu}>
@@ -6566,6 +6567,7 @@ function VideoPlayerModal({
   const [isPlaying, setIsPlaying] = useState(true);
   const [networkOffline, setNetworkOffline] = useState(false);
   const [playbackError, setPlaybackError] = useState('');
+  const [startupSlow, setStartupSlow] = useState(false);
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [controlsLocked, setControlsLocked] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -6604,6 +6606,7 @@ function VideoPlayerModal({
   const latestDurationRef = useRef(0);
   const resumeAppliedRef = useRef(false);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playbackRetryInFlightRef = useRef(false);
 
   const qualitySources = useMemo(() => {
     const uniqueByUrl = new Map<string, PlaybackSource>();
@@ -6642,7 +6645,11 @@ function VideoPlayerModal({
   useEffect(() => {
     const subscription = player.addListener('statusChange', ({ status, error }) => {
       if (status === 'error') {
-        setPlaybackError(error?.message || 'دریافت ویدئو ناموفق بود. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
+        setPlaybackError(/None of the available extractors|NoDeclaredBrand/i.test(error?.message || '')
+          ? 'دادهٔ دریافتی به‌عنوان ویدئو شناسایی نشد. ممکن است لینک نامعتبر یا قالب فایل ناسازگار باشد.'
+          : /\b421\b/.test(error?.message || '')
+            ? 'سرور ویدئو درخواست را با خطای ۴۲۱ رد کرد. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.'
+            : error?.message || 'دریافت ویدئو ناموفق بود. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
         setSwitchingQuality(false);
         setControlsVisible(true);
       } else if (status === 'readyToPlay') {
@@ -6655,10 +6662,11 @@ function VideoPlayerModal({
   }, [player]);
 
   useEffect(() => {
+    setStartupSlow(false);
     if (firstFrameReady || networkOffline || playbackError) return undefined;
+    // A slow native source is not a failed source. Let preparation continue.
     const timer = setTimeout(() => {
-      setPlaybackError('دریافت ویدئو بیش از حد طول کشید. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
-      setSwitchingQuality(false);
+      setStartupSlow(true);
       setControlsVisible(true);
     }, 25_000);
     return () => clearTimeout(timer);
@@ -6720,24 +6728,26 @@ function VideoPlayerModal({
   }, [isMuted, player, playerVolume]);
 
   const retryNetworkPlayback = useCallback(async () => {
-    setPlaybackError('');
-    setPlaybackAttempt((attempt) => attempt + 1);
-    if (!isSafeHttpUrl(activeSource.url)) {
-      setNetworkOffline(false);
-      player.play();
-      return;
-    }
-    const reachable = await internetIsReachable();
-    setNetworkOffline(!reachable);
-    if (reachable) {
+    // Double taps must not replace the native source concurrently.
+    if (playbackRetryInFlightRef.current) return;
+    playbackRetryInFlightRef.current = true;
+    try {
+      const reachable = !isSafeHttpUrl(activeSource.url) || await internetIsReachable();
+      setNetworkOffline(!reachable);
+      if (!reachable) return;
+      setPlaybackError('');
+      setPlaybackAttempt((attempt) => attempt + 1);
       setFirstFrameReady(false);
-      try {
-        await player.replaceAsync(activeSource.url);
-        if (latestTimeRef.current > 0) player.currentTime = latestTimeRef.current;
-        player.play();
-      } catch {
-        setPlaybackError('ویدئو آماده نشد. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
-      }
+      // Recreate failed local sources as well as remote ones. play() alone
+      // cannot recover a native player whose source is in the error state.
+      player.pause();
+      await player.replaceAsync(activeSource.url);
+      if (latestTimeRef.current > 0) player.currentTime = latestTimeRef.current;
+      player.play();
+    } catch {
+      setPlaybackError('ویدئو آماده نشد. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
+    } finally {
+      playbackRetryInFlightRef.current = false;
     }
   }, [activeSource.url, player]);
 
@@ -6989,9 +6999,12 @@ function VideoPlayerModal({
   };
 
   const switchQuality = async (nextSource: PlaybackSource) => {
-    if (nextSource.id === activeSource.id || nextSource.url === activeSource.url || switchingQuality) return;
+    if (nextSource.id === activeSource.id || nextSource.url === activeSource.url || switchingQuality || playbackRetryInFlightRef.current) return;
+    playbackRetryInFlightRef.current = true;
     const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
-    const wasPlaying = Boolean(player.playing);
+    // A native failure sets playing=false; that is not a user pause. A new
+    // quality selected to recover from that failure must actually start.
+    const wasPlaying = Boolean(player.playing) || Boolean(playbackError) || player.status === 'error';
     setSwitchingQuality(true);
     setPlaybackError('');
     setPlaybackAttempt((attempt) => attempt + 1);
@@ -6999,19 +7012,21 @@ function VideoPlayerModal({
     clearControlsTimer();
     try {
       player.pause();
+      // From this point retry must target the new source, including when its
+      // native preparation fails asynchronously after replaceAsync resolves.
+      setActiveSource(nextSource);
       await player.replaceAsync(nextSource.url);
       if (previousTime > 0) {
         player.currentTime = previousTime;
         latestTimeRef.current = previousTime;
         setCurrentTime(previousTime);
       }
-      setActiveSource(nextSource);
       if (wasPlaying) player.play();
       else player.pause();
     } catch {
-      Alert.alert('کیفیت پخش', 'تغییر کیفیت انجام نشد. دوباره تلاش کنید.');
-      if (wasPlaying) player.play();
+      setPlaybackError('تغییر کیفیت انجام نشد. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
     } finally {
+      playbackRetryInFlightRef.current = false;
       setSwitchingQuality(false);
       setQualityExpanded(false);
       setSettingsOpen(false);
@@ -7146,6 +7161,7 @@ function VideoPlayerModal({
         {(!firstFrameReady || switchingQuality) && !playbackError && !networkOffline ? (
           <View style={[styles.playerFramePortal, frameRect]} pointerEvents="none">
             <ActivityIndicator color={COLORS.gold} size="small" />
+            {startupSlow ? <Text style={styles.playerOfflineText}>آماده‌سازی ویدئو طول کشیده؛ دریافت ادامه دارد. می‌توانید منتظر بمانید یا کیفیت دیگری انتخاب کنید.</Text> : null}
           </View>
         ) : null}
 
@@ -8118,6 +8134,11 @@ function AppContent() {
     if (!hadVisibleCatalog) setContentResolved(false);
 
     const applyContent = (nextContent: LoadedContent) => {
+      // A stale mirror/cache must not roll back a newer visible catalog.
+      const incomingTime = Date.parse(nextContent.updatedAt);
+      const currentTime = Date.parse(contentRef.current.updatedAt);
+      if (contentRef.current.items.length && Number.isFinite(currentTime) &&
+          (!Number.isFinite(incomingTime) || incomingTime < currentTime)) return false;
       const incomingRevision = loadedContentRevision(nextContent);
       if (incomingRevision === contentRevisionRef.current && contentRef.current.items.length) {
         lastContentLoadRef.current = Date.now();
