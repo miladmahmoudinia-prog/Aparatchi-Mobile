@@ -5,7 +5,7 @@ import test from 'node:test';
 const app = fs.readFileSync('App.tsx','utf8');
 const service = fs.readFileSync('src/contentService.ts','utf8');
 
-test('cold start keeps bundled/live cache behind Startup until current live truth', () => {
+test('cold start restores disk truth before reveal and checks the live delta online', () => {
   const effectStart = app.indexOf('if (hasBundledCatalog) {');
   const effectEnd = app.indexOf('} else {', effectStart);
   const effect = app.slice(effectStart, effectEnd);
@@ -17,14 +17,14 @@ test('cold start keeps bundled/live cache behind Startup until current live trut
   const block = app.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.ok(block.indexOf('await loadLiveContent(contentRef.current)') >= 0);
-  assert.ok(app.includes('const cachedLive = initialLoad ? await loadCachedLiveContent(contentRef.current) : null;'));
-  const cachedStart = app.indexOf('if (cachedLive?.items.length) {', app.indexOf('const reloadContent = async'));
-  const onlineStart = app.indexOf('if (online) {', cachedStart);
-  assert.ok(!app.slice(cachedStart, onlineStart).includes('dismissStartup();'));
+  const cachedStart = app.indexOf('applyContent(cachedContent);', app.indexOf('const reloadContent = async'));
+  const reveal = app.indexOf('dismissStartup();', cachedStart);
+  const network = app.indexOf('await onlinePromise', cachedStart);
+  assert.ok(cachedStart >= 0 && cachedStart < reveal && reveal < network);
   assert.ok(!block.includes('firstContent = await loadContent(true)'));
   assert.ok(!block.includes('loadContent('));
   assert.ok(!block.includes('loadContent(false, true)'));
-  assert.ok(block.includes('firstContent = cachedLive || contentRef.current;'));
+  assert.ok(block.includes('firstContent = contentRef.current;'));
 });
 
 test('changed manifest skips parsing the stale full-index cache', () => {

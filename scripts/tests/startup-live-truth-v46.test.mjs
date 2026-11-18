@@ -15,7 +15,7 @@ test('cold start restores cached growth before reveal and refreshes live growth 
   const liveDismissed = reload.indexOf('dismissStartup();', liveApplied);
 
   assert.ok(cachedStart >= 0 && onlineStart > cachedStart);
-  assert.ok(reload.indexOf('applyContent(cachedContent);', cachedStart) < reload.indexOf('if (contentRef.current.items.length) dismissStartup();'));
+  assert.ok(reload.indexOf('applyContent(cachedContent);', cachedStart) < reload.indexOf('dismissStartup();', cachedStart));
   assert.ok(liveStart > onlineStart && liveApplied > liveStart && liveDismissed > liveApplied);
 });
 

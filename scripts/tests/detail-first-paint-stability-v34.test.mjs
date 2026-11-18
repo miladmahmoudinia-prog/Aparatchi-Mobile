@@ -1,22 +1,38 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import test from 'node:test';
+import vm from 'node:vm';
+import ts from 'typescript';
 
 const app = await fs.readFile('App.tsx', 'utf8');
 
 test('open Detail keeps its visible banner/overview and extends cast without replacing it', () => {
-  assert.ok(app.includes('const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): CatalogItem => {'));
-  assert.ok(app.includes("const visiblePoster = current.poster || current.posterFallback || '';"));
-  assert.ok(app.includes('const visibleBackdrop = current.backdrop || current.backdropFallback || visiblePoster;'));
-  assert.ok(app.includes("const visibleOverview = String(current.overview || '').trim();"));
-  assert.ok(app.includes('const visiblePeople = Array.isArray(current.people) && current.people.length ? current.people : null;'));
-  assert.ok(app.includes('...(visibleOverview ? { overview: current.overview } : {})'));
-  assert.ok(app.includes('const mergedPeople = visiblePeople ? [...visiblePeople] : [];'));
-  assert.ok(app.includes('...(mergedPeople.length ? { people: mergedPeople } : {})'));
+  const helpers = app.slice(app.indexOf('const personName ='), app.indexOf('const personRoleTitle ='));
+  const declaration = (name) => {
+    const start = app.indexOf(`const ${name} =`);
+    return app.slice(start, app.indexOf(';', start) + 1);
+  };
+  const merge = app.slice(app.indexOf('const mergeOpenDetailSnapshot ='), app.indexOf('const STARTUP_MIN_VISIBLE_MS'));
+  const context = vm.createContext({});
+  vm.runInContext(ts.transpileModule(declaration('normalizeComparableText') + declaration('optimizedImageUrl') + helpers + merge + '\nglobalThis.merge = mergeOpenDetailSnapshot;', {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText, context);
+  const current = {id: 'one', poster: 'old-poster', backdrop: 'old-banner', overview: 'Visible text', people: [{name: 'Actor', role: 'actor'}]};
+  const incoming = {id: 'one', poster: 'new-poster', backdrop: 'new-banner', overview: 'New text', people: [{name: 'Actor', role: 'actor', tmdbId: 42}, {name: 'Director', role: 'director'}], downloads: [{id: 'episode-2'}]};
+  const before = JSON.stringify([current, incoming]);
+  const result = context.merge(current, incoming);
+  assert.equal(result.poster, current.poster);
+  assert.equal(result.backdrop, current.backdrop);
+  assert.equal(result.overview, current.overview);
+  assert.equal(result.people.length, 2);
+  assert.equal(result.people[0].tmdbId, 42);
+  assert.equal(result.downloads, incoming.downloads);
+  assert.equal(JSON.stringify([current, incoming]), before);
+  const empty = context.merge({id: 'one'}, incoming);
+  assert.equal(empty.poster, incoming.poster);
+  assert.equal(empty.overview, incoming.overview);
 });
 
 test('every Detail replacement path uses the stable visible snapshot', () => {
-  assert.ok(app.includes('return mergeOpenDetailSnapshot(current, refreshedSummary);'));
+  assert.ok(!app.includes('setSelectedItem(refreshedSummary)'));
   assert.ok(app.includes('return mergeOpenDetailSnapshot(current, fullItem);'));
   assert.ok(app.includes('return mergeOpenDetailSnapshot(current, currentItem);'));
 });

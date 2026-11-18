@@ -60,6 +60,16 @@ test('disk growth is restored before reveal without waiting for network state', 
   assert.equal(h.context.contentRef.current.clientRevision, 'remote');
 });
 
+test('first network result after reveal respects an active scroll', async () => {
+  const pending = [];
+  const h = harness({ commitCatalogWhenIdle: fn => pending.push(fn) });
+  await h.reload();
+  assert.deepEqual(h.events.filter(([kind]) => kind === 'content'), [['content', 'cached']]);
+  assert.equal(pending.length, 1);
+  pending.shift()();
+  assert.deepEqual(h.events.filter(([kind]) => kind === 'content').at(-1), ['content', 'remote']);
+});
+
 test('complete fallback cache becomes the base for cumulative live changes', async () => {
   let seenBase;
   const h = harness({

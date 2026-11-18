@@ -68,9 +68,10 @@ test('normalization yields before completing a complete catalog and preserves ev
 
 test('remote bootstrap, live delta and restored cache use cooperative processing', () => {
   assert.ok(service.includes('await parsePayloadCooperatively(rawBootstrap)'));
-  assert.ok(service.includes('await parsePayloadCooperatively(JSON.parse(await FileSystem.readAsStringAsync(BOOTSTRAP_CACHE_URI)))'));
+  assert.ok(service.includes('JSON.parse(await FileSystem.readAsStringAsync(BOOTSTRAP_CACHE_URI))'));
+  assert.ok(service.includes('await parsePayloadCooperatively(selfContained ? stored.payload : stored)'));
   assert.equal(service.match(/await mergeLiveCatalogDeltaCooperatively\(base, live\)/g)?.length, 2);
   const app = fs.readFileSync('App.tsx', 'utf8');
   assert.ok(!app.includes('setTimeout(reloadContentWhenIdle, 12_000)'));
-  assert.ok(app.includes('if (!hadVisibleCatalog) setContent(visibleContent)'));
+  assert.ok(app.includes('if (restoringInitialCatalog || !hadVisibleCatalog) setContent(visibleContent)'));
 });

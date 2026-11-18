@@ -75,7 +75,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.29';
+const APP_DISPLAY_VERSION = '0.16.30';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -119,7 +119,15 @@ type SearchFilter =
 let collectionBrowserBackHandler: (() => boolean) | null = null;
 let collectionBrowserSelectedId: string | null = null;
 let collectionBrowserScrollOffset = 0;
-let catalogGridColumnPreference: 2 | 4 = 2;
+// Session-only preferences; restarting the app restores two columns.
+const catalogGridColumnsByList = new Map<string, 2 | 4>();
+function useCatalogGridColumns(listKey: string): [2 | 4, (count: 2 | 4) => void] {
+  const [, refresh] = useState(0);
+  return [catalogGridColumnsByList.get(listKey) || 2, (count) => {
+    catalogGridColumnsByList.set(listKey, count);
+    refresh((revision) => revision + 1);
+  }];
+}
 
 const hasPersianScript = (value?: string | null) => /[\u0600-\u06FF]/.test(String(value || ''));
 
@@ -1488,8 +1496,9 @@ const EPISODE_UPDATE_LABEL_PATTERN = /^\u0642\u0633\u0645\u062a\s+.+\s+\u0627\u0
 const isLatestMovieItem = (item: CatalogItem) => item.type === 'movie';
 const isUpdatedEpisodicItem = (item: CatalogItem) => Boolean(
   item.type === 'series' &&
-  EPISODE_UPDATE_LABEL_PATTERN.test(String(item.updateLabel || '').trim()) &&
-  Number(item.episodeCount || item.latestEpisode?.episodeNumber || 0) > 0
+  (Boolean(Date.parse(item.publishedAt || item.firstSeenAt || '')) ||
+    (EPISODE_UPDATE_LABEL_PATTERN.test(String(item.updateLabel || '').trim()) &&
+     Number(item.episodeCount || item.latestEpisode?.episodeNumber || 0) > 0))
 );
 
 const filterTitle = (filter: SearchFilter) => {
@@ -1557,14 +1566,7 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
   }
 };
 
-const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
-  if (filter === 'updated') {
-    return [...items].sort((a, b) => {
-      const aTime = Date.parse(a.meaningfulUpdatedAt || a.updatedAt || '') || 0;
-      const bTime = Date.parse(b.meaningfulUpdatedAt || b.updatedAt || '') || 0;
-      return bTime - aTime;
-    });
-  }
+const sortForCatalogFilter = (items: CatalogItem[], _filter: SearchFilter) => {
   return [...items].sort((a, b) => catalogItemTimestamp(b) - catalogItemTimestamp(a));
 };
 
@@ -1633,7 +1635,7 @@ const catalogItemsForFilter = async (catalog: CatalogItem[], filter: SearchFilte
     }
   }
   if (isCancelled()) return null;
-  const result = filter === 'updated' ? sortForCatalogFilter(filtered, filter) : filtered;
+  const result = filter === 'updated' || filter === 'latest' ? sortForCatalogFilter(filtered, filter) : filtered;
   cache.set(filter, result);
   return result;
 };
@@ -2002,7 +2004,15 @@ const warmDetailArtwork = (item: CatalogItem) => {
     catalogArtworkCandidates(item.posterFallback || item.poster, 'poster')[0],
   ].filter(Boolean);
   if (urls.length) void Image.prefetch(urls).catch(() => undefined);
-  void loadCatalogItemDetail(item).catch(() => undefined);
+  void loadCatalogItemDetail(item).then((detail) => {
+    if (!detail) return;
+    const previews = [
+      ...(detail.people || []).slice(0, 4).map((person) => personImageCandidates(person.image)[0]),
+      ...(detail.downloads || []).filter(isEpisodeSection).slice(0, 4)
+        .map((group) => exactEpisodeArtworkFor(group, detail)),
+    ].filter((url): url is string => Boolean(url && isSafeHttpUrl(url)));
+    if (previews.length) void Image.prefetch([...new Set(previews)]).catch(() => undefined);
+  }).catch(() => undefined);
 };
 
 const localArtworkForItem = (_item: CatalogItem) => undefined;
@@ -2156,7 +2166,7 @@ function HeroSlide({
             ) : null}
           </View>
         </View>
-        <Pressable onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
+        <Pressable onPressIn={() => warmDetailArtwork(item)} onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
           <Ionicons name="play" color="#fff" size={18} />
           <Text style={styles.primaryButtonText}>مشاهده و دریافت</Text>
         </Pressable>
@@ -2696,6 +2706,7 @@ const PosterCard = memo(function PosterCard({
   return (
     <Pressable
       onPress={onOpen}
+      onPressIn={() => warmDetailArtwork(item)}
       unstable_pressDelay={0}
       hitSlop={12}
       pressRetentionOffset={{ top: 24, right: 24, bottom: 24, left: 24 }}
@@ -2952,7 +2963,7 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       scrollEventThrottle={80}
       inverted
       getItemLayout={(_, index) => ({ length: 148, offset: 148 * index, index })}
-      initialNumToRender={3}
+      initialNumToRender={4}
       maxToRenderPerBatch={2}
       updateCellsBatchingPeriod={40}
       windowSize={3}
@@ -3570,10 +3581,15 @@ const buildHomeCatalogRows = (catalog: CatalogItem[]): HomeCatalogRow[] => {
   const buckets = new Map<SearchFilter, CatalogItem[]>();
   for (const row of HOME_CATALOG_ROWS) buckets.set(row.filter, []);
 
+  const latestMovies: CatalogItem[] = [];
   const updatedCandidates: CatalogItem[] = [];
   for (const item of catalog) {
     for (const row of HOME_CATALOG_ROWS) {
       const bucket = buckets.get(row.filter)!;
+      if (row.filter === 'latest') {
+        if (isLatestMovieItem(item)) latestMovies.push(item);
+        continue;
+      }
       if (row.filter === 'updated') {
         if (summaryMatchesHomeFilter(item, row.filter)) updatedCandidates.push(item);
         continue;
@@ -3583,6 +3599,7 @@ const buildHomeCatalogRows = (catalog: CatalogItem[]): HomeCatalogRow[] => {
     }
   }
 
+  buckets.set('latest', sortForCatalogFilter(latestMovies, 'latest').slice(0, 10));
   updatedCandidates
     .sort((a, b) => catalogItemTimestamp(b) - catalogItemTimestamp(a))
     .slice(0, 10)
@@ -3769,7 +3786,7 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={2}
+        initialNumToRender={4}
         maxToRenderPerBatch={1}
         updateCellsBatchingPeriod={48}
         windowSize={4}
@@ -3872,7 +3889,13 @@ const hasFastCategoryArtwork = (item: CatalogItem) =>
   [item.backdrop, item.poster, item.backdropFallback, item.posterFallback]
     .some((value) => Boolean(optimizedImageUrl(value, 'backdrop')));
 
-const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: () => boolean) => {
+const categoryPreviewCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem>>();
+const buildCategoryPreviewItems = async (
+  catalog: CatalogItem[], isCancelled: () => boolean,
+  onProgress?: (items: Map<SearchFilter, CatalogItem>) => void,
+) => {
+  const cached = categoryPreviewCache.get(catalog);
+  if (cached) return cached;
   const result = new Map<SearchFilter, CatalogItem>();
   const scoreByFilter = new Map<SearchFilter, number>();
   const previewFilters = CATEGORY_CARDS.map((card) => card.filter);
@@ -3883,6 +3906,7 @@ const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: ()
     sliceStarted = Date.now();
   };
 
+  let scanned = 0;
   for (const item of catalog.slice(0, 1200)) {
     if (isCancelled()) return null;
     if (hasFastCategoryArtwork(item)) {
@@ -3900,6 +3924,8 @@ const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: ()
         scoreByFilter.set(filter, score);
       }
     }
+    scanned += 1;
+    if (scanned === 60 && !isCancelled()) onProgress?.(new Map(result));
     await yieldIfNeeded();
   }
 
@@ -3910,7 +3936,11 @@ const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: ()
       if (hasFastCategoryArtwork(item)) {
         const keys = item.categoryKeys || [];
         for (const filter of missing) {
-          if (keys.includes(filter) || fastCatalogFilterMatch(item, filter)) {
+          const matches = STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)
+            ? fastCatalogFilterMatch(item, filter)
+            : (SERVER_CATEGORY_FILTERS.has(filter) && keys.length
+              ? keys.includes(filter) : fastCatalogFilterMatch(item, filter));
+          if (matches) {
             result.set(filter, item);
             missing.delete(filter);
           }
@@ -3920,7 +3950,9 @@ const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: ()
       await yieldIfNeeded();
     }
   }
-  return isCancelled() ? null : result;
+  if (isCancelled()) return null;
+  categoryPreviewCache.set(catalog, result);
+  return result;
 };
 
 const CategoriesScreen = memo(function CategoriesScreen({
@@ -3945,7 +3977,9 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const [categoryPreviewItems, setCategoryPreviewItems] = useState<Map<SearchFilter, CatalogItem>>(() => new Map());
   useEffect(() => {
     let cancelled = false;
-    void buildCategoryPreviewItems(usableCatalog, () => cancelled).then((items) => {
+    void buildCategoryPreviewItems(usableCatalog, () => cancelled, (items) => {
+      if (!cancelled) setCategoryPreviewItems(items);
+    }).then((items) => {
       if (!cancelled && items) setCategoryPreviewItems(items);
     });
     return () => { cancelled = true; };
@@ -4141,7 +4175,7 @@ function CatalogListScreen({
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(normalizeComparableText(query));
   const { width: screenWidth } = useWindowDimensions();
-  const [preferredColumns, setPreferredColumns] = useState<2 | 4>(() => catalogGridColumnPreference);
+  const [preferredColumns, setPreferredColumns] = useCatalogGridColumns(`catalog:${initialFilter}`);
   const listRef = useRef<FlatList<CatalogItem>>(null);
   const scrollKey = String(initialFilter);
 
@@ -4211,7 +4245,6 @@ function CatalogListScreen({
               onPress={() => {
                 if (count === preferredColumns) return;
                 LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                catalogGridColumnPreference = count;
                 setPreferredColumns(count);
               }}
               hitSlop={8}
@@ -4428,7 +4461,7 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
   const [selectedCollectionId, setSelectedCollectionIdState] = useState<string | null>(() => collectionBrowserSelectedId);
   const collectionFoldersRef = useRef<FlatList<any>>(null);
   const { width: screenWidth } = useWindowDimensions();
-  const [preferredColumns, setPreferredColumns] = useState<2 | 4>(() => catalogGridColumnPreference);
+  const [preferredColumns, setPreferredColumns] = useCatalogGridColumns(`collection:${selectedCollectionId || 'folders'}`);
   const selected = groups.find((group) => group.id === selectedCollectionId) || null;
   const columns = preferredColumns;
   const gap = 12;
@@ -4491,7 +4524,6 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
             onPress={() => {
               if (count === preferredColumns) return;
               LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-              catalogGridColumnPreference = count;
               setPreferredColumns(count);
             }}
             hitSlop={8}
@@ -5782,29 +5814,38 @@ function ExactEpisodeArtwork({
   artwork: string;
   style?: any;
 }) {
-  // Episode cards are navigation controls, so mounting them must never start
-  // video decoders or thumbnail extraction. If the server has no exact frame,
-  // use a lightweight neutral tile instead of repeating the series backdrop.
-  const exactArtwork = artwork ? optimizedImageUrl(artwork, 'backdrop') : '';
+  // No video decoding: use series artwork if the episode frame is missing.
+  const candidates = [...new Set([
+    ...catalogArtworkCandidates(artwork, 'backdrop'),
+    ...catalogArtworkCandidates(item.backdropFallback || item.backdrop, 'backdrop'),
+    ...catalogArtworkCandidates(item.posterFallback || item.poster, 'backdrop'),
+  ])];
+  const artworkKey = candidates.join('|');
+  const [failure, setFailure] = useState({ key: artworkKey, index: 0 });
+  const index = failure.key === artworkKey ? failure.index : 0;
+  const exactArtwork = candidates[index] || '';
 
   return (
     <View style={[styles.episodeShowcaseArtwork, style]}>
+      <CatalogArtwork
+        primary={item.backdrop || item.poster}
+        fallback={item.backdropFallback || item.posterFallback}
+        style={StyleSheet.absoluteFill}
+        imageKind="backdrop"
+        transition={0}
+      />
       {exactArtwork ? (
         <Image
+          key={exactArtwork}
           source={{ uri: exactArtwork }}
+          accessibilityLabel={artwork && index === 0 ? 'تصویر قسمت' : 'تصویر سریال'}
+          onError={() => setFailure({ key: artworkKey, index: index + 1 })}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           cachePolicy="memory-disk"
           transition={120}
         />
-      ) : (
-        <LinearGradient
-          colors={['#202633', '#11151d', '#090c12']}
-          style={[StyleSheet.absoluteFill, styles.episodeArtworkPlaceholder]}
-        >
-          <Ionicons name="film-outline" color="rgba(214,168,75,0.78)" size={34} />
-        </LinearGradient>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -5831,11 +5872,14 @@ function SeriesEpisodeShowcase({
   const seasonNumbers = useMemo(() => Object.keys(seasons).map(Number).sort((a, b) => b - a), [seasons]);
   const latestSeason = seasonNumbers[0] || 1;
   const [selectedSeason, setSelectedSeason] = useState(latestSeason);
+  const [episodePage, setEpisodePage] = useState({ key: '', count: 12 });
 
   useEffect(() => setSelectedSeason(latestSeason), [item.id, latestSeason]);
   if (!groups.length) return null;
   const visibleSeason = seasons[selectedSeason] ? selectedSeason : latestSeason;
   const visibleGroups = seasons[visibleSeason] || [];
+  const pageKey = `${item.id}:${visibleSeason}`;
+  const visibleCount = episodePage.key === pageKey ? episodePage.count : 12;
   const quran = isQuranItem(item);
 
   return (
@@ -5862,7 +5906,7 @@ function SeriesEpisodeShowcase({
         </ScrollView>
       ) : null}
       <View style={styles.episodeShowcaseRail}>
-        {visibleGroups.map((group) => {
+        {visibleGroups.slice(0, visibleCount).map((group) => {
           const canPlay = playableVersionsFor(item, group).length > 0;
           const operatorPlay = operatorFilesFor(group.files).find((file) => downloadModeFor(file) === 'operator-play');
           const hasEpisodeDownload = group.files.some((file) =>
@@ -5893,6 +5937,15 @@ function SeriesEpisodeShowcase({
           );
         })}
       </View>
+      {visibleCount < visibleGroups.length ? (
+        <Pressable
+          onPress={() => setEpisodePage({ key: pageKey, count: visibleCount + 12 })}
+          style={styles.episodeShowcaseSeason}
+          accessibilityRole="button"
+        >
+          <Text style={styles.episodeShowcaseSeasonText}>نمایش قسمت‌های بیشتر ({toPersianDigits(visibleGroups.length - visibleCount)})</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -7987,7 +8040,7 @@ const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): C
   };
 };
 
-const STARTUP_MIN_VISIBLE_MS = 650;
+const STARTUP_MIN_VISIBLE_MS = 0;
 
 function AppContent() {
   const appInsets = useSafeAreaInsets();
@@ -8127,6 +8180,7 @@ function AppContent() {
     contentLoadInFlightRef.current = true;
     const onlinePromise = internetIsReachable();
     const initialLoad = lastContentLoadRef.current === 0;
+    let restoringInitialCatalog = initialLoad;
     const showRefreshIndicator = force && !initialLoad && !options.silent;
     const hadVisibleCatalog = contentRef.current.items.length > 0;
 
@@ -8154,7 +8208,7 @@ function AppContent() {
       // The first usable catalog must be committed before the startup cover is
       // dismissed. Deferring this initial render could briefly expose the false
       // "catalog is empty" screen. Only later background refreshes are non-urgent.
-      if (!hadVisibleCatalog) setContent(visibleContent);
+      if (restoringInitialCatalog || !hadVisibleCatalog) setContent(visibleContent);
       else commitCatalogWhenIdle(() => startTransition(() => setContent(visibleContent)));
       lastContentLoadRef.current = Date.now();
       setContentReady(true);
@@ -8181,7 +8235,10 @@ function AppContent() {
       }
       // Reveal a complete local snapshot only after restoring last session's
       // changes. The network must not hold a returning user behind Splash.
-      if (contentRef.current.items.length) dismissStartup();
+      if (contentRef.current.items.length) {
+        dismissStartup();
+        restoringInitialCatalog = false;
+      }
       const online = await onlinePromise;
       setContentOffline(!online);
 
@@ -8246,7 +8303,6 @@ function AppContent() {
   useEffect(() => {
     const hasBundledCatalog = contentRef.current.items.length > 0;
     let startupFallbackTimer: ReturnType<typeof setTimeout> | null = null;
-    let startupRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingIdleRefresh: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
 
     const reloadContentWhenIdle = () => {
@@ -8258,13 +8314,11 @@ function AppContent() {
     };
 
     if (hasBundledCatalog) {
-      // The compact APK snapshot paints Home immediately. Parsing the complete
-      // disk/network catalog must happen only after the first interactions so
-      // it can never hold the splash or the first frame hostage.
+      // Restore the last complete disk snapshot before revealing Home. The
+      // reload path dismisses Startup before waiting for network freshness.
       setContentReady(true);
       setContentResolved(true);
-      dismissStartup();
-      startupRefreshTimer = setTimeout(reloadContentWhenIdle, 0);
+      void reloadContent(false);
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
@@ -8338,7 +8392,6 @@ function AppContent() {
 
     return () => {
       pendingIdleRefresh?.cancel();
-      if (startupRefreshTimer) clearTimeout(startupRefreshTimer);
       if (startupFallbackTimer) clearTimeout(startupFallbackTimer);
       clearInterval(catalogRefreshTimer);
       clearTimeout(vpnRetryTimer);

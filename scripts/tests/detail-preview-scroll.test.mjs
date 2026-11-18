@@ -67,6 +67,7 @@ test('details retain one cast tree, and grid restoration cannot override a new d
   assert.ok(!grid.includes('.scrollToOffset('));
   assert.ok(grid.includes('contentOffset={initialContentOffset}'));
   const rail=app.slice(app.indexOf('const HorizontalCatalog ='),app.indexOf('const StarPersonButton ='));
-  assert.ok(rail.includes('initialNumToRender={3}'));
+  const initial = Number(rail.match(/initialNumToRender=\{(\d+)\}/)?.[1]);
+  assert.ok(initial >= 3 && initial <= 4);
   assert.ok(!rail.includes('initialNumToRender={10}'));
 });

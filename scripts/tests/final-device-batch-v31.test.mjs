@@ -37,9 +37,9 @@ test('poster interaction stays light and has a generous press target', () => {
 });
 
 test('category cards keep fast preview scan but backfill missing artwork from full catalog', () => {
-  assert.match(app, /const categoryPreviewPool = useMemo\(\s*\(\) => usableCatalog\.slice\(0, 1200\)/);
+  assert.match(app, /for \(const item of catalog\.slice\(0, 1200\)\)/);
   assert.match(app, /const missing = new Set\(previewFilters\.filter\(\(filter\) => !result\.has\(filter\)\)\);/);
-  assert.match(app, /for \(const item of usableCatalog\)/);
+  assert.match(app, /for \(const item of catalog\)/);
 });
 
 test('exact collection pixel restore remains installed', () => {

@@ -23,7 +23,8 @@ test('release refresh accepts only manifest-declared complete title counts', () 
 test('runtime rejects truncated remote and legacy sampled caches', () => {
   assert.ok(service.includes('manifest.clientItemCount !== manifest.bootstrapItemCount'));
   assert.ok(service.includes('parsed.items.length !== manifest.bootstrapItemCount'));
-  assert.ok(service.includes('cached.items.length < LOCAL_PAYLOAD.items.length'));
+  assert.ok(service.includes('selfContained ? stored.itemCount : cacheMetadata.bootstrapItemCount'));
+  assert.ok(service.includes('!expectedCount || parsed.items.length !== expectedCount'));
   assert.ok(service.includes('declaredItemCount !== itemOrder.length'));
   assert.ok(service.includes('if (!item) return null;'));
 });

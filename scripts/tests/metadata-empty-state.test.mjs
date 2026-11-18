@@ -18,10 +18,9 @@ test('real cast rail remains available and starts from the right edge with deter
   const start = source.indexOf('function PeopleSection');
   const end = source.indexOf('const HorizontalCatalog', start);
   const block = source.slice(start, end);
-  assert.ok(block.includes('const displayedPeople = useMemo(() => [...people].reverse(), [people]);'));
-  assert.ok(block.includes('data={displayedPeople}'));
-  assert.ok(block.includes('initialScrollIndex={displayedPeople.length - 1}'));
-  assert.ok(block.includes('getItemLayout='));
+  assert.ok(block.includes('data={people}'));
+  assert.match(block, /\s+inverted\s/);
+  assert.ok(!block.includes('.reverse()'));
   assert.ok(block.includes('removeClippedSubviews={false}'));
   assert.ok(!block.includes('scrollToEnd'));
 });
@@ -31,6 +30,8 @@ test('people list is built only from real actor/director catalog records', () =>
   const end = source.indexOf('const HorizontalCatalog', start);
   const block = source.slice(start, end);
   assert.ok(block.includes('item.people || []'));
-  assert.ok(block.includes("person.role !== 'director' && person.role !== 'actor'"));
-  assert.ok(block.includes('optimizedImageUrl(person.image'));
+  assert.ok(block.includes('dedupeCatalogPeople(item.people || [])'));
+  const helper = source.slice(source.indexOf('const dedupeCatalogPeople ='), source.indexOf('const personRoleTitle ='));
+  assert.ok(helper.includes("person.role !== 'director' && person.role !== 'actor'"));
+  assert.ok(helper.includes('optimizedImageUrl(candidate.image'));
 });

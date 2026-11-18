@@ -7,7 +7,7 @@ const config = fs.readFileSync('src/config.ts', 'utf8');
 const service = fs.readFileSync('src/contentService.ts', 'utf8');
 
 test('hourly catalog growth uses a cumulative uncapped live artifact', () => {
-  assert.ok(config.includes('catalog-live.json'));
+  assert.ok(config.includes('catalog-live-v2.json'));
   assert.ok(service.includes('export const mergeLiveCatalogDelta'));
   assert.ok(service.includes('for (const key of itemOrder)'));
   assert.ok(service.includes('declaredItemCount !== itemOrder.length'));
@@ -20,9 +20,9 @@ test('live refresh is applied before the multi-megabyte compatibility fallback',
   const end = app.indexOf('useEffect(() => {', start);
   const reload = app.slice(start, end);
   const live = reload.indexOf('await loadLiveContent(contentRef.current)');
-  const full = reload.indexOf('loadBootstrapContent().then');
+  const full = reload.indexOf('await loadBootstrapContent()');
   assert.ok(live >= 0 && full > live);
-  assert.ok(reload.includes('await loadCachedLiveContent(contentRef.current)'));
+  assert.ok(reload.includes('await loadCachedLiveContent(cachedBase)'));
 });
 
 test('background episode checks use the same small live update path', () => {

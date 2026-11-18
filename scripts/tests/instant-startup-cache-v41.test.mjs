@@ -14,17 +14,17 @@ test('APK carries the complete current startup navigation snapshot', () => {
   assert.ok(fs.statSync('src/catalogBootstrap.json').size < 12_000_000);
 });
 
-test('complete bundled catalog reveals Home before delayed cache refresh', () => {
+test('complete bundled catalog starts disk recovery before revealing Home', () => {
   assert.ok(service.includes("import bundledBootstrapJson from './catalogBootstrap.json';"));
   assert.ok(service.includes('export async function loadCachedLiveContent(base: LoadedContent)'));
   assert.ok(app.includes('const cachedLive = initialLoad ? await loadCachedLiveContent(cachedBase) : null;'));
   const start = app.indexOf('if (hasBundledCatalog) {');
   const end = app.indexOf('} else {', start);
   const block = app.slice(start, end);
-  assert.ok(block.includes('dismissStartup();'));
-  assert.ok(block.includes('setTimeout(reloadContentWhenIdle, 0)'));
+  assert.ok(!block.includes('dismissStartup();'));
+  assert.ok(block.includes('void reloadContent(false);'));
   const cachedStart = app.indexOf('if (cachedContent?.items.length) {', app.indexOf('const reloadContent = async'));
-  const reveal = app.indexOf('if (contentRef.current.items.length) dismissStartup();', cachedStart);
+  const reveal = app.indexOf('dismissStartup();', cachedStart);
   assert.ok(cachedStart >= 0 && reveal > cachedStart);
 });
 

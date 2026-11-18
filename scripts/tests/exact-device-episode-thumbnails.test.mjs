@@ -17,9 +17,9 @@ test('episode cards never generate video thumbnails while mounting', () => {
 });
 
 test('episode artwork paints a cached title fallback immediately and overlays exact art when available', () => {
-  assert.ok(artworkBlock.includes("const fallbackArtwork = item.backdrop || item.poster || item.posterFallback || '';"));
-  assert.ok(artworkBlock.includes('primary={fallbackArtwork}'));
-  assert.ok(artworkBlock.includes('localFallback={localArtworkForItem(item)}'));
+  assert.ok(artworkBlock.includes('primary={item.backdrop || item.poster}'));
+  assert.ok(artworkBlock.includes('fallback={item.backdropFallback || item.posterFallback}'));
+  assert.ok(artworkBlock.indexOf('<CatalogArtwork') < artworkBlock.indexOf('{exactArtwork ? ('));
   assert.ok(artworkBlock.includes("cachePolicy=\"memory-disk\""));
   assert.ok(artworkBlock.includes('{exactArtwork ? ('));
   assert.ok(artworkBlock.includes('<View style={[styles.episodeShowcaseArtwork, style]}>'));

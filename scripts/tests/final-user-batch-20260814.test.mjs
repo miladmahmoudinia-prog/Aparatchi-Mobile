@@ -10,9 +10,12 @@ test('foreign unlabelled media stays available through neutral UI without a fake
 });
 
 test('all RTL people/star rails start from the right edge deterministically', () => {
-  const peopleRightEdgeStarts = source.match(/initialScrollIndex=\{displayedPeople\.length - 1\}/g) || [];
-  assert.ok(peopleRightEdgeStarts.length >= 2);
-  assert.ok(source.includes('initialScrollIndex={displayedWorks.length - 1}'));
+  for (const style of ['peopleRail', 'starPeopleRail', 'starWorksRail']) {
+    const at = source.indexOf(`style={styles.${style}}`);
+    const list = source.slice(source.lastIndexOf('<FlatList', at), source.indexOf('/>', at));
+    assert.ok(at >= 0 && /\binverted\b/.test(list), style);
+    assert.ok(!list.includes('initialScrollIndex='), style);
+  }
   assert.ok(!source.includes('contentOffset={{ x: people.length * 100'));
 });
 

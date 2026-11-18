@@ -83,6 +83,7 @@ test('category artwork selection yields and retains highest-scored and fallback 
   let clock = 0;
   let yields = 0;
   const context = {
+    categoryPreviewCache: new WeakMap(),
     CATEGORY_CARDS: [{ filter: 'movie' }, { filter: 'series' }],
     STRICT_DYNAMIC_CATEGORY_FILTERS: new Set(),
     SERVER_CATEGORY_FILTERS: new Set(['movie', 'series']),
@@ -103,5 +104,5 @@ test('category artwork selection yields and retains highest-scored and fallback 
   assert.equal(result.get('series'), catalog[1200]);
   assert.ok(yields > 0);
   let checks = 0;
-  assert.equal(await context.buildPreviews(catalog, () => ++checks > 10), null);
+  assert.equal(await context.buildPreviews([...catalog], () => ++checks > 10), null);
 });
