@@ -76,7 +76,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.31';
+const APP_DISPLAY_VERSION = '0.16.32';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -7752,7 +7752,7 @@ function VpnBlockModal({
   );
 }
 
-function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { visible: boolean; onClose: () => void; onBrowse: (filter: SearchFilter) => void; onCategories: () => void; onHome: () => void }) {
+function SideMenuModal({ visible, catalog, updatedAt, refreshing, onRefresh, onClose, onBrowse, onCategories, onHome }: { catalog: CatalogItem[]; updatedAt: string; refreshing: boolean; onRefresh: () => void; visible: boolean; onClose: () => void; onBrowse: (filter: SearchFilter) => void; onCategories: () => void; onHome: () => void }) {
   type MenuEntry = {
     key: string;
     title: string;
@@ -7764,6 +7764,18 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
 
   const [openRoot, setOpenRoot] = useState<string | null>(null);
   const [openChild, setOpenChild] = useState<string | null>(null);
+  const stats = useMemo(() => {
+    if (!visible || openRoot !== 'stats') return null;
+    const ids = new Set<string>();
+    let movies = 0, series = 0, iranianSeries = 0;
+    for (const item of catalog) {
+      if (!item.id || ids.has(item.id)) continue;
+      ids.add(item.id);
+      if (item.type === 'movie') movies++;
+      if (item.type === 'series') { series++; if (isIranianItem(item)) iranianSeries++; }
+    }
+    return [['کل عنوان‌ها', ids.size], ['فیلم', movies], ['سریال', series], ['سریال ایرانی', iranianSeries], ['سریال غیرایرانی', series - iranianSeries]] as const;
+  }, [catalog, visible, openRoot]);
   const entries: MenuEntry[] = [
     { key: 'home', title: 'خانه', action: 'home', icon: 'home-outline' },
     {
@@ -7863,6 +7875,14 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
             <Pressable onPress={onClose} style={styles.iconButton}><Ionicons name="close" color={COLORS.text} size={22} /></Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.sideMenuItems} showsVerticalScrollIndicator={false}>
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: openRoot === 'stats' }} style={styles.sideMenuItem} onPress={() => setOpenRoot(openRoot === 'stats' ? null : 'stats')}>
+              <Ionicons name="stats-chart-outline" color={COLORS.gold} size={20} /><Text style={styles.sideMenuItemText}>آمار این دستگاه</Text>
+            </Pressable>
+            {stats && <View style={styles.sideMenuChildren}>
+              {stats.map(([label, count]) => <Text key={label} style={styles.sideMenuLeafText}>{label}: {count.toLocaleString('fa-IR')}</Text>)}
+              <Text style={styles.sideMenuVersionText}>زمان کاتالوگ نمایش‌داده‌شده: {Number.isFinite(Date.parse(updatedAt)) ? new Date(updatedAt).toLocaleString('fa-IR') : 'نامشخص'}</Text>
+              <Pressable accessibilityRole="button" disabled={refreshing} style={styles.sideMenuLeaf} onPress={onRefresh}><Text style={styles.sideMenuLeafText}>{refreshing ? 'در حال بررسی…' : 'بررسی تغییرات کاتالوگ'}</Text></Pressable>
+            </View>}
             {entries.map((entry) => {
               if (!entry.children?.length) return renderLeaf(entry, 1);
               const rootOpen = openRoot === entry.key;
@@ -9461,6 +9481,7 @@ function AppContent() {
         onContinue={() => setVpnWarningVisible(false)}
       />
       <SideMenuModal
+        catalog={content.items} updatedAt={content.updatedAt} refreshing={contentLoading} onRefresh={() => void reloadContent(true)}
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
         onBrowse={openCatalogFilter}
