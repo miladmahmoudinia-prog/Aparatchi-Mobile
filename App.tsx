@@ -76,7 +76,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.32';
+const APP_DISPLAY_VERSION = '0.16.33';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -6682,11 +6682,14 @@ function VideoPlayerModal({
   useEffect(() => {
     const subscription = player.addListener('statusChange', ({ status, error }) => {
       if (status === 'error') {
-        setPlaybackError(/None of the available extractors|NoDeclaredBrand/i.test(error?.message || '')
-          ? 'دادهٔ دریافتی به‌عنوان ویدئو شناسایی نشد. ممکن است لینک نامعتبر یا قالب فایل ناسازگار باشد.'
-          : /\b421\b/.test(error?.message || '')
-            ? 'سرور ویدئو درخواست را با خطای ۴۲۱ رد کرد. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.'
-            : error?.message || 'دریافت ویدئو ناموفق بود. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
+        const message = error?.message || '';
+        if (/\b421\b|UnknownHostException|unable to resolve host|network connection (?:failed|timeout)|SocketTimeoutException|ConnectException|network is unreachable|timed?\s*out/i.test(message)) {
+          setPlaybackError('اتصال به سرور ویدئو برقرار نشد. اینترنت خود را بررسی کنید یا با شبکهٔ دیگری دوباره تلاش کنید.');
+        } else if (/None of the available extractors|NoDeclaredBrand/i.test(message)) {
+          setPlaybackError('دادهٔ دریافتی به‌عنوان ویدئو شناسایی نشد. ممکن است لینک نامعتبر یا قالب فایل ناسازگار باشد.');
+        } else {
+          setPlaybackError('دریافت ویدئو ناموفق بود. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
+        }
         setSwitchingQuality(false);
         setControlsVisible(true);
       } else if (status === 'readyToPlay') {
@@ -7752,7 +7755,7 @@ function VpnBlockModal({
   );
 }
 
-function SideMenuModal({ visible, catalog, updatedAt, refreshing, onRefresh, onClose, onBrowse, onCategories, onHome }: { catalog: CatalogItem[]; updatedAt: string; refreshing: boolean; onRefresh: () => void; visible: boolean; onClose: () => void; onBrowse: (filter: SearchFilter) => void; onCategories: () => void; onHome: () => void }) {
+function SideMenuModal({ visible, catalog, updatedAt, refreshStatus, onRefresh, onClose, onBrowse, onCategories, onHome }: { catalog: CatalogItem[]; updatedAt: string; refreshStatus: string; onRefresh: () => void; visible: boolean; onClose: () => void; onBrowse: (filter: SearchFilter) => void; onCategories: () => void; onHome: () => void }) {
   type MenuEntry = {
     key: string;
     title: string;
@@ -7881,7 +7884,8 @@ function SideMenuModal({ visible, catalog, updatedAt, refreshing, onRefresh, onC
             {stats && <View style={styles.sideMenuChildren}>
               {stats.map(([label, count]) => <Text key={label} style={styles.sideMenuLeafText}>{label}: {count.toLocaleString('fa-IR')}</Text>)}
               <Text style={styles.sideMenuVersionText}>زمان کاتالوگ نمایش‌داده‌شده: {Number.isFinite(Date.parse(updatedAt)) ? new Date(updatedAt).toLocaleString('fa-IR') : 'نامشخص'}</Text>
-              <Pressable accessibilityRole="button" disabled={refreshing} style={styles.sideMenuLeaf} onPress={onRefresh}><Text style={styles.sideMenuLeafText}>{refreshing ? 'در حال بررسی…' : 'بررسی تغییرات کاتالوگ'}</Text></Pressable>
+              <Pressable accessibilityRole="button" style={styles.sideMenuItem} onPress={onRefresh}><Ionicons name="refresh" color={COLORS.gold} size={19} /><Text style={styles.sideMenuItemText}>بررسی تغییرات کاتالوگ</Text></Pressable>
+              {!!refreshStatus && <Text accessibilityLiveRegion="polite" style={styles.sideMenuLeafText}>{refreshStatus}</Text>}
             </View>}
             {entries.map((entry) => {
               if (!entry.children?.length) return renderLeaf(entry, 1);
@@ -8069,6 +8073,8 @@ function AppContent() {
   const [contentReady, setContentReady] = useState(() => content.items.length > 0);
   const [contentResolved, setContentResolved] = useState(() => content.items.length > 0);
   const [contentLoading, setContentLoading] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState('');
+  const manualCheckRef = useRef(false);
   const [contentOffline, setContentOffline] = useState(false);
   const [startupVisible, setStartupVisible] = useState(true);
   const [homeScrollTopSignal, setHomeScrollTopSignal] = useState(0);
@@ -8182,6 +8188,8 @@ function AppContent() {
     if (contentLoadInFlightRef.current) return;
     if (!force && Date.now() - lastContentLoadRef.current < 2 * 60 * 1000) return;
     contentLoadInFlightRef.current = true;
+    const beforeRevision = contentRevisionRef.current;
+    let remoteAccepted = false;
     const onlinePromise = internetIsReachable();
     const initialLoad = lastContentLoadRef.current === 0;
     let restoringInitialCatalog = initialLoad;
@@ -8257,6 +8265,7 @@ function AppContent() {
         if (liveContent?.items.length) {
           startupFallbackContentRef.current = liveContent;
           if (applyContent(liveContent)) {
+            remoteAccepted = liveContent.source === 'remote';
             dismissStartup();
             return;
           }
@@ -8267,7 +8276,7 @@ function AppContent() {
         const bootstrapContent = await loadBootstrapContent();
         if (bootstrapContent?.items.length) {
           startupFallbackContentRef.current = bootstrapContent;
-          applyContent(bootstrapContent);
+          remoteAccepted = applyContent(bootstrapContent) && bootstrapContent.source === 'remote';
         }
         firstContent = contentRef.current;
       } else {
@@ -8290,6 +8299,10 @@ function AppContent() {
       dismissStartup();
     } finally {
       contentLoadInFlightRef.current = false;
+      if (manualCheckRef.current) {
+        manualCheckRef.current = false;
+        setRefreshStatus(!remoteAccepted ? 'بررسی کاتالوگ کامل نشد. دوباره تلاش کنید.' : beforeRevision === contentRevisionRef.current ? 'تغییر تازه‌ای دریافت نشد.' : 'کاتالوگ به‌روز شد.');
+      }
       if (showRefreshIndicator) setContentLoading(false);
     }
   };
@@ -9481,7 +9494,11 @@ function AppContent() {
         onContinue={() => setVpnWarningVisible(false)}
       />
       <SideMenuModal
-        catalog={content.items} updatedAt={content.updatedAt} refreshing={contentLoading} onRefresh={() => void reloadContent(true)}
+        catalog={content.items} updatedAt={content.updatedAt} refreshStatus={refreshStatus} onRefresh={() => {
+          manualCheckRef.current = true;
+          setRefreshStatus('در حال بررسی کاتالوگ…');
+          if (!contentLoadInFlightRef.current) void reloadContent(true);
+        }}
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
         onBrowse={openCatalogFilter}

@@ -1771,8 +1771,8 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
   if (!remoteUrl) return null;
   await readCacheMetadata();
 
-  // Bootstrap and manifest are both small. Start them together so the manifest
-  // truth check does not add another 2–3 seconds before the first catalog byte.
+  // Start the manifest alongside the complete recovery snapshot. The latter
+  // can exceed 15 MB when a device predates the current live baseline.
   const manifestPromise = fetchRemoteManifest().catch(() => null);
   const currentBootstrap = memoryBootstrapContent || normalizedLocalPayload();
 
@@ -1809,7 +1809,8 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
 
     candidates.forEach((candidate, index) => {
       const controller = controllers[index];
-      const timeout = setTimeout(() => controller.abort(), 8000);
+      // Allow a complete recovery over mobile data, not just a fast LAN.
+      const timeout = setTimeout(() => controller.abort(), 180_000);
       const separator = candidate.includes('?') ? '&' : '?';
 
       void (async () => {
@@ -1943,7 +1944,7 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
     const separator = candidate.includes('?') ? '&' : '?';
     const requestUrl = candidate + separator + '_aparatchi_manifest=' + Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2400);
+    const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
       const response = await fetch(requestUrl, {
         headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
