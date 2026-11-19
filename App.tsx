@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import * as Network from 'expo-network';
 import { useEventListener } from 'expo';
+import { CATEGORY_COVERS } from './src/categoryCovers';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -274,8 +275,8 @@ const catalogArtworkCandidates = (
   } else if (isTmdbArtwork) {
     const tmdbWidth = kind === 'poster' ? 'w342' : 'w780';
     candidates.push(
-      proxied,
       image.replace(/\/t\/p\/(?:original|w\d+)\//i, `/t/p/${tmdbWidth}/`),
+      proxied,
       image,
     );
   } else {
@@ -1440,7 +1441,9 @@ const isProgramItem = (item: CatalogItem) => {
   return explicitKind || explicitProgram || explicitCategory;
 };
 
+const reviewedGeneralDocs = new Set(['e2591a20-ac76-11ed-8ece-ed01c158460c', 'fa868d70-d7c4-11ef-b79a-418e40569a9b', '5a6fdd80-cdb1-11ef-bbda-676e6c164e3e', '6b9d4f20-f9fd-11f0-a855-33a208b8c793']);
 const isDocumentaryItem = (item: CatalogItem) => {
+  if (reviewedGeneralDocs.has(item.id)) return true;
   const title = catalogTitleText(item);
   const genres = catalogGenreText(item);
   const knownDocumentary = hasStandaloneTerm(title, ['از بی', 'از به', 'az be']);
@@ -1463,6 +1466,7 @@ const isDocumentaryItem = (item: CatalogItem) => {
 };
 
 const isWildlifeDocumentaryItem = (item: CatalogItem) => {
+  if (reviewedGeneralDocs.has(item.id)) return false;
   if (!isDocumentaryItem(item)) return false;
   if (item.isWildlife === true && Number(item.tmdbValidationVersion || 0) >= 7) return true;
   const text = `${catalogTitleText(item)} ${catalogGenreText(item)} ${String(item.overview || '')}`;
@@ -1588,6 +1592,7 @@ const STRICT_DYNAMIC_CATEGORY_FILTERS = new Set<SearchFilter>([
 ]);
 
 const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
+  if ((filter === 'wildlife' || filter === 'documentaries') && reviewedGeneralDocs.has(item.id)) return filter === 'documentaries';
   if (filter === 'all') return true;
   if (filter === 'latest') return isLatestMovieItem(item);
   if (filter === 'movie' || filter === 'series') return matchesCatalogFilter(item, filter);
@@ -3974,16 +3979,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
   const liveCategoriesOffsetRef = useRef(categoriesScreenScrollOffset);
   const usableCatalog = catalog;
-  const [categoryPreviewItems, setCategoryPreviewItems] = useState<Map<SearchFilter, CatalogItem>>(() => new Map());
-  useEffect(() => {
-    let cancelled = false;
-    void buildCategoryPreviewItems(usableCatalog, () => cancelled, (items) => {
-      if (!cancelled) setCategoryPreviewItems(items);
-    }).then((items) => {
-      if (!cancelled && items) setCategoryPreviewItems(items);
-    });
-    return () => { cancelled = true; };
-  }, [usableCatalog]);
+  // Category cards use bundled images; opening this tab schedules no poster work.
 
   const categoryActorMatches = useMemo(
     () => peopleWorkItemIdsMatchingQuery(peopleWorks, usableCatalog, deferredQuery),
@@ -4098,7 +4094,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
       keyboardShouldPersistTaps="handled"
       ListHeaderComponent={searchHeader}
       renderItem={({ item: card }) => {
-        const preview = categoryPreviewItems.get(card.filter);
+        const cover = CATEGORY_COVERS[card.filter];
         return (
           <Pressable
             onPress={() => {
@@ -4114,19 +4110,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
               pressed && styles.categoryCardPressed,
             ]}
           >
-            {preview ? (
-              <CatalogArtwork
-                primary={preview.poster || preview.backdrop}
-                fallback={preview.posterFallback || preview.backdrop || preview.backdropFallback}
-                style={StyleSheet.absoluteFill}
-                imageKind="poster"
-                transition={0}
-              />
-            ) : (
-              <View style={[StyleSheet.absoluteFill, styles.catalogArtworkFallback]}>
-                <Ionicons name={card.icon} color="rgba(216,180,90,0.55)" size={58} />
-              </View>
-            )}
+            <Image source={cover} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} />
             <LinearGradient
               colors={['rgba(6,8,11,0.00)', 'rgba(6,8,11,0.08)', 'rgba(6,8,11,0.88)']}
               locations={[0, 0.42, 1]}
@@ -7801,7 +7785,6 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
         { key: 'iranian-series', title: 'سریال‌های ایرانی', filter: 'iranian-series', icon: 'videocam-outline' },
         { key: 'foreign-series', title: 'سریال‌های خارجی', filter: 'foreign-series', icon: 'globe-outline' },
         { key: 'korean-series', title: 'سریال‌های کره‌ای', filter: 'korean-series', icon: 'location-outline' },
-        { key: 'indian-series', title: 'سریال‌های هندی', filter: 'indian-series', icon: 'location-outline' },
       ],
     },
     {
@@ -7831,7 +7814,8 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
       key: 'more', title: 'بیشتر', icon: 'ellipsis-horizontal-circle-outline', children: [
         { key: 'updated', title: 'به‌روزشده‌ها', filter: 'updated', icon: 'refresh-outline' },
         { key: 'operator', title: 'ویژه اینترنت همراه', filter: 'mobile-operator', icon: 'phone-portrait-outline' },
-        { key: 'imdb-top', title: '۱۰۰ برتر IMDb', action: 'home', icon: 'trophy-outline' },
+        { key: 'documentaries', title: 'مستندها', filter: 'documentaries', icon: 'film-outline' },
+        { key: 'wildlife', title: 'حیات وحش', filter: 'wildlife', icon: 'leaf-outline' },
         { key: 'categories', title: 'همه دسته‌بندی‌ها', action: 'categories', icon: 'grid-outline' },
       ],
     },
