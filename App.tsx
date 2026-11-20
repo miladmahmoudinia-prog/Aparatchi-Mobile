@@ -76,7 +76,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.35';
+const APP_DISPLAY_VERSION = '0.16.36';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -304,8 +304,8 @@ const isNetworkFailure = (value?: string) =>
 const friendlyNetworkError = (value?: string) => {
   const text = String(value || '').trim();
   if (!text) return '';
-  if (isNetworkFailure(text)) {
-    return 'اینترنت قطع است؛ اینترنت را روشن کنید و برای ادامه دوباره بزنید.';
+  if (isNetworkFailure(text) || /\bHTTP\s*\d{3}\b|سرور به‌جای ویدئو|اینترنت قطع است/i.test(text)) {
+    return 'اتصال اینترنت را بررسی کنید یا با اینترنت دیگری دوباره تلاش کنید.';
   }
   return text;
 };
