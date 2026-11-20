@@ -14,6 +14,14 @@ test('slow artwork retains the original request while a bounded second route sta
   raced.finish('slow',false);
   assert.deepEqual([...h.render(urls).sources], ['fast']);
 });
+test('two stalls do not starve a working third URL or cancel the primary', () => {
+  const h = harness(), urls = ['slow','stalled','working'];
+  h.render(urls); h.tick(); h.render(urls); h.tick(3500);
+  const r = h.render(urls);
+  assert.deepEqual([...r.sources], ['slow','working']);
+  r.finish('working',true);
+  assert.deepEqual([...h.render(urls).sources], ['working']);
+});
 test('failed routes advance without more than two active images and exhausted sources stop', () => {
   const h = harness(), urls = ['a','b','c']; h.render(urls); h.tick();
   h.render(urls).finish('a',false);

@@ -76,7 +76,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.36';
+const APP_DISPLAY_VERSION = '0.16.37';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -1894,6 +1894,15 @@ const useArtworkSources = (input: string[]) => {
     }), 700);
     return () => clearTimeout(timer);
   }, [identity, current.winner, current.hedged, candidates.length]);
+  const spare = sources[1];
+  const hasAlternative = candidates.some(url => !current.failed.includes(url) && !sources.includes(url));
+  useEffect(() => {
+    if (!spare || !hasAlternative || current.winner) return;
+    // Preserve the first download even on slow networks. If both stall,
+    // release the speculative slot so a different source can be tried.
+    const timer = setTimeout(() => finish(spare, false), 3500);
+    return () => clearTimeout(timer);
+  }, [identity, spare, hasAlternative, current.winner]);
   const finish = (url: string, success: boolean) => {
     if (identityRef.current !== identity) return;
     setState((previous) => {
@@ -1949,12 +1958,12 @@ const CatalogArtwork = memo(function CatalogArtwork({
   transition?: number;
   imageKind?: 'poster' | 'backdrop';
 }) {
-  const candidates = useMemo(() => [...new Set([
-    // Catalog fallbacks are normally stable, resized TMDB artwork.  Showing
-    // them first avoids an empty card while an Upera origin is warming up.
-    ...catalogArtworkCandidates(fallback, imageKind),
-    ...catalogArtworkCandidates(primary, imageKind),
-  ])], [fallback, imageKind, primary]);
+  const candidates = useMemo(() => {
+    const preferred = catalogArtworkCandidates(fallback, imageKind);
+    const alternate = catalogArtworkCandidates(primary, imageKind);
+    // Race independent artwork before trying multiple sizes of the same file.
+    return [...new Set([...preferred.slice(0, 1), ...alternate.slice(0, 1), ...preferred, ...alternate])];
+  }, [fallback, imageKind, primary]);
   const { sources, finish } = useArtworkSources(candidates);
 
   return (

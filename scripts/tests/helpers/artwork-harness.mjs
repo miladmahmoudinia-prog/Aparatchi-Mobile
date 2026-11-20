@@ -19,6 +19,6 @@ export function harness() {
   vm.runInContext(ts.transpileModule(source+'\nglobalThis.hook = useArtworkSources;', {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText, context);
   return {
     render: urls => { cursor = 0; const result = context.hook(urls); effects.splice(0).forEach(fn => fn()); return result; },
-    tick: () => { const pending = [...timers.values()]; timers.clear(); pending.forEach(t => {assert.equal(t.ms,700); t.fn();}); },
+    tick: (ms = 700) => { const pending = [...timers.values()]; timers.clear(); pending.forEach(t => {assert.equal(t.ms,ms); t.fn();}); },
   };
 }
