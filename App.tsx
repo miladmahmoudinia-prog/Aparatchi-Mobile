@@ -76,7 +76,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.33';
+const APP_DISPLAY_VERSION = '0.16.34';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -7883,7 +7883,7 @@ function SideMenuModal({ visible, catalog, updatedAt, refreshStatus, onRefresh, 
             </Pressable>
             {stats && <View style={styles.sideMenuChildren}>
               {stats.map(([label, count]) => <Text key={label} style={styles.sideMenuLeafText}>{label}: {count.toLocaleString('fa-IR')}</Text>)}
-              <Text style={styles.sideMenuVersionText}>زمان کاتالوگ نمایش‌داده‌شده: {Number.isFinite(Date.parse(updatedAt)) ? new Date(updatedAt).toLocaleString('fa-IR') : 'نامشخص'}</Text>
+              <Text style={styles.sideMenuVersionText}>زمان کاتالوگ (به وقت ایران): {Number.isFinite(Date.parse(updatedAt)) ? new Date(updatedAt).toLocaleString('fa-IR-u-ca-persian-nu-arabext', { timeZone: 'Asia/Tehran', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : 'نامشخص'}</Text>
               <Pressable accessibilityRole="button" style={styles.sideMenuItem} onPress={onRefresh}><Ionicons name="refresh" color={COLORS.gold} size={19} /><Text style={styles.sideMenuItemText}>بررسی تغییرات کاتالوگ</Text></Pressable>
               {!!refreshStatus && <Text accessibilityLiveRegion="polite" style={styles.sideMenuLeafText}>{refreshStatus}</Text>}
             </View>}
@@ -8344,7 +8344,7 @@ function AppContent() {
     startupFallbackTimer = setTimeout(() => {
       if (startupDismissedRef.current) return;
       const fallback = startupFallbackContentRef.current;
-      if (fallback?.items.length) {
+      if (!contentRef.current.items.length && fallback?.items.length) {
         const visibleFallback = visibleLoadedContent(fallback);
         if (visibleFallback.items.length) {
           contentRevisionRef.current = `startup-bootstrap:${loadedContentRevision(visibleFallback)}`;
