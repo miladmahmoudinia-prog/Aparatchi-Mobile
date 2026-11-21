@@ -107,7 +107,8 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew app:assembleRelease --no-daemon --console=plain 2>&1 | tee /tmp/apk-build.log || {
-            grep -Ei "failed|error|what went wrong|could not|^>|exception|not found|unable to|no space" /tmp/apk-build.log | tail -35 | while IFS= read -r line; do echo "::error::$line"; done
+            awk '/What went wrong:/{p=1} /Try:/{p=0} p' /tmp/apk-build.log | head -9 | while IFS= read -r line; do echo "::error::$line"; done
+            grep -Ei 'Unable to resolve|Cannot find module|ENOENT|No space left' /tmp/apk-build.log | head -2 | while IFS= read -r line; do echo "::error::$line"; done
             exit 1
           }
 
