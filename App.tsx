@@ -76,7 +76,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.38';
+const APP_DISPLAY_VERSION = '0.16.39';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -162,6 +162,24 @@ const VERIFIED_COLLECTION_TITLES_FA: Record<string, string> = {
   'tmdb:1010712': 'کیمیاگر تمام‌فلزی',
 };
 
+// Repair only observed bad labels; a newer editorial translation still wins.
+const REVIEWED_COLLECTION_LABELS: Record<string, [string, string]> = {
+  '334996': ['سون آو باتمان', 'پسر بتمن'],
+  '374930': ['سناو کوئین', 'ملکه برفی'],
+  '593251': ['دِ دث آو سوپرمان', 'مرگ سوپرمن'],
+  '1068899': ['فیست آو فری', 'مشت خشم'],
+  '945984': ['۱ ام لجند', 'من افسانه‌ام'],
+  '153948': ['بهست آو دِ بهست', 'بهترینِ بهترین‌ها'],
+  '1618054': ['ویش دراگون', 'اژدهای آرزوها'],
+  '809185': ['ارمی آو دِ دید', 'ارتش مردگان'],
+  '86116': ['دث ریس (۲۰۰۸)', 'مسابقه مرگ (۲۰۰۸)'],
+  '434533': ['دث ریس', 'مسابقه مرگ (۱۹۷۵)'],
+  '173710': ['پلانهت آو دِ اپهس (رهبوت)', 'سیاره میمون‌ها (بازراه‌اندازی)'],
+  '101471': ['دِ رهترن آو دِ لیوینگ دید', 'بازگشت مردگان زنده'],
+  '651960': ['دث بهلل', 'زنگ مرگ'],
+  '97237': ['فاکهس آو دث', 'چهره‌های مرگ'],
+};
+
 const localizedCollectionTitleFa = (
   collectionId: string | undefined,
   rawFa: string | undefined,
@@ -172,6 +190,9 @@ const localizedCollectionTitleFa = (
     .replace(/^(?:کالکشن|مجموعه(?:\s+فیلم(?:‌?ها)?)?)\s*/u, '')
     .replace(/\s*(?:کالکشن|مجموعه)\s*$/u, '')
     .trim();
+  const tmdbId = /^(?:collection:)?tmdb:(\d+)$/i.exec(String(collectionId || ''))?.[1];
+  const reviewed = tmdbId && REVIEWED_COLLECTION_LABELS[tmdbId];
+  if (reviewed && cleaned === reviewed[0]) return reviewed[1];
   if (cleaned && hasPersianScript(cleaned)) return cleaned;
   const verified = VERIFIED_COLLECTION_TITLES_FA[String(collectionId || '')];
   if (verified) return verified;
@@ -3988,17 +4009,6 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
   const liveCategoriesOffsetRef = useRef(categoriesScreenScrollOffset);
   const usableCatalog = catalog;
-  const [previews, setPreviews] = useState<Map<SearchFilter, CatalogItem>>(() => new Map());
-  useEffect(() => {
-    if (!isActive || deferredQuery) return;
-    let cancelled = false;
-    const frame = requestAnimationFrame(() => {
-      void buildCategoryPreviewItems(catalog, () => cancelled, setPreviews).then(items => {
-        if (!cancelled && items) setPreviews(items);
-      });
-    });
-    return () => { cancelled = true; cancelAnimationFrame(frame); };
-  }, [catalog, isActive, deferredQuery]);
 
   const categoryActorMatches = useMemo(
     () => peopleWorkItemIdsMatchingQuery(peopleWorks, usableCatalog, deferredQuery),
@@ -4114,7 +4124,6 @@ const CategoriesScreen = memo(function CategoriesScreen({
       ListHeaderComponent={searchHeader}
       renderItem={({ item: card }) => {
         const cover = CATEGORY_COVERS[card.filter];
-        const member = previews.get(card.filter);
         return (
           <Pressable
             onPress={() => {
@@ -4130,14 +4139,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
               pressed && styles.categoryCardPressed,
             ]}
           >
-            <CatalogArtwork
-              key={member?.id || card.filter}
-              primary={member?.poster}
-              fallback={member?.posterFallback}
-              localFallback={cover}
-              style={StyleSheet.absoluteFill}
-              transition={0}
-            />
+            <Image source={cover} contentFit="cover" style={StyleSheet.absoluteFill} transition={0} />
             <LinearGradient
               colors={['rgba(6,8,11,0.00)', 'rgba(6,8,11,0.08)', 'rgba(6,8,11,0.88)']}
               locations={[0, 0.42, 1]}

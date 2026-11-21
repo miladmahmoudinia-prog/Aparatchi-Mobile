@@ -38,9 +38,16 @@ test('failed replacement releases retry lock', async () => {
 });
 const collectionBody = app.split('const localizedCollectionTitleFa = (')[1].split(') => {')[1].split('\n};')[0];
 const title = vm.runInNewContext(`(collectionId, rawFa, members) => {${collectionBody}\n}`, {
+  REVIEWED_COLLECTION_LABELS: vm.runInNewContext('(' + app.split('const REVIEWED_COLLECTION_LABELS:')[1].split(' = ')[1].split('\n};')[0] + '\n})'),
   VERIFIED_COLLECTION_TITLES_FA: { id: 'قدیمی' }, hasPersianScript: x => /[\u0600-\u06ff]/.test(x),
 });
 test('catalog collection title wins over static override', () => assert.equal(title('id', 'کالکشن جدید', []), 'جدید'));
+test('observed Batman phonetic label is repaired without replacing a newer translation', () => {
+  for (const id of ['tmdb:334996', 'collection:tmdb:334996']) {
+    assert.equal(title(id, 'کالکشن سون آو باتمان', []), 'پسر بتمن');
+    assert.equal(title(id, 'فرزند بتمن', []), 'فرزند بتمن');
+  }
+});
 test('collection never borrows member title', () => {
   assert.equal(title('', '', [{ nameFa: 'فیلم', collectionName: 'Original Collection' }]), 'Original Collection');
   assert.equal(title('', '', [{ nameFa: 'فیلم' }]), 'مجموعه فیلم‌ها');

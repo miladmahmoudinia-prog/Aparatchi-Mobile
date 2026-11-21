@@ -112,7 +112,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 'https://github.com/miladmahmoudinia-prog/Aparatchi-Mobile/releases/download/android-test-0.16.37/Aparatchi-Android-Release.apk' -o /tmp/previous.apk
+          curl --fail --location --retry 3 'https://github.com/miladmahmoudinia-prog/Aparatchi-Mobile/releases/download/android-test-0.16.38/Aparatchi-Android-Release.apk' -o /tmp/previous.apk
           SIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$SIGNER" verify --print-certs /tmp/previous.apk > /tmp/previous-cert.txt
           "$SIGNER" verify --print-certs android/app/build/outputs/apk/release/app-release.apk > /tmp/candidate-cert.txt
@@ -127,6 +127,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           APP_VERSION: ${{ steps.app_version.outputs.version }}
-          RELEASE_TAG: android-test-0.16.38
+          RELEASE_TAG: android-test-0.16.39
           APK_PATH: Aparatchi-Android-Release.apk
         run: node scripts/publish-apk-release.mjs
