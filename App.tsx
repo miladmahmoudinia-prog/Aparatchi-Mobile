@@ -77,7 +77,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.40';
+const APP_DISPLAY_VERSION = '0.16.41';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
