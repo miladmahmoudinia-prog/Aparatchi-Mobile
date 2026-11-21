@@ -76,7 +76,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.37';
+const APP_DISPLAY_VERSION = '0.16.38';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -3900,8 +3900,8 @@ const relatedCategoryFilters = (filter: SearchFilter): SearchFilter[] => {
 };
 
 const hasFastCategoryArtwork = (item: CatalogItem) =>
-  [item.backdrop, item.poster, item.backdropFallback, item.posterFallback]
-    .some((value) => Boolean(optimizedImageUrl(value, 'backdrop')));
+  [item.poster, item.posterFallback]
+    .some((value) => Boolean(optimizedImageUrl(value, 'poster')));
 
 const categoryPreviewCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem>>();
 const buildCategoryPreviewItems = async (
@@ -3988,7 +3988,17 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
   const liveCategoriesOffsetRef = useRef(categoriesScreenScrollOffset);
   const usableCatalog = catalog;
-  // Category cards use bundled images; opening this tab schedules no poster work.
+  const [previews, setPreviews] = useState<Map<SearchFilter, CatalogItem>>(() => new Map());
+  useEffect(() => {
+    if (!isActive || deferredQuery) return;
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => {
+      void buildCategoryPreviewItems(catalog, () => cancelled, setPreviews).then(items => {
+        if (!cancelled && items) setPreviews(items);
+      });
+    });
+    return () => { cancelled = true; cancelAnimationFrame(frame); };
+  }, [catalog, isActive, deferredQuery]);
 
   const categoryActorMatches = useMemo(
     () => peopleWorkItemIdsMatchingQuery(peopleWorks, usableCatalog, deferredQuery),
@@ -4104,6 +4114,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
       ListHeaderComponent={searchHeader}
       renderItem={({ item: card }) => {
         const cover = CATEGORY_COVERS[card.filter];
+        const member = previews.get(card.filter);
         return (
           <Pressable
             onPress={() => {
@@ -4119,7 +4130,14 @@ const CategoriesScreen = memo(function CategoriesScreen({
               pressed && styles.categoryCardPressed,
             ]}
           >
-            <Image source={cover} style={StyleSheet.absoluteFill} contentFit="cover" transition={0} />
+            <CatalogArtwork
+              key={member?.id || card.filter}
+              primary={member?.poster}
+              fallback={member?.posterFallback}
+              localFallback={cover}
+              style={StyleSheet.absoluteFill}
+              transition={0}
+            />
             <LinearGradient
               colors={['rgba(6,8,11,0.00)', 'rgba(6,8,11,0.08)', 'rgba(6,8,11,0.88)']}
               locations={[0, 0.42, 1]}
