@@ -76,7 +76,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.39';
+const APP_DISPLAY_VERSION = '0.16.40';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -1598,7 +1598,6 @@ const sortForCatalogFilter = (items: CatalogItem[], _filter: SearchFilter) => {
 
 const catalogFilterCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem[]>>();
 const catalogListScrollOffsets = new Map<string, number>();
-let categoriesScreenScrollOffset = 0;
 const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
   'korean-movies', 'korean-series', 'indian-movies',
@@ -4006,8 +4005,6 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const [query, setQuery] = useState('');
   const deferredQuery = normalizeComparableText(useDebouncedText(query, 220));
   const { width: screenWidth } = useWindowDimensions();
-  const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
-  const liveCategoriesOffsetRef = useRef(categoriesScreenScrollOffset);
   const usableCatalog = catalog;
 
   const categoryActorMatches = useMemo(
@@ -4038,28 +4035,6 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const columnCount = screenWidth >= 760 ? 3 : 2;
   const categoryWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
   const posterWidth = Math.max(132, Math.floor((screenWidth - 36 - 12) / 2));
-
-  useEffect(() => {
-    if (!isActive || deferredQuery || categoriesScreenScrollOffset <= 0) return undefined;
-    const frame = requestAnimationFrame(() => {
-      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
-    });
-    const retry = setTimeout(() => {
-      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
-    }, 120);
-    const settle = setTimeout(() => {
-      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
-    }, 420);
-    return () => { cancelAnimationFrame(frame); clearTimeout(retry); clearTimeout(settle); };
-  }, [columnCount, deferredQuery, isActive]);
-
-  const rememberCategoriesOffset = useCallback((event: any) => {
-    markCatalogInteraction();
-    if (deferredQuery) return;
-    const next = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
-    liveCategoriesOffsetRef.current = next;
-    categoriesScreenScrollOffset = next;
-  }, [deferredQuery]);
 
   const searchHeader = (
     <>
@@ -4112,7 +4087,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
 
   return (
     <FlatList
-      ref={categoriesListRef}
+      scrollEnabled={isActive}
       key={`category-grid-${columnCount}`}
       data={CATEGORY_CARDS}
       numColumns={columnCount}
@@ -4126,10 +4101,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
         const cover = CATEGORY_COVERS[card.filter];
         return (
           <Pressable
-            onPress={() => {
-              categoriesScreenScrollOffset = liveCategoriesOffsetRef.current;
-              onBrowse(card.filter);
-            }}
+            onPress={() => onBrowse(card.filter)}
             unstable_pressDelay={0}
             hitSlop={10}
             android_ripple={{ color: 'rgba(216,180,90,0.16)' }}
@@ -4168,10 +4140,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
       updateCellsBatchingPeriod={48}
       windowSize={4}
       removeClippedSubviews
-      scrollEventThrottle={96}
-      onScroll={rememberCategoriesOffset}
-      onScrollEndDrag={rememberCategoriesOffset}
-      onMomentumScrollEnd={rememberCategoriesOffset}
+      onScrollBeginDrag={markCatalogInteraction}
     />
   );
 });
@@ -9428,6 +9397,7 @@ function AppContent() {
         style={styles.safeArea}
         edges={['top', 'right', 'left']}
       >
+        <View style={styles.tabScene}>
         <View
           pointerEvents={activeTab === 'home' ? 'auto' : 'none'}
           style={[styles.tabScene, activeTab !== 'home' && styles.tabSceneHidden]}
@@ -9451,7 +9421,9 @@ function AppContent() {
         {categoriesMounted ? (
           <View
             pointerEvents={activeTab === 'categories' ? 'auto' : 'none'}
-            style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}
+            importantForAccessibility={activeTab === 'categories' ? 'auto' : 'no-hide-descendants'}
+            accessibilityElementsHidden={activeTab !== 'categories'}
+            style={[StyleSheet.absoluteFill, activeTab !== 'categories' && styles.categorySceneHidden]}
           >
             <CategoriesScreen catalog={content.items} peopleWorks={content.peopleWorks} onBrowse={openCatalogFilter} onOpen={openRootDetail} isActive={activeTab === 'categories'} />
           </View>
@@ -9498,6 +9470,7 @@ function AppContent() {
             />
           </View>
         ) : null}
+        </View>
         {contentLoading ? (
           <View pointerEvents="none" style={styles.refreshIndicator}>
             <ActivityIndicator color={COLORS.gold} size="small" />
@@ -9641,6 +9614,7 @@ const styles = StyleSheet.create({
   app: { flex: 1, backgroundColor: COLORS.background },
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   tabScene: { flex: 1 },
+  categorySceneHidden: { opacity: 0 },
   tabSceneHidden: { display: 'none' },
   routeTransitionCover: { ...absoluteFillObject, zIndex: 850, elevation: 850, backgroundColor: '#05070A' },
   playerRouteBackdrop: { ...absoluteFillObject, zIndex: 900, elevation: 1000, backgroundColor: '#000' },

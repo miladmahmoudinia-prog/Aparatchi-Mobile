@@ -37,7 +37,10 @@ test('category covers never use unrelated fallback content', () => {
 
 test('category position restores on return', () => {
   assert.ok(source.includes("isActive={activeTab === 'categories'}"));
-  assert.ok(source.includes('categoriesScreenScrollOffset = liveCategoriesOffsetRef.current'));
+  assert.match(source, /StyleSheet\.absoluteFill, activeTab !== 'categories' && styles\.categorySceneHidden/);
+  assert.match(source, /categorySceneHidden: \{ opacity: 0 \}/);
+  const grid = source.slice(source.indexOf('const CategoriesScreen ='), source.indexOf('function CatalogListScreen'));
+  assert.doesNotMatch(grid, /scrollToOffset|categoriesScreenScrollOffset/);
 });
 
 test('home virtualization and trusted operator URL guards remain enabled', () => {
