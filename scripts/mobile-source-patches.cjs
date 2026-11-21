@@ -40,12 +40,7 @@ function applyMobileSourcePatches(input) {
     'collection detail identity',
   );
 
-  source = replaceOnce(
-    source,
-    "      // Never show an English-only collection name as the Persian line. If TMDB\n      // does not provide a Persian collection title, use a deterministic local\n      // label based on the first Persian movie title instead of bad machine text.\n      const firstFa = String(first?.nameFa || '').trim();\n      const titleFa = rawFa && hasPersianScript(rawFa)\n        ? rawFa\n        : `مجموعه ${firstFa || 'فیلم‌ها'}`;\n",
-    "      // Collection identity belongs to collection metadata. If no verified\n      // Persian collection title exists, keep the original collection name\n      // instead of borrowing one child/installment title.\n      const titleFa = rawFa && hasPersianScript(rawFa)\n        ? rawFa\n        : titleEn;\n",
-    'collection folder identity',
-  );
+  // Folder names are resolved by the reviewed stable-ID registry in App.tsx.
 
   source = replaceOnce(
     source,
