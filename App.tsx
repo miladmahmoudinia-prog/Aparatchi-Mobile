@@ -1,10 +1,12 @@
 declare const require: (assetPath: string) => number;
 
+import reviewedCollectionTitles from './src/reviewedCollectionTitles.json';
 import { markCatalogInteraction, commitCatalogWhenIdle } from './src/catalogInteraction';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import * as Network from 'expo-network';
 import { useEventListener } from 'expo';
+import { CATEGORY_COVERS } from './src/categoryCovers';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -44,7 +46,7 @@ import {
 import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
-import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, getCatalogItemPreview, loadContent, loadLiveContent, LoadedContent } from './src/contentService';
+import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, getCatalogItemPreview, loadContent, prepareLiveContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
   checkMobileOperatorAccess,
@@ -75,7 +77,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.28';
+const APP_DISPLAY_VERSION = '0.16.40';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -119,7 +121,15 @@ type SearchFilter =
 let collectionBrowserBackHandler: (() => boolean) | null = null;
 let collectionBrowserSelectedId: string | null = null;
 let collectionBrowserScrollOffset = 0;
-let catalogGridColumnPreference: 2 | 4 = 2;
+// Session-only preferences; restarting the app restores two columns.
+const catalogGridColumnsByList = new Map<string, 2 | 4>();
+function useCatalogGridColumns(listKey: string): [2 | 4, (count: 2 | 4) => void] {
+  const [, refresh] = useState(0);
+  return [catalogGridColumnsByList.get(listKey) || 2, (count) => {
+    catalogGridColumnsByList.set(listKey, count);
+    refresh((revision) => revision + 1);
+  }];
+}
 
 const hasPersianScript = (value?: string | null) => /[\u0600-\u06FF]/.test(String(value || ''));
 
@@ -153,21 +163,31 @@ const VERIFIED_COLLECTION_TITLES_FA: Record<string, string> = {
   'tmdb:1010712': 'کیمیاگر تمام‌فلزی',
 };
 
-const localizedCollectionTitleFa = (
-  collectionId: string | undefined,
-  rawFa: string | undefined,
-  members: CatalogItem[],
-) => {
-  const verified = VERIFIED_COLLECTION_TITLES_FA[String(collectionId || '')];
-  if (verified) return verified;
-  const cleaned = String(rawFa || '')
-    .trim()
-    .replace(/^(?:کالکشن|مجموعه(?:\s+فیلم(?:‌?ها)?)?)\s*/u, '')
-    .replace(/\s*(?:کالکشن|مجموعه)\s*$/u, '')
-    .trim();
-  if (cleaned && hasPersianScript(cleaned)) return cleaned;
-  const firstFa = String(members[0]?.nameFa || '').trim();
-  return firstFa && hasPersianScript(firstFa) ? `مجموعه ${firstFa}` : 'مجموعه فیلم‌ها';
+// Repair only observed bad labels; a newer editorial translation still wins.
+const REVIEWED_COLLECTION_LABELS: Record<string, [string, string]> = {
+  '334996': ['سون آو باتمان', 'پسر بتمن'],
+  '374930': ['سناو کوئین', 'ملکه برفی'],
+  '593251': ['دِ دث آو سوپرمان', 'مرگ سوپرمن'],
+  '1068899': ['فیست آو فری', 'مشت خشم'],
+  '945984': ['۱ ام لجند', 'من افسانه‌ام'],
+  '153948': ['بهست آو دِ بهست', 'بهترینِ بهترین‌ها'],
+  '1618054': ['ویش دراگون', 'اژدهای آرزوها'],
+  '809185': ['ارمی آو دِ دید', 'ارتش مردگان'],
+  '86116': ['دث ریس (۲۰۰۸)', 'مسابقه مرگ (۲۰۰۸)'],
+  '434533': ['دث ریس', 'مسابقه مرگ (۱۹۷۵)'],
+  '173710': ['پلانهت آو دِ اپهس (رهبوت)', 'سیاره میمون‌ها (بازراه‌اندازی)'],
+  '101471': ['دِ رهترن آو دِ لیوینگ دید', 'بازگشت مردگان زنده'],
+  '651960': ['دث بهلل', 'زنگ مرگ'],
+  '97237': ['فاکهس آو دث', 'چهره‌های مرگ'],
+};
+
+const localizedCollectionTitleFa = (collectionId: string | undefined, members: CatalogItem[]) => {
+  const key = String(collectionId || '').trim().replace(/^collection:/i, '');
+  if (Object.prototype.hasOwnProperty.call(reviewedCollectionTitles, key)) {
+    return (reviewedCollectionTitles as Record<string, string>)[key];
+  }
+  // No guessed translation or member-title substitution for unreviewed collections.
+  return members.find(member => member.collectionName?.trim())?.collectionName?.trim() || 'مجموعه فیلم‌ها';
 };
 
 type CatalogDeepLink = {
@@ -265,8 +285,8 @@ const catalogArtworkCandidates = (
   } else if (isTmdbArtwork) {
     const tmdbWidth = kind === 'poster' ? 'w342' : 'w780';
     candidates.push(
-      proxied,
       image.replace(/\/t\/p\/(?:original|w\d+)\//i, `/t/p/${tmdbWidth}/`),
+      proxied,
       image,
     );
   } else {
@@ -294,8 +314,8 @@ const isNetworkFailure = (value?: string) =>
 const friendlyNetworkError = (value?: string) => {
   const text = String(value || '').trim();
   if (!text) return '';
-  if (isNetworkFailure(text)) {
-    return 'اینترنت قطع است؛ اینترنت را روشن کنید و برای ادامه دوباره بزنید.';
+  if (isNetworkFailure(text) || /\bHTTP\s*\d{3}\b|سرور به‌جای ویدئو|اینترنت قطع است/i.test(text)) {
+    return 'اتصال اینترنت را بررسی کنید یا با اینترنت دیگری دوباره تلاش کنید.';
   }
   return text;
 };
@@ -1431,7 +1451,9 @@ const isProgramItem = (item: CatalogItem) => {
   return explicitKind || explicitProgram || explicitCategory;
 };
 
+const reviewedGeneralDocs = new Set(['e2591a20-ac76-11ed-8ece-ed01c158460c', 'fa868d70-d7c4-11ef-b79a-418e40569a9b', '5a6fdd80-cdb1-11ef-bbda-676e6c164e3e', '6b9d4f20-f9fd-11f0-a855-33a208b8c793']);
 const isDocumentaryItem = (item: CatalogItem) => {
+  if (reviewedGeneralDocs.has(item.id)) return true;
   const title = catalogTitleText(item);
   const genres = catalogGenreText(item);
   const knownDocumentary = hasStandaloneTerm(title, ['از بی', 'از به', 'az be']);
@@ -1454,6 +1476,7 @@ const isDocumentaryItem = (item: CatalogItem) => {
 };
 
 const isWildlifeDocumentaryItem = (item: CatalogItem) => {
+  if (reviewedGeneralDocs.has(item.id)) return false;
   if (!isDocumentaryItem(item)) return false;
   if (item.isWildlife === true && Number(item.tmdbValidationVersion || 0) >= 7) return true;
   const text = `${catalogTitleText(item)} ${catalogGenreText(item)} ${String(item.overview || '')}`;
@@ -1487,8 +1510,9 @@ const EPISODE_UPDATE_LABEL_PATTERN = /^\u0642\u0633\u0645\u062a\s+.+\s+\u0627\u0
 const isLatestMovieItem = (item: CatalogItem) => item.type === 'movie';
 const isUpdatedEpisodicItem = (item: CatalogItem) => Boolean(
   item.type === 'series' &&
-  EPISODE_UPDATE_LABEL_PATTERN.test(String(item.updateLabel || '').trim()) &&
-  Number(item.episodeCount || item.latestEpisode?.episodeNumber || 0) > 0
+  (Boolean(Date.parse(item.publishedAt || item.firstSeenAt || '')) ||
+    (EPISODE_UPDATE_LABEL_PATTERN.test(String(item.updateLabel || '').trim()) &&
+     Number(item.episodeCount || item.latestEpisode?.episodeNumber || 0) > 0))
 );
 
 const filterTitle = (filter: SearchFilter) => {
@@ -1556,21 +1580,13 @@ const matchesCatalogFilter = (item: CatalogItem, filter: SearchFilter) => {
   }
 };
 
-const sortForCatalogFilter = (items: CatalogItem[], filter: SearchFilter) => {
-  if (filter === 'updated') {
-    return [...items].sort((a, b) => {
-      const aTime = Date.parse(a.meaningfulUpdatedAt || a.updatedAt || '') || 0;
-      const bTime = Date.parse(b.meaningfulUpdatedAt || b.updatedAt || '') || 0;
-      return bTime - aTime;
-    });
-  }
+const sortForCatalogFilter = (items: CatalogItem[], _filter: SearchFilter) => {
   return [...items].sort((a, b) => catalogItemTimestamp(b) - catalogItemTimestamp(a));
 };
 
 
 const catalogFilterCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem[]>>();
 const catalogListScrollOffsets = new Map<string, number>();
-let categoriesScreenScrollOffset = 0;
 const SERVER_CATEGORY_FILTERS = new Set<SearchFilter>([
   'iranian-movies', 'foreign-movies', 'iranian-series', 'foreign-series',
   'korean-movies', 'korean-series', 'indian-movies',
@@ -1585,6 +1601,7 @@ const STRICT_DYNAMIC_CATEGORY_FILTERS = new Set<SearchFilter>([
 ]);
 
 const fastCatalogFilterMatch = (item: CatalogItem, filter: SearchFilter) => {
+  if ((filter === 'wildlife' || filter === 'documentaries') && reviewedGeneralDocs.has(item.id)) return filter === 'documentaries';
   if (filter === 'all') return true;
   if (filter === 'latest') return isLatestMovieItem(item);
   if (filter === 'movie' || filter === 'series') return matchesCatalogFilter(item, filter);
@@ -1632,7 +1649,7 @@ const catalogItemsForFilter = async (catalog: CatalogItem[], filter: SearchFilte
     }
   }
   if (isCancelled()) return null;
-  const result = filter === 'updated' ? sortForCatalogFilter(filtered, filter) : filtered;
+  const result = filter === 'updated' || filter === 'latest' ? sortForCatalogFilter(filtered, filter) : filtered;
   cache.set(filter, result);
   return result;
 };
@@ -1886,6 +1903,15 @@ const useArtworkSources = (input: string[]) => {
     }), 700);
     return () => clearTimeout(timer);
   }, [identity, current.winner, current.hedged, candidates.length]);
+  const spare = sources[1];
+  const hasAlternative = candidates.some(url => !current.failed.includes(url) && !sources.includes(url));
+  useEffect(() => {
+    if (!spare || !hasAlternative || current.winner) return;
+    // Preserve the first download even on slow networks. If both stall,
+    // release the speculative slot so a different source can be tried.
+    const timer = setTimeout(() => finish(spare, false), 3500);
+    return () => clearTimeout(timer);
+  }, [identity, spare, hasAlternative, current.winner]);
   const finish = (url: string, success: boolean) => {
     if (identityRef.current !== identity) return;
     setState((previous) => {
@@ -1941,12 +1967,12 @@ const CatalogArtwork = memo(function CatalogArtwork({
   transition?: number;
   imageKind?: 'poster' | 'backdrop';
 }) {
-  const candidates = useMemo(() => [...new Set([
-    // Catalog fallbacks are normally stable, resized TMDB artwork.  Showing
-    // them first avoids an empty card while an Upera origin is warming up.
-    ...catalogArtworkCandidates(fallback, imageKind),
-    ...catalogArtworkCandidates(primary, imageKind),
-  ])], [fallback, imageKind, primary]);
+  const candidates = useMemo(() => {
+    const preferred = catalogArtworkCandidates(fallback, imageKind);
+    const alternate = catalogArtworkCandidates(primary, imageKind);
+    // Race independent artwork before trying multiple sizes of the same file.
+    return [...new Set([...preferred.slice(0, 1), ...alternate.slice(0, 1), ...preferred, ...alternate])];
+  }, [fallback, imageKind, primary]);
   const { sources, finish } = useArtworkSources(candidates);
 
   return (
@@ -2001,7 +2027,15 @@ const warmDetailArtwork = (item: CatalogItem) => {
     catalogArtworkCandidates(item.posterFallback || item.poster, 'poster')[0],
   ].filter(Boolean);
   if (urls.length) void Image.prefetch(urls).catch(() => undefined);
-  void loadCatalogItemDetail(item).catch(() => undefined);
+  void loadCatalogItemDetail(item).then((detail) => {
+    if (!detail) return;
+    const previews = [
+      ...(detail.people || []).slice(0, 4).map((person) => personImageCandidates(person.image)[0]),
+      ...(detail.downloads || []).filter(isEpisodeSection).slice(0, 4)
+        .map((group) => exactEpisodeArtworkFor(group, detail)),
+    ].filter((url): url is string => Boolean(url && isSafeHttpUrl(url)));
+    if (previews.length) void Image.prefetch([...new Set(previews)]).catch(() => undefined);
+  }).catch(() => undefined);
 };
 
 const localArtworkForItem = (_item: CatalogItem) => undefined;
@@ -2155,7 +2189,7 @@ function HeroSlide({
             ) : null}
           </View>
         </View>
-        <Pressable onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
+        <Pressable onPressIn={() => warmDetailArtwork(item)} onPress={onOpen} hitSlop={8} style={styles.primaryButton}>
           <Ionicons name="play" color="#fff" size={18} />
           <Text style={styles.primaryButtonText}>مشاهده و دریافت</Text>
         </Pressable>
@@ -2695,6 +2729,7 @@ const PosterCard = memo(function PosterCard({
   return (
     <Pressable
       onPress={onOpen}
+      onPressIn={() => warmDetailArtwork(item)}
       unstable_pressDelay={0}
       hitSlop={12}
       pressRetentionOffset={{ top: 24, right: 24, bottom: 24, left: 24 }}
@@ -2768,9 +2803,8 @@ function MovieCollectionSection({
 }) {
   const members = collectionMembersFor(item, catalog);
   if (members.length < 2) return null;
-  const rawCollectionFa = String(item.collectionNameFa || '').trim();
   const rawCollectionEn = String(item.collectionName || '').trim();
-  const collectionTitleFa = localizedCollectionTitleFa(item.collectionId, rawCollectionFa, members);
+  const collectionTitleFa = localizedCollectionTitleFa(item.collectionId, members);
   const collectionTitleEn = rawCollectionEn && !hasPersianScript(rawCollectionEn)
     ? rawCollectionEn
     : '';
@@ -2784,7 +2818,7 @@ function MovieCollectionSection({
         <View style={styles.collectionHeaderText}>
           <Text style={styles.collectionEyebrow}>مجموعه فیلم‌ها</Text>
           <Text style={styles.collectionTitle}>{collectionTitleFa}</Text>
-          {collectionTitleEn ? (
+          {collectionTitleEn && collectionTitleEn !== collectionTitleFa ? (
             <Text style={styles.collectionEnglish}>{collectionTitleEn}</Text>
           ) : null}
         </View>
@@ -2951,7 +2985,7 @@ const HorizontalCatalog = memo(function HorizontalCatalog({
       scrollEventThrottle={80}
       inverted
       getItemLayout={(_, index) => ({ length: 148, offset: 148 * index, index })}
-      initialNumToRender={3}
+      initialNumToRender={4}
       maxToRenderPerBatch={2}
       updateCellsBatchingPeriod={40}
       windowSize={3}
@@ -3569,10 +3603,15 @@ const buildHomeCatalogRows = (catalog: CatalogItem[]): HomeCatalogRow[] => {
   const buckets = new Map<SearchFilter, CatalogItem[]>();
   for (const row of HOME_CATALOG_ROWS) buckets.set(row.filter, []);
 
+  const latestMovies: CatalogItem[] = [];
   const updatedCandidates: CatalogItem[] = [];
   for (const item of catalog) {
     for (const row of HOME_CATALOG_ROWS) {
       const bucket = buckets.get(row.filter)!;
+      if (row.filter === 'latest') {
+        if (isLatestMovieItem(item)) latestMovies.push(item);
+        continue;
+      }
       if (row.filter === 'updated') {
         if (summaryMatchesHomeFilter(item, row.filter)) updatedCandidates.push(item);
         continue;
@@ -3582,6 +3621,7 @@ const buildHomeCatalogRows = (catalog: CatalogItem[]): HomeCatalogRow[] => {
     }
   }
 
+  buckets.set('latest', sortForCatalogFilter(latestMovies, 'latest').slice(0, 10));
   updatedCandidates
     .sort((a, b) => catalogItemTimestamp(b) - catalogItemTimestamp(a))
     .slice(0, 10)
@@ -3768,7 +3808,7 @@ const HomeScreen = memo(function HomeScreen({
         style={styles.homeScroll}
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
-        initialNumToRender={2}
+        initialNumToRender={4}
         maxToRenderPerBatch={1}
         updateCellsBatchingPeriod={48}
         windowSize={4}
@@ -3868,10 +3908,16 @@ const relatedCategoryFilters = (filter: SearchFilter): SearchFilter[] => {
 };
 
 const hasFastCategoryArtwork = (item: CatalogItem) =>
-  [item.backdrop, item.poster, item.backdropFallback, item.posterFallback]
-    .some((value) => Boolean(optimizedImageUrl(value, 'backdrop')));
+  [item.poster, item.posterFallback]
+    .some((value) => Boolean(optimizedImageUrl(value, 'poster')));
 
-const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: () => boolean) => {
+const categoryPreviewCache = new WeakMap<CatalogItem[], Map<SearchFilter, CatalogItem>>();
+const buildCategoryPreviewItems = async (
+  catalog: CatalogItem[], isCancelled: () => boolean,
+  onProgress?: (items: Map<SearchFilter, CatalogItem>) => void,
+) => {
+  const cached = categoryPreviewCache.get(catalog);
+  if (cached) return cached;
   const result = new Map<SearchFilter, CatalogItem>();
   const scoreByFilter = new Map<SearchFilter, number>();
   const previewFilters = CATEGORY_CARDS.map((card) => card.filter);
@@ -3882,6 +3928,7 @@ const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: ()
     sliceStarted = Date.now();
   };
 
+  let scanned = 0;
   for (const item of catalog.slice(0, 1200)) {
     if (isCancelled()) return null;
     if (hasFastCategoryArtwork(item)) {
@@ -3899,6 +3946,8 @@ const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: ()
         scoreByFilter.set(filter, score);
       }
     }
+    scanned += 1;
+    if (scanned === 60 && !isCancelled()) onProgress?.(new Map(result));
     await yieldIfNeeded();
   }
 
@@ -3909,7 +3958,11 @@ const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: ()
       if (hasFastCategoryArtwork(item)) {
         const keys = item.categoryKeys || [];
         for (const filter of missing) {
-          if (keys.includes(filter) || fastCatalogFilterMatch(item, filter)) {
+          const matches = STRICT_DYNAMIC_CATEGORY_FILTERS.has(filter)
+            ? fastCatalogFilterMatch(item, filter)
+            : (SERVER_CATEGORY_FILTERS.has(filter) && keys.length
+              ? keys.includes(filter) : fastCatalogFilterMatch(item, filter));
+          if (matches) {
             result.set(filter, item);
             missing.delete(filter);
           }
@@ -3919,7 +3972,9 @@ const buildCategoryPreviewItems = async (catalog: CatalogItem[], isCancelled: ()
       await yieldIfNeeded();
     }
   }
-  return isCancelled() ? null : result;
+  if (isCancelled()) return null;
+  categoryPreviewCache.set(catalog, result);
+  return result;
 };
 
 const CategoriesScreen = memo(function CategoriesScreen({
@@ -3938,17 +3993,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const [query, setQuery] = useState('');
   const deferredQuery = normalizeComparableText(useDebouncedText(query, 220));
   const { width: screenWidth } = useWindowDimensions();
-  const categoriesListRef = useRef<FlatList<(typeof CATEGORY_CARDS)[number]>>(null);
-  const liveCategoriesOffsetRef = useRef(categoriesScreenScrollOffset);
   const usableCatalog = catalog;
-  const [categoryPreviewItems, setCategoryPreviewItems] = useState<Map<SearchFilter, CatalogItem>>(() => new Map());
-  useEffect(() => {
-    let cancelled = false;
-    void buildCategoryPreviewItems(usableCatalog, () => cancelled).then((items) => {
-      if (!cancelled && items) setCategoryPreviewItems(items);
-    });
-    return () => { cancelled = true; };
-  }, [usableCatalog]);
 
   const categoryActorMatches = useMemo(
     () => peopleWorkItemIdsMatchingQuery(peopleWorks, usableCatalog, deferredQuery),
@@ -3978,28 +4023,6 @@ const CategoriesScreen = memo(function CategoriesScreen({
   const columnCount = screenWidth >= 760 ? 3 : 2;
   const categoryWidth = Math.floor((screenWidth - 32 - gridGap * (columnCount - 1)) / columnCount);
   const posterWidth = Math.max(132, Math.floor((screenWidth - 36 - 12) / 2));
-
-  useEffect(() => {
-    if (!isActive || deferredQuery || categoriesScreenScrollOffset <= 0) return undefined;
-    const frame = requestAnimationFrame(() => {
-      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
-    });
-    const retry = setTimeout(() => {
-      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
-    }, 120);
-    const settle = setTimeout(() => {
-      categoriesListRef.current?.scrollToOffset({ offset: categoriesScreenScrollOffset, animated: false });
-    }, 420);
-    return () => { cancelAnimationFrame(frame); clearTimeout(retry); clearTimeout(settle); };
-  }, [columnCount, deferredQuery, isActive]);
-
-  const rememberCategoriesOffset = useCallback((event: any) => {
-    markCatalogInteraction();
-    if (deferredQuery) return;
-    const next = Math.max(0, Number(event.nativeEvent.contentOffset.y || 0));
-    liveCategoriesOffsetRef.current = next;
-    categoriesScreenScrollOffset = next;
-  }, [deferredQuery]);
 
   const searchHeader = (
     <>
@@ -4052,7 +4075,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
 
   return (
     <FlatList
-      ref={categoriesListRef}
+      scrollEnabled={isActive}
       key={`category-grid-${columnCount}`}
       data={CATEGORY_CARDS}
       numColumns={columnCount}
@@ -4063,13 +4086,10 @@ const CategoriesScreen = memo(function CategoriesScreen({
       keyboardShouldPersistTaps="handled"
       ListHeaderComponent={searchHeader}
       renderItem={({ item: card }) => {
-        const preview = categoryPreviewItems.get(card.filter);
+        const cover = CATEGORY_COVERS[card.filter];
         return (
           <Pressable
-            onPress={() => {
-              categoriesScreenScrollOffset = liveCategoriesOffsetRef.current;
-              onBrowse(card.filter);
-            }}
+            onPress={() => onBrowse(card.filter)}
             unstable_pressDelay={0}
             hitSlop={10}
             android_ripple={{ color: 'rgba(216,180,90,0.16)' }}
@@ -4079,19 +4099,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
               pressed && styles.categoryCardPressed,
             ]}
           >
-            {preview ? (
-              <CatalogArtwork
-                primary={preview.poster || preview.backdrop}
-                fallback={preview.posterFallback || preview.backdrop || preview.backdropFallback}
-                style={StyleSheet.absoluteFill}
-                imageKind="poster"
-                transition={0}
-              />
-            ) : (
-              <View style={[StyleSheet.absoluteFill, styles.catalogArtworkFallback]}>
-                <Ionicons name={card.icon} color="rgba(216,180,90,0.55)" size={58} />
-              </View>
-            )}
+            <Image source={cover} contentFit="cover" style={StyleSheet.absoluteFill} transition={0} />
             <LinearGradient
               colors={['rgba(6,8,11,0.00)', 'rgba(6,8,11,0.08)', 'rgba(6,8,11,0.88)']}
               locations={[0, 0.42, 1]}
@@ -4120,10 +4128,7 @@ const CategoriesScreen = memo(function CategoriesScreen({
       updateCellsBatchingPeriod={48}
       windowSize={4}
       removeClippedSubviews
-      scrollEventThrottle={96}
-      onScroll={rememberCategoriesOffset}
-      onScrollEndDrag={rememberCategoriesOffset}
-      onMomentumScrollEnd={rememberCategoriesOffset}
+      onScrollBeginDrag={markCatalogInteraction}
     />
   );
 });
@@ -4140,7 +4145,7 @@ function CatalogListScreen({
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(normalizeComparableText(query));
   const { width: screenWidth } = useWindowDimensions();
-  const [preferredColumns, setPreferredColumns] = useState<2 | 4>(() => catalogGridColumnPreference);
+  const [preferredColumns, setPreferredColumns] = useCatalogGridColumns(`catalog:${initialFilter}`);
   const listRef = useRef<FlatList<CatalogItem>>(null);
   const scrollKey = String(initialFilter);
 
@@ -4210,7 +4215,6 @@ function CatalogListScreen({
               onPress={() => {
                 if (count === preferredColumns) return;
                 LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                catalogGridColumnPreference = count;
                 setPreferredColumns(count);
               }}
               hitSlop={8}
@@ -4401,15 +4405,9 @@ const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGr
         return a.id.localeCompare(b.id);
       });
       const first = members[0];
-      const rawFa = String(first?.collectionNameFa || '').trim();
       const rawEn = String(first?.collectionName || '').trim();
-      const titleEn = rawEn && !hasPersianScript(rawEn)
-        ? rawEn
-        : String(first?.name || '').trim() || rawFa || `Collection ${id}`;
-      // Never show an English-only collection name as the Persian line. If TMDB
-      // does not provide a Persian collection title, use a deterministic local
-      // label based on the first Persian movie title instead of bad machine text.
-      const titleFa = localizedCollectionTitleFa(id, rawFa, members);
+      const titleFa = localizedCollectionTitleFa(id, members);
+      const titleEn = rawEn && rawEn !== titleFa && !hasPersianScript(rawEn) ? rawEn : '';
       return {
         id,
         titleFa,
@@ -4427,7 +4425,7 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
   const [selectedCollectionId, setSelectedCollectionIdState] = useState<string | null>(() => collectionBrowserSelectedId);
   const collectionFoldersRef = useRef<FlatList<any>>(null);
   const { width: screenWidth } = useWindowDimensions();
-  const [preferredColumns, setPreferredColumns] = useState<2 | 4>(() => catalogGridColumnPreference);
+  const [preferredColumns, setPreferredColumns] = useCatalogGridColumns(`collection:${selectedCollectionId || 'folders'}`);
   const selected = groups.find((group) => group.id === selectedCollectionId) || null;
   const columns = preferredColumns;
   const gap = 12;
@@ -4490,7 +4488,6 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
             onPress={() => {
               if (count === preferredColumns) return;
               LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-              catalogGridColumnPreference = count;
               setPreferredColumns(count);
             }}
             hitSlop={8}
@@ -5405,7 +5402,7 @@ function DownloadsScreen({
                       <View style={[styles.progressFill, { width: `${percent}%` }]} />
                     </View>
                   ) : null}
-                  <Text style={styles.downloadLibraryBytes}>{record.totalBytes ? `${formatStorageSize(record.bytesWritten || 0)} از ${formatStorageSize(record.totalBytes)}` : isNetworkFailure(record.error) ? 'در انتظار اتصال به اینترنت' : 'حجم در حال محاسبه'}</Text>
+                  <Text style={styles.downloadLibraryBytes}>{record.totalBytes ? `${formatStorageSize(record.bytesWritten || 0)} از ${formatStorageSize(record.totalBytes)}` : record.status === 'downloading' ? 'حجم در حال محاسبه' : 'حجم فایل مشخص نیست'}</Text>
                   <Text style={styles.downloadLibraryStatus}>
                     {record.status === 'completed'
                       ? 'دانلود کامل شده و آماده پخش است'
@@ -5424,8 +5421,8 @@ function DownloadsScreen({
                     </Pressable>
                   ) : null}
                   {canResume ? (
-                    <Pressable onPress={() => onResume(record)} style={styles.downloadLibraryControl}>
-                      <Ionicons name="play" color={COLORS.text} size={18} />
+                    <Pressable accessibilityRole="button" accessibilityLabel={record.status === 'failed' ? 'تلاش مجدد دانلود' : 'ادامه دانلود'} onPress={() => onResume(record)} style={styles.downloadLibraryControl}>
+                      <Ionicons name="refresh" color={COLORS.text} size={18} />
                     </Pressable>
                   ) : null}
                   <Pressable onPress={() => onMenu(record)} style={styles.downloadLibraryMenu}>
@@ -5781,29 +5778,38 @@ function ExactEpisodeArtwork({
   artwork: string;
   style?: any;
 }) {
-  // Episode cards are navigation controls, so mounting them must never start
-  // video decoders or thumbnail extraction. If the server has no exact frame,
-  // use a lightweight neutral tile instead of repeating the series backdrop.
-  const exactArtwork = artwork ? optimizedImageUrl(artwork, 'backdrop') : '';
+  // No video decoding: use series artwork if the episode frame is missing.
+  const candidates = [...new Set([
+    ...catalogArtworkCandidates(artwork, 'backdrop'),
+    ...catalogArtworkCandidates(item.backdropFallback || item.backdrop, 'backdrop'),
+    ...catalogArtworkCandidates(item.posterFallback || item.poster, 'backdrop'),
+  ])];
+  const artworkKey = candidates.join('|');
+  const [failure, setFailure] = useState({ key: artworkKey, index: 0 });
+  const index = failure.key === artworkKey ? failure.index : 0;
+  const exactArtwork = candidates[index] || '';
 
   return (
     <View style={[styles.episodeShowcaseArtwork, style]}>
+      <CatalogArtwork
+        primary={item.backdrop || item.poster}
+        fallback={item.backdropFallback || item.posterFallback}
+        style={StyleSheet.absoluteFill}
+        imageKind="backdrop"
+        transition={0}
+      />
       {exactArtwork ? (
         <Image
+          key={exactArtwork}
           source={{ uri: exactArtwork }}
+          accessibilityLabel={artwork && index === 0 ? 'تصویر قسمت' : 'تصویر سریال'}
+          onError={() => setFailure({ key: artworkKey, index: index + 1 })}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           cachePolicy="memory-disk"
           transition={120}
         />
-      ) : (
-        <LinearGradient
-          colors={['#202633', '#11151d', '#090c12']}
-          style={[StyleSheet.absoluteFill, styles.episodeArtworkPlaceholder]}
-        >
-          <Ionicons name="film-outline" color="rgba(214,168,75,0.78)" size={34} />
-        </LinearGradient>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -5830,11 +5836,14 @@ function SeriesEpisodeShowcase({
   const seasonNumbers = useMemo(() => Object.keys(seasons).map(Number).sort((a, b) => b - a), [seasons]);
   const latestSeason = seasonNumbers[0] || 1;
   const [selectedSeason, setSelectedSeason] = useState(latestSeason);
+  const [episodePage, setEpisodePage] = useState({ key: '', count: 12 });
 
   useEffect(() => setSelectedSeason(latestSeason), [item.id, latestSeason]);
   if (!groups.length) return null;
   const visibleSeason = seasons[selectedSeason] ? selectedSeason : latestSeason;
   const visibleGroups = seasons[visibleSeason] || [];
+  const pageKey = `${item.id}:${visibleSeason}`;
+  const visibleCount = episodePage.key === pageKey ? episodePage.count : 12;
   const quran = isQuranItem(item);
 
   return (
@@ -5861,7 +5870,7 @@ function SeriesEpisodeShowcase({
         </ScrollView>
       ) : null}
       <View style={styles.episodeShowcaseRail}>
-        {visibleGroups.map((group) => {
+        {visibleGroups.slice(0, visibleCount).map((group) => {
           const canPlay = playableVersionsFor(item, group).length > 0;
           const operatorPlay = operatorFilesFor(group.files).find((file) => downloadModeFor(file) === 'operator-play');
           const hasEpisodeDownload = group.files.some((file) =>
@@ -5892,6 +5901,15 @@ function SeriesEpisodeShowcase({
           );
         })}
       </View>
+      {visibleCount < visibleGroups.length ? (
+        <Pressable
+          onPress={() => setEpisodePage({ key: pageKey, count: visibleCount + 12 })}
+          style={styles.episodeShowcaseSeason}
+          accessibilityRole="button"
+        >
+          <Text style={styles.episodeShowcaseSeasonText}>نمایش قسمت‌های بیشتر ({toPersianDigits(visibleGroups.length - visibleCount)})</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -6100,6 +6118,8 @@ function RelatedTitlesSection({
 }
 
 function DetailModal({
+  activeTab,
+  onTabChange,
   item,
   catalog,
   visible,
@@ -6120,6 +6140,8 @@ function DetailModal({
   detailLoadFailed,
   onRetryDetail,
 }: {
+  activeTab: MainTab;
+  onTabChange: (tab: MainTab) => void;
   item: CatalogItem | null;
   detailLoadFailed: boolean;
   onRetryDetail: () => void;
@@ -6215,7 +6237,6 @@ function DetailModal({
           {
             paddingTop: detailInsets.top,
             paddingRight: detailInsets.right,
-            paddingBottom: detailInsets.bottom,
             paddingLeft: detailInsets.left,
           },
         ]}
@@ -6314,6 +6335,9 @@ function DetailModal({
             ) : null}
           </View>
         </ScrollView>
+        <View style={[styles.bottomNavigationSafeArea, { paddingBottom: Math.max(detailInsets.bottom, 8) }]}>
+          <BottomNavigation active={activeTab} onChange={onTabChange} />
+        </View>
         <DownloadOptionsModal
           item={item}
           visible={downloadSheetOpen}
@@ -6566,6 +6590,7 @@ function VideoPlayerModal({
   const [isPlaying, setIsPlaying] = useState(true);
   const [networkOffline, setNetworkOffline] = useState(false);
   const [playbackError, setPlaybackError] = useState('');
+  const [startupSlow, setStartupSlow] = useState(false);
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [controlsLocked, setControlsLocked] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -6604,6 +6629,7 @@ function VideoPlayerModal({
   const latestDurationRef = useRef(0);
   const resumeAppliedRef = useRef(false);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playbackRetryInFlightRef = useRef(false);
 
   const qualitySources = useMemo(() => {
     const uniqueByUrl = new Map<string, PlaybackSource>();
@@ -6642,7 +6668,14 @@ function VideoPlayerModal({
   useEffect(() => {
     const subscription = player.addListener('statusChange', ({ status, error }) => {
       if (status === 'error') {
-        setPlaybackError(error?.message || 'دریافت ویدئو ناموفق بود. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
+        const message = error?.message || '';
+        if (/\b421\b|UnknownHostException|unable to resolve host|network connection (?:failed|timeout)|SocketTimeoutException|ConnectException|network is unreachable|timed?\s*out/i.test(message)) {
+          setPlaybackError('اتصال به سرور ویدئو برقرار نشد. اینترنت خود را بررسی کنید یا با شبکهٔ دیگری دوباره تلاش کنید.');
+        } else if (/None of the available extractors|NoDeclaredBrand/i.test(message)) {
+          setPlaybackError('دادهٔ دریافتی به‌عنوان ویدئو شناسایی نشد. ممکن است لینک نامعتبر یا قالب فایل ناسازگار باشد.');
+        } else {
+          setPlaybackError('دریافت ویدئو ناموفق بود. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
+        }
         setSwitchingQuality(false);
         setControlsVisible(true);
       } else if (status === 'readyToPlay') {
@@ -6655,10 +6688,11 @@ function VideoPlayerModal({
   }, [player]);
 
   useEffect(() => {
+    setStartupSlow(false);
     if (firstFrameReady || networkOffline || playbackError) return undefined;
+    // A slow native source is not a failed source. Let preparation continue.
     const timer = setTimeout(() => {
-      setPlaybackError('دریافت ویدئو بیش از حد طول کشید. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
-      setSwitchingQuality(false);
+      setStartupSlow(true);
       setControlsVisible(true);
     }, 25_000);
     return () => clearTimeout(timer);
@@ -6720,24 +6754,26 @@ function VideoPlayerModal({
   }, [isMuted, player, playerVolume]);
 
   const retryNetworkPlayback = useCallback(async () => {
-    setPlaybackError('');
-    setPlaybackAttempt((attempt) => attempt + 1);
-    if (!isSafeHttpUrl(activeSource.url)) {
-      setNetworkOffline(false);
-      player.play();
-      return;
-    }
-    const reachable = await internetIsReachable();
-    setNetworkOffline(!reachable);
-    if (reachable) {
+    // Double taps must not replace the native source concurrently.
+    if (playbackRetryInFlightRef.current) return;
+    playbackRetryInFlightRef.current = true;
+    try {
+      const reachable = !isSafeHttpUrl(activeSource.url) || await internetIsReachable();
+      setNetworkOffline(!reachable);
+      if (!reachable) return;
+      setPlaybackError('');
+      setPlaybackAttempt((attempt) => attempt + 1);
       setFirstFrameReady(false);
-      try {
-        await player.replaceAsync(activeSource.url);
-        if (latestTimeRef.current > 0) player.currentTime = latestTimeRef.current;
-        player.play();
-      } catch {
-        setPlaybackError('ویدئو آماده نشد. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
-      }
+      // Recreate failed local sources as well as remote ones. play() alone
+      // cannot recover a native player whose source is in the error state.
+      player.pause();
+      await player.replaceAsync(activeSource.url);
+      if (latestTimeRef.current > 0) player.currentTime = latestTimeRef.current;
+      player.play();
+    } catch {
+      setPlaybackError('ویدئو آماده نشد. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
+    } finally {
+      playbackRetryInFlightRef.current = false;
     }
   }, [activeSource.url, player]);
 
@@ -6989,9 +7025,12 @@ function VideoPlayerModal({
   };
 
   const switchQuality = async (nextSource: PlaybackSource) => {
-    if (nextSource.id === activeSource.id || nextSource.url === activeSource.url || switchingQuality) return;
+    if (nextSource.id === activeSource.id || nextSource.url === activeSource.url || switchingQuality || playbackRetryInFlightRef.current) return;
+    playbackRetryInFlightRef.current = true;
     const previousTime = Math.max(0, Number(player.currentTime || latestTimeRef.current || 0));
-    const wasPlaying = Boolean(player.playing);
+    // A native failure sets playing=false; that is not a user pause. A new
+    // quality selected to recover from that failure must actually start.
+    const wasPlaying = Boolean(player.playing) || Boolean(playbackError) || player.status === 'error';
     setSwitchingQuality(true);
     setPlaybackError('');
     setPlaybackAttempt((attempt) => attempt + 1);
@@ -6999,19 +7038,21 @@ function VideoPlayerModal({
     clearControlsTimer();
     try {
       player.pause();
+      // From this point retry must target the new source, including when its
+      // native preparation fails asynchronously after replaceAsync resolves.
+      setActiveSource(nextSource);
       await player.replaceAsync(nextSource.url);
       if (previousTime > 0) {
         player.currentTime = previousTime;
         latestTimeRef.current = previousTime;
         setCurrentTime(previousTime);
       }
-      setActiveSource(nextSource);
       if (wasPlaying) player.play();
       else player.pause();
     } catch {
-      Alert.alert('کیفیت پخش', 'تغییر کیفیت انجام نشد. دوباره تلاش کنید.');
-      if (wasPlaying) player.play();
+      setPlaybackError('تغییر کیفیت انجام نشد. دوباره تلاش کنید یا کیفیت دیگری انتخاب کنید.');
     } finally {
+      playbackRetryInFlightRef.current = false;
       setSwitchingQuality(false);
       setQualityExpanded(false);
       setSettingsOpen(false);
@@ -7146,6 +7187,7 @@ function VideoPlayerModal({
         {(!firstFrameReady || switchingQuality) && !playbackError && !networkOffline ? (
           <View style={[styles.playerFramePortal, frameRect]} pointerEvents="none">
             <ActivityIndicator color={COLORS.gold} size="small" />
+            {startupSlow ? <Text style={styles.playerOfflineText}>آماده‌سازی ویدئو طول کشیده؛ دریافت ادامه دارد. می‌توانید منتظر بمانید یا کیفیت دیگری انتخاب کنید.</Text> : null}
           </View>
         ) : null}
 
@@ -7699,7 +7741,7 @@ function VpnBlockModal({
   );
 }
 
-function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { visible: boolean; onClose: () => void; onBrowse: (filter: SearchFilter) => void; onCategories: () => void; onHome: () => void }) {
+function SideMenuModal({ visible, catalog, updatedAt, refreshStatus, onRefresh, onClose, onBrowse, onCategories, onHome }: { catalog: CatalogItem[]; updatedAt: string; refreshStatus: string; onRefresh: () => void; visible: boolean; onClose: () => void; onBrowse: (filter: SearchFilter) => void; onCategories: () => void; onHome: () => void }) {
   type MenuEntry = {
     key: string;
     title: string;
@@ -7711,6 +7753,18 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
 
   const [openRoot, setOpenRoot] = useState<string | null>(null);
   const [openChild, setOpenChild] = useState<string | null>(null);
+  const stats = useMemo(() => {
+    if (!visible || openRoot !== 'stats') return null;
+    const ids = new Set<string>();
+    let movies = 0, series = 0, iranianSeries = 0;
+    for (const item of catalog) {
+      if (!item.id || ids.has(item.id)) continue;
+      ids.add(item.id);
+      if (item.type === 'movie') movies++;
+      if (item.type === 'series') { series++; if (isIranianItem(item)) iranianSeries++; }
+    }
+    return [['کل عنوان‌ها', ids.size], ['فیلم', movies], ['سریال', series], ['سریال ایرانی', iranianSeries], ['سریال غیرایرانی', series - iranianSeries]] as const;
+  }, [catalog, visible, openRoot]);
   const entries: MenuEntry[] = [
     { key: 'home', title: 'خانه', action: 'home', icon: 'home-outline' },
     {
@@ -7732,7 +7786,6 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
         { key: 'iranian-series', title: 'سریال‌های ایرانی', filter: 'iranian-series', icon: 'videocam-outline' },
         { key: 'foreign-series', title: 'سریال‌های خارجی', filter: 'foreign-series', icon: 'globe-outline' },
         { key: 'korean-series', title: 'سریال‌های کره‌ای', filter: 'korean-series', icon: 'location-outline' },
-        { key: 'indian-series', title: 'سریال‌های هندی', filter: 'indian-series', icon: 'location-outline' },
       ],
     },
     {
@@ -7762,7 +7815,8 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
       key: 'more', title: 'بیشتر', icon: 'ellipsis-horizontal-circle-outline', children: [
         { key: 'updated', title: 'به‌روزشده‌ها', filter: 'updated', icon: 'refresh-outline' },
         { key: 'operator', title: 'ویژه اینترنت همراه', filter: 'mobile-operator', icon: 'phone-portrait-outline' },
-        { key: 'imdb-top', title: '۱۰۰ برتر IMDb', action: 'home', icon: 'trophy-outline' },
+        { key: 'documentaries', title: 'مستندها', filter: 'documentaries', icon: 'film-outline' },
+        { key: 'wildlife', title: 'حیات وحش', filter: 'wildlife', icon: 'leaf-outline' },
         { key: 'categories', title: 'همه دسته‌بندی‌ها', action: 'categories', icon: 'grid-outline' },
       ],
     },
@@ -7810,6 +7864,15 @@ function SideMenuModal({ visible, onClose, onBrowse, onCategories, onHome }: { v
             <Pressable onPress={onClose} style={styles.iconButton}><Ionicons name="close" color={COLORS.text} size={22} /></Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.sideMenuItems} showsVerticalScrollIndicator={false}>
+            <Pressable accessibilityRole="button" accessibilityState={{ expanded: openRoot === 'stats' }} style={styles.sideMenuItem} onPress={() => setOpenRoot(openRoot === 'stats' ? null : 'stats')}>
+              <Ionicons name="stats-chart-outline" color={COLORS.gold} size={20} /><Text style={styles.sideMenuItemText}>آمار این دستگاه</Text>
+            </Pressable>
+            {stats && <View style={styles.sideMenuChildren}>
+              {stats.map(([label, count]) => <Text key={label} style={styles.sideMenuLeafText}>{label}: {count.toLocaleString('fa-IR')}</Text>)}
+              <Text style={styles.sideMenuVersionText}>زمان کاتالوگ (به وقت ایران): {Number.isFinite(Date.parse(updatedAt)) ? new Date(updatedAt).toLocaleString('fa-IR-u-ca-persian-nu-arabext', { timeZone: 'Asia/Tehran', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : 'نامشخص'}</Text>
+              <Pressable accessibilityRole="button" style={styles.sideMenuItem} onPress={onRefresh}><Ionicons name="refresh" color={COLORS.gold} size={19} /><Text style={styles.sideMenuItemText}>بررسی تغییرات کاتالوگ</Text></Pressable>
+              {!!refreshStatus && <Text accessibilityLiveRegion="polite" style={styles.sideMenuLeafText}>{refreshStatus}</Text>}
+            </View>}
             {entries.map((entry) => {
               if (!entry.children?.length) return renderLeaf(entry, 1);
               const rootOpen = openRoot === entry.key;
@@ -7971,7 +8034,7 @@ const mergeOpenDetailSnapshot = (current: CatalogItem, incoming: CatalogItem): C
   };
 };
 
-const STARTUP_MIN_VISIBLE_MS = 650;
+const STARTUP_MIN_VISIBLE_MS = 0;
 
 function AppContent() {
   const appInsets = useSafeAreaInsets();
@@ -7996,6 +8059,8 @@ function AppContent() {
   const [contentReady, setContentReady] = useState(() => content.items.length > 0);
   const [contentResolved, setContentResolved] = useState(() => content.items.length > 0);
   const [contentLoading, setContentLoading] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState('');
+  const manualCheckRef = useRef(false);
   const [contentOffline, setContentOffline] = useState(false);
   const [startupVisible, setStartupVisible] = useState(true);
   const [homeScrollTopSignal, setHomeScrollTopSignal] = useState(0);
@@ -8022,6 +8087,7 @@ function AppContent() {
   const startupDismissedRef = useRef(false);
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startupFallbackContentRef = useRef<LoadedContent | null>(null);
+  const pendingResumeRefreshRef = useRef(false);
   const backgroundedAtRef = useRef<number | null>(null);
   const vpnCheckSequenceRef = useRef(0);
   const vpnPausingDownloadsRef = useRef(false);
@@ -8043,7 +8109,6 @@ function AppContent() {
   });
 
   activeTabRef.current = activeTab;
-  contentRef.current = content;
   navigationStateRef.current = {
     activeTab,
     menuOpen,
@@ -8106,10 +8171,16 @@ function AppContent() {
   }, []);
 
   const reloadContent = async (force = true, options: { silent?: boolean } = {}) => {
-    if (contentLoadInFlightRef.current) return;
+    if (contentLoadInFlightRef.current) {
+      if (force && options.silent) pendingResumeRefreshRef.current = true;
+      return;
+    }
     if (!force && Date.now() - lastContentLoadRef.current < 2 * 60 * 1000) return;
     contentLoadInFlightRef.current = true;
+    const beforeRevision = contentRevisionRef.current;
+    let remoteAccepted = false;
     const onlinePromise = internetIsReachable();
+    const refreshRestoredCatalog = prepareLiveContent(onlinePromise);
     const initialLoad = lastContentLoadRef.current === 0;
     const showRefreshIndicator = force && !initialLoad && !options.silent;
     const hadVisibleCatalog = contentRef.current.items.length > 0;
@@ -8118,6 +8189,11 @@ function AppContent() {
     if (!hadVisibleCatalog) setContentResolved(false);
 
     const applyContent = (nextContent: LoadedContent) => {
+      // A stale mirror/cache must not roll back a newer visible catalog.
+      const incomingTime = Date.parse(nextContent.updatedAt);
+      const currentTime = Date.parse(contentRef.current.updatedAt);
+      if (contentRef.current.items.length && Number.isFinite(currentTime) &&
+          (!Number.isFinite(incomingTime) || incomingTime < currentTime)) return false;
       const incomingRevision = loadedContentRevision(nextContent);
       if (incomingRevision === contentRevisionRef.current && contentRef.current.items.length) {
         lastContentLoadRef.current = Date.now();
@@ -8133,8 +8209,10 @@ function AppContent() {
       // The first usable catalog must be committed before the startup cover is
       // dismissed. Deferring this initial render could briefly expose the false
       // "catalog is empty" screen. Only later background refreshes are non-urgent.
-      if (!hadVisibleCatalog) setContent(visibleContent);
-      else commitCatalogWhenIdle(() => startTransition(() => setContent(visibleContent)));
+      if (initialLoad || force || !hadVisibleCatalog) setContent(visibleContent);
+      else commitCatalogWhenIdle(() => {
+        if (contentRef.current === visibleContent) startTransition(() => setContent(visibleContent));
+      });
       lastContentLoadRef.current = Date.now();
       setContentReady(true);
       setContentResolved(true);
@@ -8158,16 +8236,14 @@ function AppContent() {
         startupFallbackContentRef.current = cachedContent;
         applyContent(cachedContent);
       }
-      // Reveal a complete local snapshot only after restoring last session's
-      // changes. The network must not hold a returning user behind Splash.
-      if (contentRef.current.items.length) dismissStartup();
+      // Prefer a fresh first screen; the independent launch deadline covers slow networks.
       const online = await onlinePromise;
       setContentOffline(!online);
 
       if (online) {
         let liveContent: LoadedContent | null = null;
         try {
-          liveContent = await loadLiveContent(contentRef.current);
+          liveContent = await refreshRestoredCatalog(contentRef.current);
         } catch {
           liveContent = null;
         }
@@ -8175,6 +8251,7 @@ function AppContent() {
         if (liveContent?.items.length) {
           startupFallbackContentRef.current = liveContent;
           if (applyContent(liveContent)) {
+            remoteAccepted = liveContent.source === 'remote';
             dismissStartup();
             return;
           }
@@ -8182,10 +8259,10 @@ function AppContent() {
 
         // Compatibility fallback for an APK older than the immutable live
         // baseline. Keep the current screen interactive while it downloads.
-        const bootstrapContent = await loadBootstrapContent();
+        const bootstrapContent = await loadBootstrapContent(contentRef.current.updatedAt);
         if (bootstrapContent?.items.length) {
           startupFallbackContentRef.current = bootstrapContent;
-          applyContent(bootstrapContent);
+          remoteAccepted = applyContent(bootstrapContent) && bootstrapContent.source === 'remote';
         }
         firstContent = contentRef.current;
       } else {
@@ -8208,7 +8285,15 @@ function AppContent() {
       dismissStartup();
     } finally {
       contentLoadInFlightRef.current = false;
+      if (manualCheckRef.current) {
+        manualCheckRef.current = false;
+        setRefreshStatus(!remoteAccepted ? 'بررسی کاتالوگ کامل نشد. دوباره تلاش کنید.' : beforeRevision === contentRevisionRef.current ? 'تغییر تازه‌ای دریافت نشد.' : 'کاتالوگ به‌روز شد.');
+      }
       if (showRefreshIndicator) setContentLoading(false);
+      if (pendingResumeRefreshRef.current) {
+        pendingResumeRefreshRef.current = false;
+        if (AppState.currentState === 'active') void reloadContent(true, { silent: true });
+      }
     }
   };
 
@@ -8225,7 +8310,6 @@ function AppContent() {
   useEffect(() => {
     const hasBundledCatalog = contentRef.current.items.length > 0;
     let startupFallbackTimer: ReturnType<typeof setTimeout> | null = null;
-    let startupRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingIdleRefresh: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
 
     const reloadContentWhenIdle = () => {
@@ -8237,13 +8321,11 @@ function AppContent() {
     };
 
     if (hasBundledCatalog) {
-      // The compact APK snapshot paints Home immediately. Parsing the complete
-      // disk/network catalog must happen only after the first interactions so
-      // it can never hold the splash or the first frame hostage.
+      // Restore the last complete disk snapshot before revealing Home. The
+      // reload path dismisses Startup before waiting for network freshness.
       setContentReady(true);
       setContentResolved(true);
-      dismissStartup();
-      startupRefreshTimer = setTimeout(reloadContentWhenIdle, 0);
+      void reloadContent(false);
     } else {
       void reloadContent();
       // Even on a cold/offline install, never trap the user behind Splash.
@@ -8252,7 +8334,7 @@ function AppContent() {
     startupFallbackTimer = setTimeout(() => {
       if (startupDismissedRef.current) return;
       const fallback = startupFallbackContentRef.current;
-      if (fallback?.items.length) {
+      if (!contentRef.current.items.length && fallback?.items.length) {
         const visibleFallback = visibleLoadedContent(fallback);
         if (visibleFallback.items.length) {
           contentRevisionRef.current = `startup-bootstrap:${loadedContentRevision(visibleFallback)}`;
@@ -8294,11 +8376,7 @@ function AppContent() {
       if (state === 'active') {
         const backgroundedAt = backgroundedAtRef.current;
         backgroundedAtRef.current = null;
-        const returningFromBackground = Boolean(
-          startupDismissedRef.current &&
-          backgroundedAt &&
-          Date.now() - backgroundedAt >= 2500
-        );
+        const returningFromBackground = backgroundedAt !== null;
         if (returningFromBackground) {
           // Returning from Recent Apps must preserve the exact tab/detail/scroll
           // state. Refresh truth silently; only a true cold start owns Splash.
@@ -8317,7 +8395,6 @@ function AppContent() {
 
     return () => {
       pendingIdleRefresh?.cancel();
-      if (startupRefreshTimer) clearTimeout(startupRefreshTimer);
       if (startupFallbackTimer) clearTimeout(startupFallbackTimer);
       clearInterval(catalogRefreshTimer);
       clearTimeout(vpnRetryTimer);
@@ -8812,11 +8889,12 @@ function AppContent() {
   }, [activeTab, categoriesMounted]);
 
   const handleBottomTabChange = useCallback((tab: MainTab) => {
+    detailHistoryRef.current = [];
+    setSelectedItem(null);
     if (tab === activeTabRef.current) {
       if (tab === 'home') setHomeScrollTopSignal((value) => value + 1);
       return;
     }
-    setSelectedItem(null);
     setSelectedPerson(null);
     setMenuOpen(false);
     setSearchReturnItem(null);
@@ -9308,6 +9386,7 @@ function AppContent() {
         style={styles.safeArea}
         edges={['top', 'right', 'left']}
       >
+        <View style={styles.tabScene}>
         <View
           pointerEvents={activeTab === 'home' ? 'auto' : 'none'}
           style={[styles.tabScene, activeTab !== 'home' && styles.tabSceneHidden]}
@@ -9331,7 +9410,9 @@ function AppContent() {
         {categoriesMounted ? (
           <View
             pointerEvents={activeTab === 'categories' ? 'auto' : 'none'}
-            style={[styles.tabScene, activeTab !== 'categories' && styles.tabSceneHidden]}
+            importantForAccessibility={activeTab === 'categories' ? 'auto' : 'no-hide-descendants'}
+            accessibilityElementsHidden={activeTab !== 'categories'}
+            style={[StyleSheet.absoluteFill, activeTab !== 'categories' && styles.categorySceneHidden]}
           >
             <CategoriesScreen catalog={content.items} peopleWorks={content.peopleWorks} onBrowse={openCatalogFilter} onOpen={openRootDetail} isActive={activeTab === 'categories'} />
           </View>
@@ -9378,6 +9459,7 @@ function AppContent() {
             />
           </View>
         ) : null}
+        </View>
         {contentLoading ? (
           <View pointerEvents="none" style={styles.refreshIndicator}>
             <ActivityIndicator color={COLORS.gold} size="small" />
@@ -9403,6 +9485,11 @@ function AppContent() {
         onContinue={() => setVpnWarningVisible(false)}
       />
       <SideMenuModal
+        catalog={content.items} updatedAt={content.updatedAt} refreshStatus={refreshStatus} onRefresh={() => {
+          manualCheckRef.current = true;
+          setRefreshStatus('در حال بررسی کاتالوگ…');
+          if (!contentLoadInFlightRef.current) void reloadContent(true);
+        }}
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
         onBrowse={openCatalogFilter}
@@ -9410,6 +9497,8 @@ function AppContent() {
         onHome={() => handleBottomTabChange('home')}
       />
       <DetailModal
+        activeTab={activeTab}
+        onTabChange={handleBottomTabChange}
         detailLoadFailed={detailLoadFailed}
         onRetryDetail={() => setDetailRetry((attempt) => attempt + 1)}
         item={selectedItem}
@@ -9516,6 +9605,7 @@ const styles = StyleSheet.create({
   app: { flex: 1, backgroundColor: COLORS.background },
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   tabScene: { flex: 1 },
+  categorySceneHidden: { opacity: 0 },
   tabSceneHidden: { display: 'none' },
   routeTransitionCover: { ...absoluteFillObject, zIndex: 850, elevation: 850, backgroundColor: '#05070A' },
   playerRouteBackdrop: { ...absoluteFillObject, zIndex: 900, elevation: 1000, backgroundColor: '#000' },

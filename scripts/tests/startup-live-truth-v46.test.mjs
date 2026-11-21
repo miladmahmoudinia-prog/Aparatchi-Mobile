@@ -10,12 +10,12 @@ test('cold start restores cached growth before reveal and refreshes live growth 
   const reload = app.slice(reloadStart, effectStart);
   const cachedStart = reload.indexOf('if (cachedContent?.items.length) {');
   const onlineStart = reload.indexOf('if (online) {', cachedStart);
-  const liveStart = reload.indexOf('liveContent = await loadLiveContent(contentRef.current)', onlineStart);
+  const liveStart = reload.indexOf('liveContent = await refreshRestoredCatalog(contentRef.current)', onlineStart);
   const liveApplied = reload.indexOf('if (applyContent(liveContent)) {', liveStart);
   const liveDismissed = reload.indexOf('dismissStartup();', liveApplied);
 
   assert.ok(cachedStart >= 0 && onlineStart > cachedStart);
-  assert.ok(reload.indexOf('applyContent(cachedContent);', cachedStart) < reload.indexOf('if (contentRef.current.items.length) dismissStartup();'));
+  assert.ok(reload.indexOf('applyContent(cachedContent);', cachedStart) < reload.indexOf('dismissStartup();', cachedStart));
   assert.ok(liveStart > onlineStart && liveApplied > liveStart && liveDismissed > liveApplied);
 });
 

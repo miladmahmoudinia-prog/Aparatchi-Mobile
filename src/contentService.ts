@@ -1693,8 +1693,14 @@ const readCachedBootstrapPayload = async (): Promise<CatalogPayload | null> => {
   try {
     const info = await FileSystem.getInfoAsync(BOOTSTRAP_CACHE_URI);
     if (!info.exists) return null;
-    const parsed = await parsePayloadCooperatively(JSON.parse(await FileSystem.readAsStringAsync(BOOTSTRAP_CACHE_URI)));
-    if (parsed?.items.length) memoryBootstrapContent = parsed;
+    const stored = JSON.parse(await FileSystem.readAsStringAsync(BOOTSTRAP_CACHE_URI));
+    const selfContained = stored?.cacheSchema === 1;
+    const parsed = await parsePayloadCooperatively(selfContained ? stored.payload : stored);
+    const expectedCount = selfContained ? stored.itemCount : cacheMetadata.bootstrapItemCount;
+    if (!parsed?.items.length || !expectedCount || parsed.items.length !== expectedCount) return null;
+    if (!selfContained && cacheMetadata.bootstrapClientRevision &&
+        parsed.clientRevision !== cacheMetadata.bootstrapClientRevision) return null;
+    memoryBootstrapContent = parsed;
     return parsed;
   } catch {
     return null;
@@ -1705,30 +1711,24 @@ const writeCachedBootstrapPayload = async (rawPayload: string, parsed: CatalogPa
   memoryBootstrapContent = parsed;
   if (!BOOTSTRAP_CACHE_URI) return;
   try {
-    await FileSystem.writeAsStringAsync(BOOTSTRAP_CACHE_URI, rawPayload);
+    // Completeness travels with the payload, never in a separately written file.
+    await FileSystem.writeAsStringAsync(BOOTSTRAP_CACHE_URI, JSON.stringify({
+      cacheSchema: 1, itemCount: parsed.items.length, payload: JSON.parse(rawPayload),
+    }));
   } catch {
-    // A bootstrap cache write must never delay or reject the visible catalog.
+    // Storage failure must not reject otherwise valid remote content.
   }
 };
 
 export async function loadCachedBootstrapContent(): Promise<LoadedContent | null> {
   await readCacheMetadata();
-  // Old versions wrote sampled caches without completeness metadata. Prefer the
-  // complete APK snapshot and avoid parsing that legacy JSON on the JS thread.
-  if (!cacheMetadata.bootstrapItemCount) return null;
-  if (cacheMetadata.bootstrapItemCount < LOCAL_PAYLOAD.items.length) return null;
-  if (
-    cacheMetadata.bootstrapItemCount === LOCAL_PAYLOAD.items.length &&
-    cacheMetadata.bootstrapClientRevision &&
-    cacheMetadata.bootstrapClientRevision === LOCAL_PAYLOAD.clientRevision
-  ) return null;
+  // The reader validates self-contained caches or legacy metadata. A newer
+  // complete catalog may legitimately shrink after removals.
   const cached = await readCachedBootstrapPayload();
   if (!cached?.items.length) return null;
-  if (Date.parse(cached.updatedAt) < Date.parse(LOCAL_PAYLOAD.updatedAt)) return null;
-  // Never let an older sampled cache replace the complete catalog bundled in a
-  // newer APK. Future complete snapshots can still grow beyond the APK count.
-  if (cached.items.length < LOCAL_PAYLOAD.items.length) return null;
-  if (cacheMetadata.bootstrapItemCount && cached.items.length !== cacheMetadata.bootstrapItemCount) return null;
+  const cachedTime = Date.parse(cached.updatedAt);
+  const bundledTime = Date.parse(LOCAL_PAYLOAD.updatedAt);
+  if (!Number.isFinite(cachedTime) || (Number.isFinite(bundledTime) && cachedTime < bundledTime)) return null;
   return { ...cached, source: 'cache' };
 }
 
@@ -1766,13 +1766,13 @@ export async function loadCachedLiveContent(base: LoadedContent): Promise<Loaded
  * snapshot remains visible. Manifest and bootstrap start together; the result
  * is accepted only when their revisions match.
  */
-export async function loadBootstrapContent(): Promise<LoadedContent | null> {
+export async function loadBootstrapContent(visibleUpdatedAt = ''): Promise<LoadedContent | null> {
   const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();
   if (!remoteUrl) return null;
   await readCacheMetadata();
 
-  // Bootstrap and manifest are both small. Start them together so the manifest
-  // truth check does not add another 2–3 seconds before the first catalog byte.
+  // Start the manifest alongside the complete recovery snapshot. The latter
+  // can exceed 15 MB when a device predates the current live baseline.
   const manifestPromise = fetchRemoteManifest().catch(() => null);
   const currentBootstrap = memoryBootstrapContent || normalizedLocalPayload();
 
@@ -1809,7 +1809,8 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
 
     candidates.forEach((candidate, index) => {
       const controller = controllers[index];
-      const timeout = setTimeout(() => controller.abort(), 8000);
+      // Allow a complete recovery over mobile data, not just a fast LAN.
+      const timeout = setTimeout(() => controller.abort(), 180_000);
       const separator = candidate.includes('?') ? '&' : '?';
 
       void (async () => {
@@ -1839,6 +1840,9 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
           const parsed = await parsePayloadCooperatively(rawBootstrap);
           if (settled) return;
           if (!parsed?.items.length) return;
+          // Never persist a recovery snapshot older than the catalog on screen.
+          const floor = Date.parse(visibleUpdatedAt);
+          if (Number.isFinite(floor) && !(Date.parse(parsed.updatedAt) >= floor)) return;
           if (
             manifest?.clientItemCount &&
             manifest?.bootstrapItemCount &&
@@ -1858,7 +1862,7 @@ export async function loadBootstrapContent(): Promise<LoadedContent | null> {
           controllers.forEach((other, otherIndex) => {
             if (otherIndex !== index) other.abort();
           });
-          void writeCachedBootstrapPayload(rawBootstrapText, parsed);
+          await writeCachedBootstrapPayload(rawBootstrapText, parsed);
           if (manifest?.bootstrapRevision) {
             cacheMetadata = {
               ...cacheMetadata,
@@ -1943,7 +1947,7 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
     const separator = candidate.includes('?') ? '&' : '?';
     const requestUrl = candidate + separator + '_aparatchi_manifest=' + Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2400);
+    const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
       const response = await fetch(requestUrl, {
         headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
@@ -2056,7 +2060,13 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
  * already visible. Transport stays proportional to changed titles instead of
  * re-downloading/parsing the complete navigation file after every hourly sync.
  */
-export async function loadLiveContent(base: LoadedContent): Promise<LoadedContent | null> {
+export function prepareLiveContent(online: Promise<boolean>) {
+  // Probe the revision during disk restoration, but merge only against the restored base.
+  const manifest = online.then(connected => connected ? fetchRemoteManifest() : null).catch(() => null);
+  return (base: LoadedContent) => loadLiveContent(base, manifest);
+}
+
+export async function loadLiveContent(base: LoadedContent, prefetched?: Promise<RemoteCatalogManifest | null>): Promise<LoadedContent | null> {
   const remoteUrl = REMOTE_CONTENT_LIVE_URL.trim();
   if (!remoteUrl || !base.items.length) return null;
 
@@ -2067,7 +2077,7 @@ export async function loadLiveContent(base: LoadedContent): Promise<LoadedConten
   // While the hourly Content action is rebuilding files, the published manifest
   // still describes the current on-device revision; downloading/parsing the
   // multi-megabyte live delta in parallel only steals bandwidth and blocks taps.
-  const manifest = await fetchRemoteManifest().catch(() => null);
+  const manifest = await (prefetched ?? fetchRemoteManifest().catch(() => null));
   if (!manifest?.clientRevision) return null;
   if (
     base.clientRevision === manifest.clientRevision &&
@@ -2114,7 +2124,7 @@ export async function loadLiveContent(base: LoadedContent): Promise<LoadedConten
           controllers.forEach((other, otherIndex) => {
             if (otherIndex !== index) other.abort();
           });
-          void writeCachedLiveDelta(rawText, live);
+          await writeCachedLiveDelta(rawText, live);
           resolve({ ...merged, source: 'remote' });
         } catch {
           // Another mirror may still have the manifest-matching live revision.

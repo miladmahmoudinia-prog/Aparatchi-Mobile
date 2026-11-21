@@ -3,7 +3,7 @@
     "name": "آپاراتچی",
     "slug": "aparatchi-mobile",
     "scheme": "aparatchi",
-    "version": "0.16.28",
+    "version": "0.16.41",
     "orientation": "default",
     "icon": "./assets/aparatchi-app-icon-white.png",
     "userInterfaceStyle": "dark",
@@ -21,7 +21,7 @@
       "package": "com.aparatchi.mobile",
       "icon": "./assets/aparatchi-app-icon-white.png",
       "predictiveBackGestureEnabled": false,
-      "versionCode": 58,
+      "versionCode": 71,
       "permissions": [
         "android.permission.ACCESS_NETWORK_STATE"
       ]
@@ -50,6 +50,10 @@
           "image": "./assets/aparatchi-logo-transparent.png",
           "imageWidth": 160,
           "resizeMode": "contain",
+          "android": {
+            "image": "./assets/native-launch-blank.png",
+            "dark": { "image": "./assets/native-launch-blank.png", "backgroundColor": "#07090c" }
+          },
           "dark": {
             "backgroundColor": "#07090c",
             "image": "./assets/aparatchi-logo-transparent.png"
