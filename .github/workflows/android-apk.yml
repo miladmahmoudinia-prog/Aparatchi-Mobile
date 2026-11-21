@@ -106,7 +106,10 @@ jobs:
           NODE_ENV: production
         run: |
           chmod +x gradlew
-          ./gradlew app:assembleRelease --no-daemon
+          ./gradlew app:assembleRelease --no-daemon --console=plain 2>&1 | tee /tmp/apk-build.log || {
+            grep -Ei "failed|error|what went wrong|could not|^>|exception|not found|unable to|no space" /tmp/apk-build.log | tail -35 | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }
 
       - name: Verify upgrade signing compatibility
         shell: bash
