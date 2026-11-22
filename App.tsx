@@ -77,7 +77,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.41';
+const APP_DISPLAY_VERSION = '0.16.42';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -4420,6 +4420,32 @@ const collectionGroupsForCatalog = (catalog: CatalogItem[]): CatalogCollectionGr
     .sort((a, b) => b.members.length - a.members.length || a.titleFa.localeCompare(b.titleFa, 'fa'));
 };
 
+const memberScrollOffsets = new Map<string, number>();
+
+function CollectionMemberList({ scrollKey, ...props }: import('react-native').FlatListProps<CatalogItem> & { scrollKey: string }) {
+  const list = useRef<FlatList<CatalogItem>>(null);
+  const [initialY] = useState(() => memberScrollOffsets.get(scrollKey) ?? 0);
+  const pending = useRef(initialY > 0);
+  const viewport = useRef(0);
+  const content = useRef(0);
+  const restore = () => {
+    if (pending.current && viewport.current > 0 && content.current - viewport.current >= initialY - 1) {
+      list.current?.scrollToOffset({ offset: initialY, animated: false });
+    }
+  };
+  const remember = (event: import('react-native').NativeSyntheticEvent<import('react-native').NativeScrollEvent>) => {
+    const y = Math.max(0, event.nativeEvent.contentOffset.y);
+    if (pending.current && Math.abs(y - initialY) > 1) return;
+    pending.current = false;
+    memberScrollOffsets.set(scrollKey, y);
+  };
+  return <FlatList {...props} ref={list} contentOffset={{ x: 0, y: initialY }}
+    onLayout={event => { viewport.current = event.nativeEvent.layout.height; restore(); }}
+    onContentSizeChange={(_, height) => { content.current = height; restore(); }}
+    onScrollBeginDrag={() => { pending.current = false; markCatalogInteraction(); }}
+    scrollEventThrottle={16} onScroll={remember} onScrollEndDrag={remember} onMomentumScrollEnd={remember} />;
+}
+
 function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; onOpen: (item: CatalogItem) => void }) {
   const groups = useMemo(() => collectionGroupsForCatalog(catalog), [catalog]);
   const [selectedCollectionId, setSelectedCollectionIdState] = useState<string | null>(() => collectionBrowserSelectedId);
@@ -4431,20 +4457,29 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
   const gap = 12;
   const cardWidth = Math.floor((screenWidth - 32 - gap * (columns - 1)) / columns);
 
+  const pendingFolderY = useRef(collectionBrowserScrollOffset);
+  const restoreFolderWhenReady = () => {
+    const offset = pendingFolderY.current;
+    if (offset > 0) collectionFoldersRef.current?.scrollToOffset({ offset, animated: false });
+  };
   const setSelectedCollectionId = useCallback((next: string | null) => {
+    if (next) pendingFolderY.current = collectionBrowserScrollOffset;
     collectionBrowserSelectedId = next;
     setSelectedCollectionIdState(next);
   }, []);
 
   const rememberCollectionFolderOffset = useCallback((event: any) => {
     markCatalogInteraction();
+    if (collectionBrowserSelectedId) return;
+    const y = Number(event?.nativeEvent?.contentOffset?.y || 0);
+    if (pendingFolderY.current > 0 && Math.abs(y - pendingFolderY.current) > 1) return;
+    pendingFolderY.current = 0;
     collectionBrowserScrollOffset = Math.max(0, Number(event?.nativeEvent?.contentOffset?.y || 0));
   }, []);
 
   useEffect(() => {
     if (selectedCollectionId) return undefined;
-    const offset = Math.max(0, collectionBrowserScrollOffset);
-    const restore = () => collectionFoldersRef.current?.scrollToOffset({ offset, animated: false });
+    const restore = restoreFolderWhenReady;
     const frame = requestAnimationFrame(restore);
     const retry = setTimeout(restore, 60);
     const finalRetry = setTimeout(restore, 180);
@@ -4503,8 +4538,9 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
 
   if (selected) {
     return (
-      <FlatList
+      <CollectionMemberList
         key={`collection-members-${selected.id}-${columns}`}
+        scrollKey={`${selected.id}:${columns}`}
         data={selected.members}
         numColumns={columns}
         keyExtractor={(item) => item.id}
@@ -4544,6 +4580,9 @@ function CollectionBrowserScreen({ catalog, onOpen }: { catalog: CatalogItem[]; 
   return (
     <FlatList
       ref={collectionFoldersRef}
+      onContentSizeChange={restoreFolderWhenReady}
+      onLayout={restoreFolderWhenReady}
+      onScrollBeginDrag={() => { pendingFolderY.current = 0; }}
       key={`collection-folders-${columns}`}
       data={groups}
       numColumns={columns}
