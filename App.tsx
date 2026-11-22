@@ -78,7 +78,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.44';
+const APP_DISPLAY_VERSION = '0.16.45';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -8102,7 +8102,7 @@ function AppContent() {
   const [refreshStatus, setRefreshStatus] = useState('');
   const manualCheckRef = useRef(false);
   const [contentOffline, setContentOffline] = useState(false);
-  const [startupVisible, setStartupVisible] = useState(true);
+  const [startupVisible, setStartupVisible] = useState(() => content.items.length === 0);
   const [homeScrollTopSignal, setHomeScrollTopSignal] = useState(0);
   const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const downloadsRef = useRef<DownloadRecord[]>([]);
@@ -8124,7 +8124,7 @@ function AppContent() {
   const lastContentLoadRef = useRef(0);
   const contentLoadInFlightRef = useRef(false);
   const startupStartedAtRef = useRef(Date.now());
-  const startupDismissedRef = useRef(false);
+  const startupDismissedRef = useRef(!startupVisible);
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startupFallbackContentRef = useRef<LoadedContent | null>(null);
   const pendingResumeRefreshRef = useRef(false);
@@ -8344,9 +8344,8 @@ function AppContent() {
   };
 
   useEffect(() => {
-    // Keep Android's native launch surface visible until React has committed
-    // the branded startup artwork. This removes the black hand-off gap visible
-    // on slower devices without delaying Home data.
+    // Hand the native splash off to Home (or Startup if no catalog is usable)
+    // after React's first commit.
     const frame = requestAnimationFrame(() => {
       void SplashScreen.hideAsync().catch(() => undefined);
     });
@@ -8367,8 +8366,7 @@ function AppContent() {
     };
 
     if (hasBundledCatalog) {
-      // Restore the last complete disk snapshot before revealing Home. The
-      // reload path dismisses Startup before waiting for network freshness.
+      // Home is already visible. Restore a newer snapshot, then check the network.
       setContentReady(true);
       setContentResolved(true);
       void reloadContent(false);

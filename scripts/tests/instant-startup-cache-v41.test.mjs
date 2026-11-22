@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import vm from 'node:vm';
 
 const app = fs.readFileSync('App.tsx', 'utf8');
 const service = fs.readFileSync('src/contentService.ts', 'utf8');
@@ -14,7 +15,14 @@ test('APK carries the complete current startup navigation snapshot', () => {
   assert.ok(fs.statSync('src/catalogBootstrap.json').size < 12_000_000);
 });
 
-test('complete bundled catalog starts disk recovery before revealing Home', () => {
+for (const count of [0, 1, 6755]) test(`startup first render with ${count} usable local items`, () => {
+  const state = app.match(/const \[startupVisible, setStartupVisible\] = (useState\([^\n]+\));/)[1];
+  const startupVisible = vm.runInNewContext(state, { content: { items: Array(count) }, useState: f => typeof f === 'function' ? f() : f });
+  assert.equal(startupVisible, count === 0);
+  assert.match(app, /if \(!hasBundledCatalog\) startupFallbackTimer = setTimeout/);
+});
+
+test('complete bundled catalog remains available while disk recovery runs', () => {
   assert.ok(service.includes("import bundledBootstrapJson from './catalogBootstrap.json';"));
   assert.ok(service.includes('export async function loadCachedLiveContent(base: LoadedContent)'));
   assert.ok(app.includes('const cachedLive = initialLoad && !snapshot ? await loadCachedLiveContent(cachedBase) : null;'));
