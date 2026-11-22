@@ -131,6 +131,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           APP_VERSION: ${{ steps.app_version.outputs.version }}
-          RELEASE_TAG: android-test-0.16.42
+          RELEASE_TAG: android-test-0.16.43
           APK_PATH: Aparatchi-Android-Release.apk
         run: node scripts/publish-apk-release.mjs

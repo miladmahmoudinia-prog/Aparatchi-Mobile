@@ -77,7 +77,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.42';
+const APP_DISPLAY_VERSION = '0.16.43';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -8127,6 +8127,8 @@ function AppContent() {
   const startupDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startupFallbackContentRef = useRef<LoadedContent | null>(null);
   const pendingResumeRefreshRef = useRef(false);
+  const nextAutoCheckRef = useRef(0);
+  const retryDelayRef = useRef(15_000);
   const backgroundedAtRef = useRef<number | null>(null);
   const vpnCheckSequenceRef = useRef(0);
   const vpnPausingDownloadsRef = useRef(false);
@@ -8323,6 +8325,8 @@ function AppContent() {
       setContentResolved(true);
       dismissStartup();
     } finally {
+      nextAutoCheckRef.current = Date.now() + (remoteAccepted ? 5 * 60_000 : retryDelayRef.current);
+      retryDelayRef.current = remoteAccepted ? 15_000 : Math.min(120_000, retryDelayRef.current * 2);
       contentLoadInFlightRef.current = false;
       if (manualCheckRef.current) {
         manualCheckRef.current = false;
@@ -8429,8 +8433,9 @@ function AppContent() {
       }
     });
     const catalogRefreshTimer = setInterval(() => {
-      if (AppState.currentState === 'active') reloadContentWhenIdle();
-    }, 10 * 60 * 1000);
+      if (AppState.currentState !== 'active' || contentLoadInFlightRef.current || Date.now() < nextAutoCheckRef.current) return;
+      void reloadContent(true, { silent: true });
+    }, 15_000);
 
     return () => {
       pendingIdleRefresh?.cancel();
