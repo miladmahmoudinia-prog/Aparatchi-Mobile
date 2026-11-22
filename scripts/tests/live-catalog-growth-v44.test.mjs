@@ -27,6 +27,6 @@ test('live refresh is applied before the multi-megabyte compatibility fallback',
 
 test('background episode checks use the same small live update path', () => {
   const notifications = fs.readFileSync('src/notificationManager.ts', 'utf8');
-  assert.ok(notifications.includes('loadLiveContent(cached || bundled)'));
+  assert.ok(notifications.includes('loadLiveContent(base) || await loadBootstrapContent(base.updatedAt)'));
   assert.ok(!notifications.includes('await loadBootstrapContent()'));
 });

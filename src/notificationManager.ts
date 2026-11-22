@@ -3,10 +3,12 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
-import { getBundledContent, loadCachedLiveContent, loadLiveContent } from './contentService';
+import { readStartupSnapshot } from './startupSnapshot';
+import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadLiveContent } from './contentService';
 import { CatalogItem } from './types';
 
-const EPISODE_ALERT_TASK = 'aparatchi-episode-alert-check-v1';
+const LEGACY_TASK = 'aparatchi-episode-alert-check-v1';
+const CATALOG_TASK = 'aparatchi-catalog-sync-v1';
 const EPISODE_ALERT_CHANNEL = 'episode-updates';
 const EPISODE_ALERT_FILE = `${FileSystem.documentDirectory}aparatchi-episode-alerts.json`;
 
@@ -171,26 +173,15 @@ const registerBackgroundCheck = async () => {
   try {
     const taskManagerAvailable = await TaskManager.isAvailableAsync();
     if (!taskManagerAvailable) return false;
-    const registered = await TaskManager.isTaskRegisteredAsync(EPISODE_ALERT_TASK);
-    if (!registered) {
-      await BackgroundTask.registerTaskAsync(EPISODE_ALERT_TASK, {
-        minimumInterval: 360,
-      });
-    }
+    const registered = await TaskManager.isTaskRegisteredAsync(CATALOG_TASK);
+    if (!registered) await BackgroundTask.registerTaskAsync(CATALOG_TASK, { minimumInterval: 15 });
+    if (await TaskManager.isTaskRegisteredAsync(LEGACY_TASK)) await BackgroundTask.unregisterTaskAsync(LEGACY_TASK);
     return true;
   } catch {
     return false;
   }
 };
 
-const unregisterBackgroundCheck = async () => {
-  try {
-    const registered = await TaskManager.isTaskRegisteredAsync(EPISODE_ALERT_TASK);
-    if (registered) await BackgroundTask.unregisterTaskAsync(EPISODE_ALERT_TASK);
-  } catch {
-    // Registration support differs between Expo Go, debug builds, and release builds.
-  }
-};
 
 async function showEpisodeNotification(item: CatalogItem) {
   const trigger = Platform.OS === 'android'
@@ -262,7 +253,6 @@ export async function setSeriesEpisodeAlert(
     const snapshots = { ...state.snapshots };
     delete snapshots[seriesId];
     const nextState = await saveEpisodeAlertState({ subscribedSeriesIds, snapshots });
-    if (!subscribedSeriesIds.length) await unregisterBackgroundCheck();
     return { enabled: false, permissionGranted: true, state: nextState };
   }
 
@@ -284,26 +274,27 @@ export async function setSeriesEpisodeAlert(
 
 export async function initializeEpisodeAlertSystem() {
   try {
+    await registerBackgroundCheck();
     await prepareAndroidChannel();
-    const state = await loadEpisodeAlertState();
-    if (state.subscribedSeriesIds.length && await notificationPermissionGranted()) {
-      await registerBackgroundCheck();
-    }
-    return state;
+    return await loadEpisodeAlertState();
   } catch {
     return EMPTY_STATE;
   }
 }
 
-if (!TaskManager.isTaskDefined(EPISODE_ALERT_TASK)) {
-  TaskManager.defineTask(EPISODE_ALERT_TASK, async () => {
+if (!TaskManager.isTaskDefined(CATALOG_TASK)) {
+  TaskManager.defineTask(CATALOG_TASK, async () => {
     try {
       const bundled = getBundledContent();
-      const cached = await loadCachedLiveContent(bundled);
-      const content = await loadLiveContent(cached || bundled);
-      if (content?.source === 'remote') {
-        await syncEpisodeAlerts(content.items, true);
+      let base = await readStartupSnapshot(bundled.updatedAt);
+      if (!base) {
+        const legacy = await loadCachedBootstrapContent() || bundled;
+        const restored = await loadCachedLiveContent(legacy);
+        base = { ...(restored || legacy), source: 'cache' };
       }
+      const content = await loadLiveContent(base) || await loadBootstrapContent(base.updatedAt);
+      if (!content || Date.parse(content.updatedAt) < Date.parse(base.updatedAt)) return BackgroundTask.BackgroundTaskResult.Failed;
+      await syncEpisodeAlerts(content.items, true);
       return BackgroundTask.BackgroundTaskResult.Success;
     } catch {
       return BackgroundTask.BackgroundTaskResult.Failed;

@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { saveStartupSnapshot } from './startupSnapshot';
 import { CATALOG, VERIFIED_IRANIAN_SCHEDULE } from './data';
 import bundledBootstrapJson from './catalogBootstrap.json';
 import {
@@ -1792,6 +1793,7 @@ export async function loadBootstrapContent(visibleUpdatedAt = ''): Promise<Loade
       const currentIsComplete = Boolean(
         manifest?.clientRevision &&
         currentBootstrap.clientRevision === manifest.clientRevision &&
+        (!manifest.catalogUpdatedAt || currentBootstrap.updatedAt === manifest.catalogUpdatedAt) &&
         (!manifest.bootstrapItemCount || currentBootstrap.items.length === manifest.bootstrapItemCount)
       );
       if (!currentIsComplete || settled) return;
@@ -1862,6 +1864,7 @@ export async function loadBootstrapContent(visibleUpdatedAt = ''): Promise<Loade
           controllers.forEach((other, otherIndex) => {
             if (otherIndex !== index) other.abort();
           });
+          try { await saveStartupSnapshot(parsed); } catch { resolve(null); return; }
           await writeCachedBootstrapPayload(rawBootstrapText, parsed);
           if (manifest?.bootstrapRevision) {
             cacheMetadata = {
@@ -2081,6 +2084,7 @@ export async function loadLiveContent(base: LoadedContent, prefetched?: Promise<
   if (!manifest?.clientRevision) return null;
   if (
     base.clientRevision === manifest.clientRevision &&
+    (!manifest.catalogUpdatedAt || base.updatedAt === manifest.catalogUpdatedAt) &&
     (!manifest.clientItemCount || base.items.length === manifest.clientItemCount)
   ) {
     return { ...base, source: 'remote' };
@@ -2124,6 +2128,7 @@ export async function loadLiveContent(base: LoadedContent, prefetched?: Promise<
           controllers.forEach((other, otherIndex) => {
             if (otherIndex !== index) other.abort();
           });
+          try { await saveStartupSnapshot(merged); } catch { resolve(null); return; }
           await writeCachedLiveDelta(rawText, live);
           resolve({ ...merged, source: 'remote' });
         } catch {

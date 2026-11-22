@@ -17,7 +17,7 @@ test('APK carries the complete current startup navigation snapshot', () => {
 test('complete bundled catalog starts disk recovery before revealing Home', () => {
   assert.ok(service.includes("import bundledBootstrapJson from './catalogBootstrap.json';"));
   assert.ok(service.includes('export async function loadCachedLiveContent(base: LoadedContent)'));
-  assert.ok(app.includes('const cachedLive = initialLoad ? await loadCachedLiveContent(cachedBase) : null;'));
+  assert.ok(app.includes('const cachedLive = initialLoad && !snapshot ? await loadCachedLiveContent(cachedBase) : null;'));
   const start = app.indexOf('if (hasBundledCatalog) {');
   const end = app.indexOf('} else {', start);
   const block = app.slice(start, end);

@@ -46,6 +46,7 @@ import {
 import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
+import { readStartupSnapshot } from './src/startupSnapshot';
 import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, getCatalogItemPreview, loadContent, prepareLiveContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
@@ -77,7 +78,7 @@ import {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.43';
+const APP_DISPLAY_VERSION = '0.16.44';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -8268,16 +8269,18 @@ function AppContent() {
       // inserts every title added/changed by later syncs. The complete 8+ MB
       // bootstrap is only a compatibility fallback, never the normal refresh.
       let firstContent: LoadedContent;
-      const cachedBootstrap = initialLoad ? await loadCachedBootstrapContent() : null;
+      const snapshot = initialLoad ? await readStartupSnapshot(contentRef.current.updatedAt) : null;
+      const cachedBootstrap = initialLoad && !snapshot ? await loadCachedBootstrapContent() : null;
       const cachedBase = cachedBootstrap || contentRef.current;
-      const cachedLive = initialLoad ? await loadCachedLiveContent(cachedBase) : null;
+      const cachedLive = initialLoad && !snapshot ? await loadCachedLiveContent(cachedBase) : null;
 
-      const cachedContent = cachedLive || cachedBootstrap;
+      const cachedContent = snapshot || cachedLive || cachedBootstrap;
       if (cachedContent?.items.length) {
         startupFallbackContentRef.current = cachedContent;
         applyContent(cachedContent);
       }
-      // Prefer a fresh first screen; the independent launch deadline covers slow networks.
+      // Local restore owns the first screen; network freshness never gates it.
+      if (initialLoad && contentRef.current.items.length) dismissStartup();
       const online = await onlinePromise;
       setContentOffline(!online);
 
@@ -8374,7 +8377,7 @@ function AppContent() {
       // Even on a cold/offline install, never trap the user behind Splash.
     }
     // Emergency escape for failed disk/network operations, not a launch delay.
-    startupFallbackTimer = setTimeout(() => {
+    if (!hasBundledCatalog) startupFallbackTimer = setTimeout(() => {
       if (startupDismissedRef.current) return;
       const fallback = startupFallbackContentRef.current;
       if (!contentRef.current.items.length && fallback?.items.length) {
