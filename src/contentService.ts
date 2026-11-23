@@ -92,7 +92,6 @@ let cacheMetadataLoaded = false;
 let cacheMetadata: RemoteCacheMetadata = {};
 const detailMemoryCache = new Map<string, CatalogItem>();
 const detailRequestCache = new Map<string, Promise<CatalogItem | null>>();
-const stableDetailPointerCache = new Map<string, { path: string; expiresAt: number }>();
 
 const DAY_IDS: DayId[] = [
   'saturday',
@@ -2456,8 +2455,8 @@ const resolveStableDetailPath = async (summary: CatalogItem, fallbackPath: strin
   if (!identityMatch) return fallbackPath;
 
   const identity = identityMatch[1].toLowerCase();
-  const cached = stableDetailPointerCache.get(identity);
-  if (cached && cached.expiresAt > Date.now()) return cached.path;
+  // This is already a recovery attempt. Re-read the mutable pointer on retry:
+  // a cached pointer may name the very shard that just failed.
 
   const stablePath = `catalog-stable/${identity}.json`;
   const stableUrl = detailUrlFor(stablePath);
@@ -2481,11 +2480,7 @@ const resolveStableDetailPath = async (summary: CatalogItem, fallbackPath: strin
   const rawPointerPath = await boundedStablePointerPath(rawCandidates, 1800);
   const currentPath = rawPointerPath || await boundedStablePointerPath(mirrorCandidates, 1800);
 
-  if (currentPath) {
-    stableDetailPointerCache.set(identity, { path: currentPath, expiresAt: Date.now() + 5 * 60_000 });
-    return currentPath;
-  }
-  return fallbackPath;
+  return currentPath || fallbackPath;
 };
 
 const detailSatisfiesSummary = (summary: CatalogItem, detail: CatalogItem) => {

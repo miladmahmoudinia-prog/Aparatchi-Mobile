@@ -22,9 +22,9 @@ test('closed-app worker without subscriptions updates durable catalog; offline r
     TaskManager:{isTaskDefined:()=>false,defineTask:(_,cb)=>work=cb,isAvailableAsync:async()=>true,isTaskRegisteredAsync:async()=>false},
     BackgroundTask:{registerTaskAsync:async()=>{registered=true},BackgroundTaskResult:{Success:'ok',Failed:'fail'}},
     getBundledContent:()=>old,readStartupSnapshot:d.restart().readStartupSnapshot,loadCachedBootstrapContent:async()=>null,loadCachedLiveContent:async()=>null,
-    loadLiveContent:async base=>{assert.equal(base.updatedAt,old.updatedAt);await d.restart().saveStartupSnapshot(fresh);return fresh;}};
-  const init = vm.runInNewContext(manager+';initializeEpisodeAlertSystem',ctx); await init();assert.ok(registered);
-  assert.equal(await work(),'ok');assert.equal((await d.restart().readStartupSnapshot(old.updatedAt)).updatedAt,fresh.updatedAt);
+    loadLiveContent:async base=>{assert.equal(base.updatedAt,old.updatedAt);await d.restart().saveStartupSnapshot(fresh);return {...fresh,source:'remote'};}};
+  const init = vm.runInNewContext(manager+';initializeEpisodeAlertSystem',ctx); await init();assert.ok(registered); assert.match(await vm.runInNewContext('readCatalogBackgroundStatus()',ctx),/گزارشی از اجرای پس‌زمینه ثبت نشده/);
+  assert.equal(await work(),'ok');assert.match(await vm.runInNewContext('readCatalogBackgroundStatus()',ctx),/کاتالوگ تازه دریافت شد/);assert.equal((await d.restart().readStartupSnapshot(old.updatedAt)).updatedAt,fresh.updatedAt);
 });
 test('older late write and interrupted publication cannot roll back offline restart',async()=>{
   const d=disk(), fresh=catalog('12:45'), old=catalog('11:02');
@@ -32,7 +32,20 @@ test('older late write and interrupted publication cannot roll back offline rest
   d.FileSystem.moveAsync=async()=>{throw Error('no space')};await assert.rejects(d.restart().saveStartupSnapshot(catalog('13:45')));
   assert.equal((await d.restart().readStartupSnapshot(old.updatedAt)).updatedAt,fresh.updatedAt);
 });
+test('return from Recent Apps offline restores worker snapshot, without treating resume as cold start',async()=>{
+  const app=source('App.tsx');
+  const resume=app.match(/if \(returningFromBackground\) \{([\s\S]*?)\} else/)[1];
+  const d=disk(), old=catalog('11:02'), fresh=catalog('12:45');
+  await d.restart().saveStartupSnapshot(fresh);
+  let options;
+  vm.runInNewContext(resume,{reloadContent:(_,o)=>{options=o;}});
+  assert.equal(options.silent,true);
+  const restore=app.slice(app.indexOf('const restoreSaved ='),app.indexOf('// Local restore owns'));
+  let visible=old;
+  await vm.runInNewContext(`(async()=>{${restore}})()`,{initialLoad:false,options,contentRef:{current:old}, readStartupSnapshot:d.restart().readStartupSnapshot,startupFallbackContentRef:{},applyContent:c=>{visible=c;}});
+  assert.equal(visible.updatedAt,fresh.updatedAt);
+});
 test('first usable local screen never waits for network, even without a saved snapshot',()=>{
-  const app=source('App.tsx'), start=app.indexOf('const snapshot = initialLoad ?'), end=app.indexOf('const online = await onlinePromise',start);
+  const app=source('App.tsx'), start=app.indexOf('const snapshot = restoreSaved ?'), end=app.indexOf('const online = await onlinePromise',start);
   assert.ok(start>=0 && end>start);assert.match(app.slice(start,end),/if \(initialLoad && contentRef.current.items.length\) dismissStartup\(\);/);
 });

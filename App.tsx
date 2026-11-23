@@ -72,13 +72,14 @@ import {
 } from './src/libraryManager';
 import {
   initializeEpisodeAlertSystem,
+  readCatalogBackgroundStatus,
   setSeriesEpisodeAlert,
   syncEpisodeAlerts,
 } from './src/notificationManager';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-const APP_DISPLAY_VERSION = '0.16.45';
+const APP_DISPLAY_VERSION = '0.16.46';
 
 type MainTab = 'home' | 'categories' | 'search' | 'favorites' | 'downloads';
 type ScheduleFilter = 'all' | 'iranian' | 'foreign';
@@ -6349,7 +6350,7 @@ function DetailModal({
                 {!detailLoadFailed ? <ActivityIndicator color={COLORS.gold} /> : null}
                 <Text style={{ color: COLORS.gold, textAlign: 'center' }}>
                   {detailLoadFailed
-                    ? 'دریافت اطلاعات کامل ناموفق بود؛ فهرست فعلی ممکن است ناقص باشد.'
+                    ? 'جزئیات این عنوان دریافت نشد. برای دیدن لینک‌ها دوباره تلاش کنید.'
                     : item.type === 'series' ? 'در حال دریافت فهرست کامل قسمت‌ها…' : 'در حال دریافت اطلاعات کامل…'}
                 </Text>
                 {detailLoadFailed ? (
@@ -7793,6 +7794,13 @@ function SideMenuModal({ visible, catalog, updatedAt, refreshStatus, onRefresh, 
 
   const [openRoot, setOpenRoot] = useState<string | null>(null);
   const [openChild, setOpenChild] = useState<string | null>(null);
+  const [backgroundStatus, setBackgroundStatus] = useState('');
+  useEffect(() => {
+    if (!visible || openRoot !== 'stats') return;
+    let active = true;
+    void readCatalogBackgroundStatus().then(text => { if (active) setBackgroundStatus(text); }).catch(() => {});
+    return () => { active = false; };
+  }, [openRoot, visible]);
   const stats = useMemo(() => {
     if (!visible || openRoot !== 'stats') return null;
     const ids = new Set<string>();
@@ -7911,6 +7919,7 @@ function SideMenuModal({ visible, catalog, updatedAt, refreshStatus, onRefresh, 
               {stats.map(([label, count]) => <Text key={label} style={styles.sideMenuLeafText}>{label}: {count.toLocaleString('fa-IR')}</Text>)}
               <Text style={styles.sideMenuVersionText}>زمان کاتالوگ (به وقت ایران): {Number.isFinite(Date.parse(updatedAt)) ? new Date(updatedAt).toLocaleString('fa-IR-u-ca-persian-nu-arabext', { timeZone: 'Asia/Tehran', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : 'نامشخص'}</Text>
               <Pressable accessibilityRole="button" style={styles.sideMenuItem} onPress={onRefresh}><Ionicons name="refresh" color={COLORS.gold} size={19} /><Text style={styles.sideMenuItemText}>بررسی تغییرات کاتالوگ</Text></Pressable>
+              <Text style={styles.sideMenuVersionText}>همگام‌سازی پس‌زمینه: {backgroundStatus || 'در حال بررسی…'}</Text>
               {!!refreshStatus && <Text accessibilityLiveRegion="polite" style={styles.sideMenuLeafText}>{refreshStatus}</Text>}
             </View>}
             {entries.map((entry) => {
@@ -8212,7 +8221,7 @@ function AppContent() {
     setStartupVisible(false);
   }, []);
 
-  const reloadContent = async (force = true, options: { silent?: boolean } = {}) => {
+  const reloadContent = async (force = true, options: { silent?: boolean; restoreSaved?: boolean } = {}) => {
     if (contentLoadInFlightRef.current) {
       if (force && options.silent) pendingResumeRefreshRef.current = true;
       return;
@@ -8269,7 +8278,8 @@ function AppContent() {
       // inserts every title added/changed by later syncs. The complete 8+ MB
       // bootstrap is only a compatibility fallback, never the normal refresh.
       let firstContent: LoadedContent;
-      const snapshot = initialLoad ? await readStartupSnapshot(contentRef.current.updatedAt) : null;
+      const restoreSaved = initialLoad || options.restoreSaved === true;
+      const snapshot = restoreSaved ? await readStartupSnapshot(contentRef.current.updatedAt) : null;
       const cachedBootstrap = initialLoad && !snapshot ? await loadCachedBootstrapContent() : null;
       const cachedBase = cachedBootstrap || contentRef.current;
       const cachedLive = initialLoad && !snapshot ? await loadCachedLiveContent(cachedBase) : null;
@@ -8333,12 +8343,12 @@ function AppContent() {
       contentLoadInFlightRef.current = false;
       if (manualCheckRef.current) {
         manualCheckRef.current = false;
-        setRefreshStatus(!remoteAccepted ? 'بررسی کاتالوگ کامل نشد. دوباره تلاش کنید.' : beforeRevision === contentRevisionRef.current ? 'تغییر تازه‌ای دریافت نشد.' : 'کاتالوگ به‌روز شد.');
+        setRefreshStatus(!remoteAccepted ? 'به‌روز بودن کاتالوگ تأیید نشد. برای بررسی دوباره تلاش کنید.' : beforeRevision === contentRevisionRef.current ? 'تغییر تازه‌ای دریافت نشد.' : 'کاتالوگ به‌روز شد.');
       }
       if (showRefreshIndicator) setContentLoading(false);
       if (pendingResumeRefreshRef.current) {
         pendingResumeRefreshRef.current = false;
-        if (AppState.currentState === 'active') void reloadContent(true, { silent: true });
+        if (AppState.currentState === 'active') void reloadContent(true, { silent: true, restoreSaved: true });
       }
     }
   };
@@ -8422,9 +8432,8 @@ function AppContent() {
         backgroundedAtRef.current = null;
         const returningFromBackground = backgroundedAt !== null;
         if (returningFromBackground) {
-          // Returning from Recent Apps must preserve the exact tab/detail/scroll
-          // state. Refresh truth silently; only a true cold start owns Splash.
-          void reloadContent(true, { silent: true });
+          // Preserve the current screen and restore any snapshot the headless task committed.
+          void reloadContent(true, { silent: true, restoreSaved: true });
         } else {
           reloadContentWhenIdle();
         }
@@ -8608,6 +8617,7 @@ function AppContent() {
         // Never download/parse the complete catalog from an open Detail screen;
         // that blocked scrolling and image rendering on slower Android devices.
         await new Promise((resolve) => setTimeout(resolve, 350));
+        if (cancelled) return;
         fullItem = await loadCatalogItemDetail(activeSummary);
       }
       if (cancelled) return;

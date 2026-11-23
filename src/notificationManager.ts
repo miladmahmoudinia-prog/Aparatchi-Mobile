@@ -169,6 +169,24 @@ const requestNotificationPermission = async () => {
   }
 };
 
+// Only the background callback writes the run record; foreground refreshes must
+// never masquerade as proof that Android actually dispatched the task.
+const runRecord = `${FileSystem.documentDirectory}aparatchi-background-result-v1.json`;
+async function recordRun(result: 'started' | 'failed' | 'current' | 'updated') {
+  try { await FileSystem.writeAsStringAsync(runRecord, JSON.stringify({ result, at: new Date().toISOString() })); } catch { /* diagnostic only */ }
+}
+export async function readCatalogBackgroundStatus() {
+  const registered = await TaskManager.isTaskRegisteredAsync(CATALOG_TASK).catch(() => null);
+  const registration = registered === null ? 'ثبت نامشخص' : registered ? 'ثبت شده' : 'ثبت نشده';
+  const labels = { started: 'شروع شد؛ نتیجه ثبت نشده', failed: 'بررسی ناموفق', current: 'کاتالوگ تغییری نداشت', updated: 'کاتالوگ تازه دریافت شد' };
+  try {
+    const entry = JSON.parse(await FileSystem.readAsStringAsync(runRecord));
+    const label = labels[entry.result as keyof typeof labels];
+    if (!label || !Number.isFinite(Date.parse(entry.at))) throw Error('Invalid record');
+    return `${registration} · ${new Date(entry.at).toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })} · ${label}`;
+  } catch { return `${registration} · گزارشی از اجرای پس‌زمینه ثبت نشده`; }
+}
+
 const registerBackgroundCheck = async () => {
   try {
     const taskManagerAvailable = await TaskManager.isAvailableAsync();
@@ -284,6 +302,7 @@ export async function initializeEpisodeAlertSystem() {
 
 if (!TaskManager.isTaskDefined(CATALOG_TASK)) {
   TaskManager.defineTask(CATALOG_TASK, async () => {
+    await recordRun('started');
     try {
       const bundled = getBundledContent();
       let base = await readStartupSnapshot(bundled.updatedAt);
@@ -293,10 +312,12 @@ if (!TaskManager.isTaskDefined(CATALOG_TASK)) {
         base = { ...(restored || legacy), source: 'cache' };
       }
       const content = await loadLiveContent(base) || await loadBootstrapContent(base.updatedAt);
-      if (!content || Date.parse(content.updatedAt) < Date.parse(base.updatedAt)) return BackgroundTask.BackgroundTaskResult.Failed;
-      await syncEpisodeAlerts(content.items, true);
+      if (!content || content.source !== 'remote' || !Number.isFinite(Date.parse(content.updatedAt)) || Date.parse(content.updatedAt) < Date.parse(base.updatedAt)) throw Error('Catalog not verified');
+      await recordRun(content.updatedAt === base.updatedAt && content.clientRevision === base.clientRevision ? 'current' : 'updated');
+      await syncEpisodeAlerts(content.items, true).catch(() => undefined);
       return BackgroundTask.BackgroundTaskResult.Success;
     } catch {
+      await recordRun('failed');
       return BackgroundTask.BackgroundTaskResult.Failed;
     }
   });
