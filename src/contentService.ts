@@ -1766,14 +1766,14 @@ export async function loadCachedLiveContent(base: LoadedContent): Promise<Loaded
  * snapshot remains visible. Manifest and bootstrap start together; the result
  * is accepted only when their revisions match.
  */
-export async function loadBootstrapContent(visibleUpdatedAt = ''): Promise<LoadedContent | null> {
+export async function loadBootstrapContent(visibleUpdatedAt = '', verifiedManifest?: RemoteCatalogManifest): Promise<LoadedContent | null> {
   const remoteUrl = REMOTE_CONTENT_BOOTSTRAP_URL.trim();
   if (!remoteUrl) return null;
   await readCacheMetadata();
 
   // Start the manifest alongside the complete recovery snapshot. The latter
   // can exceed 15 MB when a device predates the current live baseline.
-  const manifestPromise = fetchRemoteManifest().catch(() => null);
+  const manifestPromise = verifiedManifest ? Promise.resolve(verifiedManifest) : fetchRemoteManifest(true).catch(() => null);
   const currentBootstrap = memoryBootstrapContent || normalizedLocalPayload();
 
   const candidates = remoteRepositoryUrlCandidates(remoteUrl);
@@ -1836,7 +1836,7 @@ export async function loadBootstrapContent(visibleUpdatedAt = ''): Promise<Loade
           const payloadClientRevision = asString(
             bootstrapRecord.clientRevision ?? bootstrapRecord.client_revision,
           );
-          if (manifest?.clientRevision && payloadClientRevision !== manifest.clientRevision) return;
+          if (!manifest?.clientRevision || payloadClientRevision !== manifest.clientRevision) return;
 
           const parsed = await parsePayloadCooperatively(rawBootstrap);
           if (settled) return;
@@ -1936,7 +1936,7 @@ const writeCacheMetadata = async (metadata: RemoteCacheMetadata) => {
   }
 };
 
-const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
+const fetchRemoteManifest = async (sourceOnly = false): Promise<RemoteCatalogManifest | null> => {
   const manifestUrl = REMOTE_CONTENT_MANIFEST_URL.trim();
   if (!manifestUrl) return null;
 
@@ -2037,6 +2037,8 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
   // Start source truth and CDN at the same instant. Give Raw only a short
   // truth window; a stale CDN manifest must never beat a healthy Raw response.
   const rawPromise = firstValidManifest(rawCandidates);
+  // A mirror can transport a known revision, not certify that GitHub is unchanged.
+  if (sourceOnly) return rawPromise;
   const mirrorPromise = firstValidManifest(mirrorCandidates);
   const rawPreferred = await Promise.race([
     rawPromise,
@@ -2064,8 +2066,14 @@ const fetchRemoteManifest = async (): Promise<RemoteCatalogManifest | null> => {
  */
 export function prepareLiveContent(online: Promise<boolean>) {
   // Probe the revision during disk restoration, but merge only against the restored base.
-  const manifest = online.then(connected => connected ? fetchRemoteManifest() : null).catch(() => null);
-  return (base: LoadedContent) => loadLiveContent(base, manifest);
+  const manifest = online.then(connected => connected ? fetchRemoteManifest(true) : null).catch(() => null);
+  return async (base: LoadedContent) => {
+    const verified = await manifest;
+    if (!verified?.clientRevision) return null;
+    // Compare, merge and (if needed) recover against one publication. Never
+    // download a large snapshot or mark it current on an unverified mirror hint.
+    return (await loadLiveContent(base, manifest)) || loadBootstrapContent(base.updatedAt, verified);
+  };
 }
 
 export async function loadLiveContent(base: LoadedContent, prefetched?: Promise<RemoteCatalogManifest | null>): Promise<LoadedContent | null> {
@@ -2079,7 +2087,7 @@ export async function loadLiveContent(base: LoadedContent, prefetched?: Promise<
   // While the hourly Content action is rebuilding files, the published manifest
   // still describes the current on-device revision; downloading/parsing the
   // multi-megabyte live delta in parallel only steals bandwidth and blocks taps.
-  const manifest = await (prefetched ?? fetchRemoteManifest().catch(() => null));
+  const manifest = await (prefetched ?? fetchRemoteManifest(true).catch(() => null));
   if (!manifest?.clientRevision) return null;
   if (
     base.clientRevision === manifest.clientRevision &&

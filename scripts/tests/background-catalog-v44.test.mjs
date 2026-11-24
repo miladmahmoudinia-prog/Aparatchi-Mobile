@@ -22,7 +22,7 @@ test('closed-app worker without subscriptions updates durable catalog; offline r
     TaskManager:{isTaskDefined:()=>false,defineTask:(_,cb)=>work=cb,isAvailableAsync:async()=>true,isTaskRegisteredAsync:async()=>false},
     BackgroundTask:{registerTaskAsync:async()=>{registered=true},BackgroundTaskResult:{Success:'ok',Failed:'fail'}},
     getBundledContent:()=>old,readStartupSnapshot:d.restart().readStartupSnapshot,loadCachedBootstrapContent:async()=>null,loadCachedLiveContent:async()=>null,
-    loadLiveContent:async base=>{assert.equal(base.updatedAt,old.updatedAt);await d.restart().saveStartupSnapshot(fresh);return {...fresh,source:'remote'};}};
+    prepareLiveContent:()=>async base=>{assert.equal(base.updatedAt,old.updatedAt);await d.restart().saveStartupSnapshot(fresh);return {...fresh,source:'remote'};}};
   const init = vm.runInNewContext(manager+';initializeEpisodeAlertSystem',ctx); await init();assert.ok(registered); assert.match(await vm.runInNewContext('readCatalogBackgroundStatus()',ctx),/گزارشی از اجرای پس‌زمینه ثبت نشده/);
   assert.equal(await work(),'ok');assert.match(await vm.runInNewContext('readCatalogBackgroundStatus()',ctx),/کاتالوگ تازه دریافت شد/);assert.equal((await d.restart().readStartupSnapshot(old.updatedAt)).updatedAt,fresh.updatedAt);
 });

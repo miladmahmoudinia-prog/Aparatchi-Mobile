@@ -4,7 +4,7 @@ import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import { readStartupSnapshot } from './startupSnapshot';
-import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadLiveContent } from './contentService';
+import { getBundledContent, loadCachedBootstrapContent, loadCachedLiveContent, prepareLiveContent } from './contentService';
 import { CatalogItem } from './types';
 
 const LEGACY_TASK = 'aparatchi-episode-alert-check-v1';
@@ -183,7 +183,8 @@ export async function readCatalogBackgroundStatus() {
     const entry = JSON.parse(await FileSystem.readAsStringAsync(runRecord));
     const label = labels[entry.result as keyof typeof labels];
     if (!label || !Number.isFinite(Date.parse(entry.at))) throw Error('Invalid record');
-    return `${registration} · ${new Date(entry.at).toLocaleString('fa-IR', { timeZone: 'Asia/Tehran' })} · ${label}`;
+    const at = new Date(entry.at).toLocaleString('fa-IR-u-ca-persian-nu-arabext', { timeZone: 'Asia/Tehran', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+    return `${registration} · آخرین بررسی به وقت ایران: ${at} · ${label}`;
   } catch { return `${registration} · گزارشی از اجرای پس‌زمینه ثبت نشده`; }
 }
 
@@ -304,6 +305,7 @@ if (!TaskManager.isTaskDefined(CATALOG_TASK)) {
   TaskManager.defineTask(CATALOG_TASK, async () => {
     await recordRun('started');
     try {
+      const refresh = prepareLiveContent(Promise.resolve(true));
       const bundled = getBundledContent();
       let base = await readStartupSnapshot(bundled.updatedAt);
       if (!base) {
@@ -311,7 +313,7 @@ if (!TaskManager.isTaskDefined(CATALOG_TASK)) {
         const restored = await loadCachedLiveContent(legacy);
         base = { ...(restored || legacy), source: 'cache' };
       }
-      const content = await loadLiveContent(base) || await loadBootstrapContent(base.updatedAt);
+      const content = await refresh(base);
       if (!content || content.source !== 'remote' || !Number.isFinite(Date.parse(content.updatedAt)) || Date.parse(content.updatedAt) < Date.parse(base.updatedAt)) throw Error('Catalog not verified');
       await recordRun(content.updatedAt === base.updatedAt && content.clientRevision === base.clientRevision ? 'current' : 'updated');
       await syncEpisodeAlerts(content.items, true).catch(() => undefined);

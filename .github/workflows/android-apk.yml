@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -78,7 +78,7 @@ jobs:
         run: node scripts/refresh-bundled-bootstrap.mjs
 
       - name: Check catalog and download recovery
-        run: node --test scripts/tests/catalog-revision-integrity.test.mjs scripts/tests/download-response-recovery.test.mjs scripts/tests/playback-*.test.mjs scripts/tests/catalog-cache-recovery.test.mjs scripts/tests/catalog-fallback-offline.test.mjs scripts/tests/startup-live-truth-v46.test.mjs scripts/tests/live-catalog-growth-v44.test.mjs scripts/tests/instant-startup-cache-v41.test.mjs scripts/tests/background-catalog-v44.test.mjs
+        run: node --test scripts/tests/auto-catalog-source.test.mjs scripts/tests/first-install-freshness-v33.test.mjs scripts/tests/catalog-revision-integrity.test.mjs scripts/tests/download-response-recovery.test.mjs scripts/tests/playback-*.test.mjs scripts/tests/catalog-cache-recovery.test.mjs scripts/tests/catalog-fallback-offline.test.mjs scripts/tests/startup-live-truth-v46.test.mjs scripts/tests/live-catalog-growth-v44.test.mjs scripts/tests/instant-startup-cache-v41.test.mjs scripts/tests/background-catalog-v44.test.mjs
 
       - name: Type-check application
         run: npm run typecheck
@@ -119,7 +119,10 @@ jobs:
           curl --fail --location --retry 3 'https://github.com/miladmahmoudinia-prog/Aparatchi-Mobile/releases/download/android-test-0.16.45/Aparatchi-Android-Release.apk' -o /tmp/previous.apk
           SIGNER="$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner"
           "$SIGNER" verify --print-certs /tmp/previous.apk > /tmp/previous-cert.txt
-          "$SIGNER" verify --print-certs android/app/build/outputs/apk/release/app-release.apk > /tmp/candidate-cert.txt
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" dump badging "$APK" > /tmp/apk-badging.txt
+          grep -E "^package: name='com.aparatchi.mobile' versionCode='77' versionName='0.16.46'" /tmp/apk-badging.txt
+          "$SIGNER" verify --print-certs "$APK" > /tmp/candidate-cert.txt
           grep '^Signer #1 certificate SHA-256 digest:' /tmp/previous-cert.txt > /tmp/previous-sha.txt
           grep '^Signer #1 certificate SHA-256 digest:' /tmp/candidate-cert.txt > /tmp/candidate-sha.txt
           diff -u /tmp/previous-sha.txt /tmp/candidate-sha.txt
@@ -130,6 +133,6 @@ jobs:
       - name: Upload signed test APK
         uses: actions/upload-artifact@v4
         with:
-          name: apk-0.16.46-test
+          name: apk-0.16.46-autosync-build77
           path: Aparatchi-Android-Release.apk
           if-no-files-found: error

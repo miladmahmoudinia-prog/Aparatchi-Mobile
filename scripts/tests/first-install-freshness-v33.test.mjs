@@ -17,7 +17,7 @@ test('bootstrap mirrors race instead of stacking timeout costs', async () => {
   assert.ok(bootstrap.includes('candidates.forEach((candidate, index) => {'));
   assert.ok(!bootstrap.includes('for (const candidate of candidates)'));
   assert.ok(bootstrap.includes('payloadClientRevision !== manifest.clientRevision'));
-  assert.ok(bootstrap.includes('const manifestPromise = fetchRemoteManifest().catch(() => null);'));
+  assert.ok(bootstrap.includes('Promise.resolve(verifiedManifest) : fetchRemoteManifest(true)'));
   assert.ok(bootstrap.indexOf('const manifestPromise =') < bootstrap.indexOf('candidates.forEach((candidate, index) => {'));
 });
 

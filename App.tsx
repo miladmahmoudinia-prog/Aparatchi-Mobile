@@ -47,7 +47,7 @@ import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMem
 import { COLORS, DAYS } from './src/data';
 import { loadVerifiedForeignSchedule } from './src/foreignSchedule';
 import { readStartupSnapshot } from './src/startupSnapshot';
-import { getBundledContent, loadBootstrapContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, getCatalogItemPreview, loadContent, prepareLiveContent, LoadedContent } from './src/contentService';
+import { getBundledContent, loadCachedBootstrapContent, loadCachedLiveContent, loadCatalogItemDetail, getCatalogItemPreview, prepareLiveContent, LoadedContent } from './src/contentService';
 import { checkVpnActive } from './src/ipAccess';
 import {
   checkMobileOperatorAccess,
@@ -306,6 +306,24 @@ const internetIsReachable = async () => {
   } catch {
     return true;
   }
+};
+
+// Subscribe before sampling so an old async sample cannot undo a newer event.
+const watchCatalogReconnect = (onReconnect: () => void) => {
+  let connected: boolean | undefined;
+  let observed = false;
+  let disposed = false;
+  const subscription = Network.addNetworkStateListener((state) => {
+    if (disposed || typeof state.isConnected !== 'boolean') return;
+    observed = true;
+    const previous = connected;
+    connected = state.isConnected;
+    if (previous === false && connected) onReconnect();
+  });
+  void Network.getNetworkStateAsync().then(state => {
+    if (!disposed && !observed) connected = state.isConnected;
+  }).catch(() => {});
+  return () => { disposed = true; subscription.remove(); };
 };
 
 const isNetworkFailure = (value?: string) =>
@@ -8311,13 +8329,7 @@ function AppContent() {
           }
         }
 
-        // Compatibility fallback for an APK older than the immutable live
-        // baseline. Keep the current screen interactive while it downloads.
-        const bootstrapContent = await loadBootstrapContent(contentRef.current.updatedAt);
-        if (bootstrapContent?.items.length) {
-          startupFallbackContentRef.current = bootstrapContent;
-          remoteAccepted = applyContent(bootstrapContent) && bootstrapContent.source === 'remote';
-        }
+        // The shared loader already tried full recovery if the verified live delta failed.
         firstContent = contentRef.current;
       } else {
         firstContent = contentRef.current;
@@ -8338,7 +8350,7 @@ function AppContent() {
       setContentResolved(true);
       dismissStartup();
     } finally {
-      nextAutoCheckRef.current = Date.now() + (remoteAccepted ? 5 * 60_000 : retryDelayRef.current);
+      nextAutoCheckRef.current = Date.now() + (remoteAccepted ? 30_000 : retryDelayRef.current);
       retryDelayRef.current = remoteAccepted ? 15_000 : Math.min(120_000, retryDelayRef.current * 2);
       contentLoadInFlightRef.current = false;
       if (manualCheckRef.current) {
@@ -8442,12 +8454,16 @@ function AppContent() {
         if (backgroundedAtRef.current === null) backgroundedAtRef.current = Date.now();
       }
     });
+    const stopCatalogReconnect = watchCatalogReconnect(() => {
+      if (AppState.currentState === 'active') void reloadContent(true, { silent: true });
+    });
     const catalogRefreshTimer = setInterval(() => {
       if (AppState.currentState !== 'active' || contentLoadInFlightRef.current || Date.now() < nextAutoCheckRef.current) return;
       void reloadContent(true, { silent: true });
-    }, 15_000);
+    }, 5_000);
 
     return () => {
+      stopCatalogReconnect();
       pendingIdleRefresh?.cancel();
       if (startupFallbackTimer) clearTimeout(startupFallbackTimer);
       clearInterval(catalogRefreshTimer);

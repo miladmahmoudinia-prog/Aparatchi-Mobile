@@ -19,14 +19,14 @@ test('live refresh is applied before the multi-megabyte compatibility fallback',
   const start = app.indexOf('const reloadContent = async');
   const end = app.indexOf('useEffect(() => {', start);
   const reload = app.slice(start, end);
-  const live = reload.indexOf('await refreshRestoredCatalog(contentRef.current)');
-  const full = reload.indexOf('await loadBootstrapContent(contentRef.current.updatedAt)');
-  assert.ok(live >= 0 && full > live);
+  assert.ok(reload.includes('await refreshRestoredCatalog(contentRef.current)'));
+  assert.ok(service.includes('(await loadLiveContent(base, manifest)) || loadBootstrapContent(base.updatedAt, verified)'));
   assert.ok(reload.includes('await loadCachedLiveContent(cachedBase)'));
 });
 
 test('background episode checks use the same small live update path', () => {
   const notifications = fs.readFileSync('src/notificationManager.ts', 'utf8');
-  assert.ok(notifications.includes('loadLiveContent(base) || await loadBootstrapContent(base.updatedAt)'));
+  assert.ok(notifications.includes('const refresh = prepareLiveContent(Promise.resolve(true))'));
+  assert.ok(notifications.includes('await refresh(base)'));
   assert.ok(!notifications.includes('await loadBootstrapContent()'));
 });
